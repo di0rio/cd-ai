@@ -17,8 +17,8 @@ export function IconButton({ label, icon, onClick, pressed, disabled }: IconButt
       aria-pressed={pressed}
       disabled={disabled}
       onClick={onClick}
-      className={`grid size-8 place-items-center rounded-lg transition-[background-color,color,scale] duration-150 active:scale-95 disabled:pointer-events-none disabled:opacity-35 ${
-        pressed ? "bg-sidebar text-ink" : "text-ink-muted hover:bg-sidebar hover:text-ink"
+      className={`grid size-8 place-items-center rounded-lg transition-[background-color,color,scale] duration-150 active:scale-95 disabled:opacity-35 ${
+        pressed ? "bg-sidebar text-ink" : "text-ink-muted enabled:hover:bg-sidebar enabled:hover:text-ink"
       }`}
     >
       <Icon name={icon} />
