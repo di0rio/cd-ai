@@ -1,5 +1,5 @@
 {
-  "name": "caua-ai",
+  "name": "cd-ai",
   "private": true,
   "workspaces": [
     "apps/desktop"

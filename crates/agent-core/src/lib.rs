@@ -8,7 +8,7 @@ pub struct AppInfo {
 
 pub fn app_info() -> AppInfo {
     AppInfo {
-        name: "Cauã AI",
+        name: "cd-ai",
         version: env!("CARGO_PKG_VERSION"),
     }
 }
@@ -20,7 +20,7 @@ mod tests {
     #[test]
     fn app_info_uses_crate_version() {
         let info = app_info();
-        assert_eq!(info.name, "Cauã AI");
+        assert_eq!(info.name, "cd-ai");
         assert_eq!(info.version, env!("CARGO_PKG_VERSION"));
     }
 }

@@ -1,10 +1,10 @@
 [package]
-name = "caua-ai-cli"
+name = "cd-ai-cli"
 version.workspace = true
 edition.workspace = true
 
 [[bin]]
-name = "caua-ai"
+name = "cd-ai"
 path = "src/main.rs"
 
 [dependencies]

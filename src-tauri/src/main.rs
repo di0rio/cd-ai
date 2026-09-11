@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    caua_ai_desktop_lib::run();
+    cd_ai_desktop_lib::run();
 }

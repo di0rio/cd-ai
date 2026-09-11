@@ -5,7 +5,7 @@ Status: **aceita**.
 ## Estrutura alvo
 
 ```text
-caua-ai/
+cd-ai/
 ├── apps/
 │   ├── desktop/          # Next.js (static export)
 │   └── cli/              # binário Rust headless

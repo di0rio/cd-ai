@@ -1,6 +1,6 @@
 use std::process::ExitCode;
 
-const USAGE: &str = "uso: caua-ai [--version | --help]";
+const USAGE: &str = "uso: cd-ai [--version | --help]";
 
 fn main() -> ExitCode {
     let arg = std::env::args().nth(1);

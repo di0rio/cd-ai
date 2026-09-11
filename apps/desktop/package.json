@@ -1,5 +1,5 @@
 {
-  "name": "@caua-ai/desktop",
+  "name": "@cd-ai/desktop",
   "private": true,
   "scripts": {
     "dev": "next dev -p 1420",
