@@ -26,6 +26,10 @@ Cinco candidatos foram medidos: `qwen3:4b`, `qwen3:14b`, `qwen3-coder:30b`, `gem
 4. **O FAST não edita código.** O `qwen3:4b` raciocina mesmo com `think: false` e estoura o orçamento de tokens em edições.
 5. Nomes de modelos continuam sendo **configuração**. Nenhum código depende deles.
 
+## Esclarecimento (2026-09-11)
+
+Os modelos são **recursos locais descobertos dinamicamente pelo provider** (listagem do Ollama), não um catálogo embutido no código. As escolhas desta decisão são **defaults e recomendações para o hardware atual** (a máquina de desenvolvimento), não dependências hardcoded do produto. Em outro hardware, o provider lista o que existe e o cd-ai escolhe conforme a disponibilidade e o roteamento.
+
 ## Metadados de modelo vistos pelo Core
 
 ```text

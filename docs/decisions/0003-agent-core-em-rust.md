@@ -22,6 +22,12 @@ Agent Core ──────┤
 - CLI headless natural para eval e automação.
 - Sem sidecar e sem segundo runtime no backend.
 
+## Esclarecimento (2026-09-11)
+
+- `src-tauri` é o **adaptador desktop** do Tauri (commands/events → core), no diretório do repositório `src-tauri/`.
+- `agent-core` é **compartilhado pelo desktop e pela CLI** — não há cópia de lógica.
+- **Nenhuma lógica de agente fica na webview**: o frontend só apresenta dados e envia comandos via IPC.
+
 ## Consequências
 
 - O frontend não tem backend próprio: sem servidor Node, sem API routes.
