@@ -1,8 +1,16 @@
-use serde::Serialize;
+pub mod ollama;
+pub mod tool_call;
+pub mod workspace;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+use serde::Serialize;
+use ts_rs::TS;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[ts(export)]
 pub struct AppInfo {
+    #[ts(type = "string")]
     pub name: &'static str,
+    #[ts(type = "string")]
     pub version: &'static str,
 }
 

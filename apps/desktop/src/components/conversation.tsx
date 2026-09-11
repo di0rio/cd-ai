@@ -20,10 +20,12 @@ const interactiveRow = `${row} transition-[background-color,color,scale] duratio
 export function Conversation({ task }: { task: Task }) {
   const scroller = useRef<HTMLDivElement>(null);
 
+  // Runs on mount and whenever a new batch of events arrives.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentionally reacts to event-list growth without reading it.
   useEffect(() => {
     const el = scroller.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, []);
+  }, [task.events.length]);
 
   return (
     <div ref={scroller} className="min-h-0 flex-1 overflow-y-auto">
@@ -169,6 +171,10 @@ function CommandRow({ event }: { event: CommandEvent }) {
   const failed = !running && event.exitCode !== 0;
   // Errors never collapse by default.
   const [open, setOpen] = useState(failed);
+  // A command that starts running (collapsed) and later fails must surface its output.
+  useEffect(() => {
+    if (failed) setOpen(true);
+  }, [failed]);
 
   const status = running ? (
     <span className="flex items-center gap-1.5 text-accent">
