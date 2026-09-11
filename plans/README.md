@@ -17,7 +17,7 @@ Cada executor deve:
 
 | Plano | Título | Prioridade | Esforço | Depende de | Status |
 |------|--------|-----------|---------|------------|--------|
-| 001 | Comando único de verificação e guia de agentes na raiz | P1 | S | — | TODO |
+| 001 | Comando único de verificação e guia de agentes na raiz | P1 | S | — | DONE |
 | 002 | Módulo `workspace` no agent-core com validação de path | P1 | M | 001 | TODO |
 | 003 | Abrir workspace pela UI (diálogo nativo + IPC) | P1 | M | 002 | TODO |
 | 004 | Provider do Ollama no Rust + status real na sidebar | P1 | M | 001 | TODO |
