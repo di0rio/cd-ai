@@ -1,3 +1,5 @@
+pub mod workspace;
+
 use serde::Serialize;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
