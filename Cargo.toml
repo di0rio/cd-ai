@@ -1,0 +1,11 @@
+[workspace]
+members = ["crates/agent-core", "apps/cli", "src-tauri"]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+
+[workspace.dependencies]
+agent-core = { path = "crates/agent-core" }
+serde = { version = "1", features = ["derive"] }

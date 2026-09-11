@@ -1,0 +1,11 @@
+[package]
+name = "caua-ai-cli"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "caua-ai"
+path = "src/main.rs"
+
+[dependencies]
+agent-core.workspace = true

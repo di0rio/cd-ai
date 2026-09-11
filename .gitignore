@@ -1,0 +1,10 @@
+node_modules/
+.next/
+out/
+target/
+*.tsbuildinfo
+next-env.d.ts
+src-tauri/gen/schemas/
+.env
+.env.*
+!.env.example
