@@ -1,4 +1,3 @@
-import Image from "next/image";
 import type { Task, TaskStatus } from "@/lib/session";
 import { CoreStatus } from "./core-status";
 import { Icon } from "./icons";
@@ -36,7 +35,8 @@ export function Sidebar({ open, workspace, tasks, selectedId, onSelect, onOpenWo
     >
       <div className="flex h-full w-64 flex-col">
         <div className="flex h-12 items-center gap-2.5 px-4 font-semibold tracking-[-0.01em]">
-          <Image src="/icon.svg" alt="" width={20} height={20} className="size-5 rounded-[5px]" />
+          {/* biome-ignore lint/performance/noImgElement: static export with unoptimized images; next/image only adds an inline style the CSP blocks */}
+          <img src="/icon.svg" alt="" width={20} height={20} className="size-5 rounded-[5px]" />
           cd-ai
         </div>
 
