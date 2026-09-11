@@ -1,25 +1,32 @@
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 
 pub const DEFAULT_BASE_URL: &str = "http://127.0.0.1:11434";
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[ts(export)]
 pub struct ModelInfo {
     pub name: String,
+    #[ts(type = "number")]
     pub size_bytes: u64,
     pub parameter_size: String,
     pub quantization: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[ts(export)]
 pub struct LoadedModel {
     pub name: String,
+    #[ts(type = "number")]
     pub size_bytes: u64,
+    #[ts(type = "number")]
     pub vram_bytes: u64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[ts(export)]
 pub struct OllamaStatus {
     pub reachable: bool,
     pub version: Option<String>,
@@ -28,13 +35,15 @@ pub struct OllamaStatus {
     pub error: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
 pub struct ChatMessage {
     pub role: String,
     pub content: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub struct ChatRequest {
     pub model: String,
@@ -43,7 +52,8 @@ pub struct ChatRequest {
     pub num_ctx: u32,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, TS)]
+#[ts(export)]
 #[serde(
     rename_all = "camelCase",
     rename_all_fields = "camelCase",
@@ -58,9 +68,13 @@ pub enum ChatEvent {
         content: String,
     },
     Done {
+        #[ts(type = "number")]
         prompt_tokens: u64,
+        #[ts(type = "number")]
         gen_tokens: u64,
+        #[ts(type = "number")]
         prompt_ms: u64,
+        #[ts(type = "number")]
         gen_ms: u64,
     },
     Error {
