@@ -1,4 +1,5 @@
 pub mod ollama;
+pub mod tool_call;
 pub mod workspace;
 
 use serde::Serialize;
