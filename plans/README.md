@@ -33,8 +33,9 @@ Cada executor deve:
 |------|--------|-----------|---------|------------|--------|
 | 010 | Conversa segue eventos vivos (auto-scroll + comando que falha abre) | P1 | S | — | DONE |
 | 011 | Testes de caracterização da CLI (antes do 005 reescrever `main.rs`) | P1 | S | — | DONE |
-| 012 | Design/spike da Fase 4: Tool Engine, permissões, redator, eventos | P1 | M | leitura de 001–009 | TODO |
+| 012 | Design/spike da Fase 4: Tool Engine, permissões, redator, eventos | P1 | M | leitura de 001–009 | DONE |
 | 013 | Tooltip volta a funcionar em botões de ícone desabilitados | P3 | S | — | DONE |
+| 014 | Implementar a Fase 4 (tools, permissões, redator, eventos) | P1 | L | 002, 005, 006, 009, 010, 012 | TODO |
 
 O plano 009 foi adicionado depois do benchmark de modelos (`docs/audit/benchmark-2026-09-11.md`). O modelo CODER escolhido escreve tool calls num formato que o Ollama 0.34 não converte.
 
@@ -52,7 +53,7 @@ Valores de status: TODO | IN PROGRESS | DONE | BLOCKED (com motivo de uma linha)
 ### Geração 2
 
 - **011 antes de 005.** O 005 reescreve `apps/cli/src/main.rs`; os testes do 011 travam o comportamento atual antes disso.
-- **012 produz o design da Fase 4.** Qualquer implementação das ferramentas/redator/permissões será o plano 014, reservado, dependente de 002, 005, 006, 009, 010 e 012.
+- **012 produz o design da Fase 4** (`docs/design/fase-4-tool-engine.md`). A implementação das ferramentas/redator/permissões é o plano **014**, reservado, dependente de 002, 005, 006, 009, 010 e 012; o executor de 014 deve citar o documento de design (fonte da verdade da Fase 4).
 - **010 é pré-requisito de UI** para ligar o stream de eventos do Tool Engine à conversa (a conversa hoje assume lista estática).
 
 ## Achados considerados e descartados
