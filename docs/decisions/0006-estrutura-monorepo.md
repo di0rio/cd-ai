@@ -1,32 +1,39 @@
 # 0006 — Estrutura do monorepo
 
-Status: **aceita**.
+Status: **aceita** (fixada em 2026-09-11).
 
-## Estrutura alvo
+## Estrutura fixa
 
 ```text
 cd-ai/
 ├── apps/
-│   ├── desktop/          # Next.js (static export)
-│   └── cli/              # binário Rust headless
+│   ├── desktop/
+│   │   ├── src/               # Next.js (static export): componentes e lib
+│   │   ├── public/
+│   │   ├── next.config.ts     # output: "export"
+│   │   └── package.json
+│   └── cli/                   # binário Rust headless (cd-ai)
 ├── crates/
-│   └── agent-core/       # demais crates só quando necessário (decisão 0003)
-├── src-tauri/            # adaptador desktop: commands/events → agent-core
-├── packages/             # criados sob demanda: ui, contracts, config, skills
-├── evals/
-│   ├── tasks/
-│   ├── repos/
-│   └── results/
+│   └── agent-core/            # demais crates só quando uma fronteira real surgir
+├── src-tauri/                 # adaptador desktop: commands/events → agent-core
+├── evals/                     # Fase 6: tasks/, repos/, results/
 ├── docs/
 │   ├── audit/
-│   └── decisions/
+│   ├── decisions/
+│   └── design/
+├── plans/                     # planos de implementação
 ├── scripts/
-├── Cargo.toml            # Cargo workspace
-├── package.json          # Bun workspaces
+├── Cargo.toml                 # Cargo workspace
+├── package.json               # Bun workspaces
 ├── bun.lock
 ├── biome.json
 └── SPEC.md
 ```
+
+## Esclarecimento (2026-09-11)
+
+- A estrutura é **fixa** e reflete o repositório real atual: `src-tauri/` é o adaptador desktop do Tauri na **raiz** do repo (não dentro de `apps/desktop/`). O frontend Next.js vive em `apps/desktop/` (`src/` + `public/`), e a CLI em `apps/cli/`.
+- Nenhum diretório, crate ou package vazio "para depois". Cada um nasce quando a primeira funcionalidade real precisar dele.
 
 ## Regras
 

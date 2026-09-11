@@ -1,6 +1,10 @@
 # cd-ai
 
-Coding agent local, pessoal e standalone. App desktop em Tauri, com interface em Next.js e núcleo em Rust.
+Coding agent local-first para desenvolvimento de software. Ele roda no seu próprio computador, usa modelos locais via Ollama e executa o ciclo completo de entendimento, planejamento, implementação, execução, validação e correção sem depender de uma API de IA externa.
+
+App desktop em Tauri, com interface em Next.js e núcleo em Rust.
+
+Tokens não possuem custo financeiro para o cd-ai: a inferência acontece localmente no hardware do usuário. Os limites existentes são exclusivamente operacionais e de segurança, como memória disponível, tempo de execução, número de iterações e prevenção de loops.
 
 A especificação completa está em [SPEC.md](SPEC.md) e as decisões de arquitetura estão em [docs/decisions/](docs/decisions/).
 

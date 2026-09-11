@@ -25,6 +25,10 @@ O backend local é o Rust (decisão 0003). O frontend só apresenta dados e envi
 
 Rotas dinâmicas por URL devem ser evitadas; a navegação usa estado do cliente ou rotas estáticas.
 
+## Papel do frontend
+
+Next.js é **apenas UI estática**. Toda operação privilegiada — leitura de arquivo, execução de comando, permissão, edição — passa pelo Rust via IPC. A webview não tem acesso direto a recursos do sistema além do que o Tauri concede por capacidade declarada. O core é a fronteira de confiança (decisão 0003), não o frontend.
+
 ## Trade-off aceito
 
 A documentação do Tauri recomenda Vite para SPAs. O Next foi escolhido pela familiaridade com o ecossistema. Se o static export gerar atrito real (build lento, HMR instável com o Tauri, recursos do Next inutilizáveis), reabrir esta decisão com evidência.

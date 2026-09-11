@@ -19,6 +19,11 @@ A máquina de desenvolvimento roda Windows 11 sem WSL. O alvo do primeiro releas
 - Execução de comandos passa por um módulo de plataforma: o core não chama `cmd`, `powershell` ou `bash` diretamente.
 - Até a Fase 7 não existe sandbox: **todo comando fora das classes `read`/`validate` exige aprovação**, em qualquer modo de permissão.
 
+## Esclarecimento (2026-09-11)
+
+- **Linux é o alvo de release; Windows é o ambiente de desenvolvimento completo** (não "fases 1–6 e depois abandona").
+- **Segurança básica de execução existe desde o Tool Engine** (Fase 4): classificação de comando e aprovação. A Fase 7 adiciona o **sandbox de OS** (isolamento de processos), que é uma camada a mais sobre essa base, não o começo da segurança.
+
 ## Consequências
 
 - Testes de sandbox e pacotes Linux só rodam a partir da Fase 7.

@@ -76,7 +76,7 @@ Por padrão, o cd-ai não faz:
 
 Qualquer operação de rede deve ser iniciada explicitamente pelo usuário. O código do projeto nunca sai da máquina por padrão.
 
-**Porta cloud opt-in (fora da v1, decisão da Fase 0):** a arquitetura do provider (seção 10) permite, sem mudanças no Agent Core, que o usuário configure futuramente um endpoint externo com a própria API key, desligado por padrão e habilitado por tarefa. Não implementar na v1 salvo decisão explícita na Fase 0.
+A v1 é exclusivamente local: sem API externa, cloud inference, telemetria, sincronização, login ou billing. O Model Provider é uma interface abstrata (seção 10) para permitir providers futuros sem acoplamento, mas nenhum provider remoto faz parte da v1.
 
 ---
 
@@ -128,9 +128,9 @@ Máquina: Ryzen 5 5600X, 32 GB RAM, GTX 1660 com 6 GB VRAM. Nenhum modelo de 14B
 
 Cargo workspace. `src-tauri` é só o adaptador desktop; a CLI headless (`apps/cli`) usa o mesmo core. Crates são criados sob demanda, não antecipadamente. Toda validação de path, permissão, classificação de comando, sandbox e redação de secrets vive no Rust. A webview nunca é fronteira de confiança.
 
-### 5.4 Sem cloud na v1 — `0004` (aceita)
+### 5.4 Exclusivamente local — `0004` (aceita)
 
-Sem API paga, sem telemetria, sem backend remoto. O provider compatível com OpenAI mantém a porta possível no futuro.
+A v1 é exclusivamente local: sem API externa, cloud inference, telemetria, sincronização, login ou billing. O Model Provider é uma interface abstrata para permitir providers futuros sem acoplamento, mas nenhum provider remoto faz parte da v1.
 
 ### 5.5 Frontend Next.js com static export — `0005` (aceita)
 
@@ -256,7 +256,6 @@ Não criar diretórios, crates ou packages vazios "para depois". Até uma fronte
 - roles especializados Security/Performance/UI (na v1 são skills);
 - métricas detalhadas por sub-etapa;
 - RAG/embeddings;
-- porta cloud (salvo decisão na Fase 0);
 - treinamento/fine-tuning.
 
 ---
@@ -1096,7 +1095,7 @@ Comece pela **Fase 0**. Não implemente o produto.
 2. Confirmar versões estáveis atuais.
 3. Medir o hardware (CPU, RAM, GPU, VRAM).
 4. Confirmar o Ollama e os modelos locais; estimar qual modelo coder cabe com contexto útil.
-5. Tomar e registrar as decisões da seção 5 (plataforma, hardware/modelo, local do loop, porta cloud), consultando o usuário quando necessário.
+5. Tomar e registrar as decisões da seção 5 (plataforma, hardware/modelo, local do loop, provider), consultando o usuário quando necessário.
 6. Propor a estrutura inicial do repositório.
 7. Identificar riscos.
 8. Apresentar a arquitetura mínima e o plano das fases 1–5.
