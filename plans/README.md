@@ -17,24 +17,25 @@ Cada executor deve:
 
 | Plano | Título | Prioridade | Esforço | Depende de | Status |
 |------|--------|-----------|---------|------------|--------|
-| 001 | Comando único de verificação e guia de agentes na raiz | P1 | S | — | TODO |
-| 002 | Módulo `workspace` no agent-core com validação de path | P1 | M | 001 | TODO |
-| 003 | Abrir workspace pela UI (diálogo nativo + IPC) | P1 | M | 002 | TODO |
-| 004 | Provider do Ollama no Rust + status real na sidebar | P1 | M | 001 | TODO |
-| 005 | Chat em streaming cancelável com o Ollama (core, IPC, CLI) | P2 | L | 004 | TODO |
-| 006 | Permissões mínimas no Tauri (ACL para os commands do app) | P2 | S | 003, 004, 005 | TODO |
-| 007 | Remover o `style=` inline gerado pelo `next/image` | P3 | S | 001 | TODO |
-| 008 | Gerar os tipos TypeScript do IPC a partir do Rust | P2 | M | 003, 004 | TODO |
-| 009 | Parser tolerante de tool calls no formato `<function=…>` | P2 | S | 001 | TODO |
+| 001 | Comando único de verificação e guia de agentes na raiz | P1 | S | — | DONE |
+| 002 | Módulo `workspace` no agent-core com validação de path | P1 | M | 001 | DONE |
+| 003 | Abrir workspace pela UI (diálogo nativo + IPC) | P1 | M | 002 | DONE |
+| 004 | Provider do Ollama no Rust + status real na sidebar | P1 | M | 001 | DONE |
+| 005 | Chat em streaming cancelável com o Ollama (core, IPC, CLI) | P2 | L | 004 | DONE |
+| 006 | Permissões mínimas no Tauri (ACL para os commands do app) | P2 | S | 003, 004, 005 | DONE |
+| 007 | Remover o `style=` inline gerado pelo `next/image` | P3 | S | 001 | DONE |
+| 008 | Gerar os tipos TypeScript do IPC a partir do Rust | P2 | M | 003, 004 | DONE |
+| 009 | Parser tolerante de tool calls no formato `<function=…>` | P2 | S | 001 | DONE |
 
 ### Geração 2
 
 | Plano | Título | Prioridade | Esforço | Depende de | Status |
 |------|--------|-----------|---------|------------|--------|
-| 010 | Conversa segue eventos vivos (auto-scroll + comando que falha abre) | P1 | S | — | TODO |
-| 011 | Testes de caracterização da CLI (antes do 005 reescrever `main.rs`) | P1 | S | — | TODO |
-| 012 | Design/spike da Fase 4: Tool Engine, permissões, redator, eventos | P1 | M | leitura de 001–009 | TODO |
-| 013 | Tooltip volta a funcionar em botões de ícone desabilitados | P3 | S | — | TODO |
+| 010 | Conversa segue eventos vivos (auto-scroll + comando que falha abre) | P1 | S | — | DONE |
+| 011 | Testes de caracterização da CLI (antes do 005 reescrever `main.rs`) | P1 | S | — | DONE |
+| 012 | Design/spike da Fase 4: Tool Engine, permissões, redator, eventos | P1 | M | leitura de 001–009 | DONE |
+| 013 | Tooltip volta a funcionar em botões de ícone desabilitados | P3 | S | — | DONE |
+| 014 | Implementar a Fase 4 (tools, permissões, redator, eventos) | P1 | L | 002, 005, 006, 009, 010, 012 | TODO |
 
 O plano 009 foi adicionado depois do benchmark de modelos (`docs/audit/benchmark-2026-09-11.md`). O modelo CODER escolhido escreve tool calls num formato que o Ollama 0.34 não converte.
 
@@ -52,7 +53,7 @@ Valores de status: TODO | IN PROGRESS | DONE | BLOCKED (com motivo de uma linha)
 ### Geração 2
 
 - **011 antes de 005.** O 005 reescreve `apps/cli/src/main.rs`; os testes do 011 travam o comportamento atual antes disso.
-- **012 produz o design da Fase 4.** Qualquer implementação das ferramentas/redator/permissões será o plano 014, reservado, dependente de 002, 005, 006, 009, 010 e 012.
+- **012 produz o design da Fase 4** (`docs/design/fase-4-tool-engine.md`). A implementação das ferramentas/redator/permissões é o plano **014**, reservado, dependente de 002, 005, 006, 009, 010 e 012; o executor de 014 deve citar o documento de design (fonte da verdade da Fase 4).
 - **010 é pré-requisito de UI** para ligar o stream de eventos do Tool Engine à conversa (a conversa hoje assume lista estática).
 
 ## Achados considerados e descartados

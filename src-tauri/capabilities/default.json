@@ -1,7 +1,14 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "enables the default permissions",
+  "description": "Main window: only the app's own commands",
   "windows": ["main"],
-  "permissions": ["core:default"]
+  "permissions": [
+    "allow-app-info",
+    "allow-open-workspace",
+    "allow-current-workspace",
+    "allow-ollama-status",
+    "allow-chat",
+    "allow-cancel-chat"
+  ]
 }
