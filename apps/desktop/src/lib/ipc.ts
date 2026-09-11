@@ -9,3 +9,14 @@ export type AppInfo = {
 export function getAppInfo(): Promise<AppInfo> {
   return invoke<AppInfo>("app_info");
 }
+
+// Mirrors agent_core::workspace::WorkspaceInfo.
+export type WorkspaceInfo = { name: string; root: string };
+
+export function openWorkspace(): Promise<WorkspaceInfo | null> {
+  return invoke<WorkspaceInfo | null>("open_workspace");
+}
+
+export function currentWorkspace(): Promise<WorkspaceInfo | null> {
+  return invoke<WorkspaceInfo | null>("current_workspace");
+}

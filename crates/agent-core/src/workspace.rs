@@ -3,6 +3,15 @@ use std::fs;
 use std::io;
 use std::path::{Component, Path, PathBuf};
 
+use serde::Serialize;
+
+/// What the UI needs to show an open workspace.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct WorkspaceInfo {
+    pub name: String,
+    pub root: String,
+}
+
 /// A folder the user opened. Every path the agent touches must resolve inside it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Workspace {
@@ -97,6 +106,19 @@ impl Workspace {
             .into_iter()
             .rev()
             .fold(canonical, |path, name| path.join(name)))
+    }
+
+    pub fn info(&self) -> WorkspaceInfo {
+        let root = self.root.to_string_lossy();
+        WorkspaceInfo {
+            name: self
+                .root
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| root.to_string()),
+            // Strip the Windows verbatim prefix for display only; comparisons keep the canonical form.
+            root: root.trim_start_matches(r"\\?\").to_string(),
+        }
     }
 }
 
@@ -219,5 +241,16 @@ mod tests {
         symlink(other.path().join("missing"), root.join("dangling")).unwrap();
         let result = ws.resolve("dangling");
         assert!(matches!(result, Err(WorkspaceError::OutsideWorkspace(_))));
+    }
+
+    #[test]
+    fn info_uses_folder_name() {
+        let dir = tempdir().unwrap();
+        let sub = dir.path().join("meu-projeto");
+        fs::create_dir(&sub).unwrap();
+        let ws = Workspace::open(&sub).unwrap();
+        let info = ws.info();
+        assert_eq!(info.name, "meu-projeto");
+        assert!(!info.root.starts_with(r"\\?\"));
     }
 }

@@ -18,12 +18,13 @@ type SidebarProps = {
   tasks: Task[];
   selectedId: string | null;
   onSelect: (id: string) => void;
+  onOpenWorkspace: () => void;
 };
 
 const rowButton =
   "flex h-8 w-full items-center gap-2.5 rounded-lg px-2 text-left transition-colors disabled:text-ink-faint";
 
-export function Sidebar({ open, workspace, tasks, selectedId, onSelect }: SidebarProps) {
+export function Sidebar({ open, workspace, tasks, selectedId, onSelect, onOpenWorkspace }: SidebarProps) {
   return (
     <aside
       aria-label="Barra lateral"
@@ -52,12 +53,7 @@ export function Sidebar({ open, workspace, tasks, selectedId, onSelect }: Sideba
 
         <div className="mt-5 px-2">
           <p className="px-2 pb-1 text-xs text-ink-faint">Workspace</p>
-          <button
-            type="button"
-            disabled
-            title="A seleção de pasta chega na próxima fase"
-            className={`${rowButton} text-ink hover:bg-canvas`}
-          >
+          <button type="button" onClick={onOpenWorkspace} className={`${rowButton} text-ink hover:bg-canvas`}>
             <Icon name="folder" className="size-4 text-ink-faint" />
             <span className="truncate">{workspace ?? "Abrir workspace"}</span>
           </button>
