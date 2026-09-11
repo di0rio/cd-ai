@@ -1,10 +1,12 @@
-# CAUÃ AI — LOCAL CODING AGENT (Especificação v2)
+# CD-AI — LOCAL CODING AGENT (Especificação v2)
+
+> Antes chamado "Cauã AI". Nome atual decidido em `docs/decisions/0007-nome-cd-ai.md`.
 
 ## 0. Como usar este documento
 
-Este documento é a especificação para **construir** o Cauã AI. Ele é lido pelo agente/desenvolvedor que implementa o produto.
+Este documento é a especificação para **construir** o cd-ai. Ele é lido pelo agente/desenvolvedor que implementa o produto.
 
-Ele **não** é o system prompt do agente em runtime. Os prompts de runtime do Cauã AI devem ser curtos, específicos por role e caber no orçamento de contexto de um modelo local (ver seção 17).
+Ele **não** é o system prompt do agente em runtime. Os prompts de runtime do cd-ai devem ser curtos, específicos por role e caber no orçamento de contexto de um modelo local (ver seção 17).
 
 Prioridades absolutas, em ordem:
 
@@ -16,12 +18,12 @@ CORRECTNESS > SECURITY > RELIABILITY > PERFORMANCE > MAINTAINABILITY > FEATURE C
 
 ## 1. Objetivo do produto
 
-Construir um aplicativo desktop chamado **Cauã AI**: um coding agent local, pessoal, standalone e extensível, focado exclusivamente em desenvolvimento de software.
+Construir um aplicativo desktop chamado **cd-ai**: um coding agent local, pessoal, standalone e extensível, focado exclusivamente em desenvolvimento de software.
 
 O mesmo aplicativo trabalha em qualquer workspace permitido pelo usuário. Nada é instalado dentro dos projetos.
 
 ```text
-Cauã AI
+cd-ai
    ↓
 Select Workspace
    ↓
@@ -50,7 +52,7 @@ Capacidades alvo:
 
 ## 2. Princípio fundamental: runtime de agente, não chatbot
 
-O Cauã AI é um **Coding Agent Runtime**. Seu ciclo central:
+O cd-ai é um **Coding Agent Runtime**. Seu ciclo central:
 
 ```text
 UNDERSTAND → PLAN → IMPLEMENT → EXECUTE → TEST → REVIEW → FIX → VALIDATE
@@ -64,7 +66,7 @@ Quando a validação não for tecnicamente possível (projeto sem testes, sem ty
 
 ## 3. Local-first e zero cloud por padrão
 
-Por padrão, o Cauã AI não faz:
+Por padrão, o cd-ai não faz:
 
 - chamadas a APIs de LLM externas;
 - telemetria ou analytics;
@@ -92,7 +94,7 @@ Consequências obrigatórias de arquitetura:
 1. **Determinístico antes do LLM.** Tudo que pode ser resolvido por código (detectar stack, escolher skills, classificar comando, rotear modelo, revisar diff) é resolvido por código. O LLM entra só onde há ambiguidade real.
 2. **Saída estruturada forçada.** Usar structured output / JSON schema do runtime quando disponível para tool calls.
 3. **Parser tolerante + loop de reparo.** Resposta malformada gera uma mensagem de erro curta para o modelo ("formato inválido: esperado X") e nova tentativa, com limite configurável.
-4. **Contexto configurado explicitamente.** O tamanho de contexto enviado ao runtime é sempre definido pelo Cauã AI com base nos metadados do modelo e na memória disponível. Nunca confiar no default do runtime, que pode ser menor que o máximo do modelo e truncar o prompt silenciosamente.
+4. **Contexto configurado explicitamente.** O tamanho de contexto enviado ao runtime é sempre definido pelo cd-ai com base nos metadados do modelo e na memória disponível. Nunca confiar no default do runtime, que pode ser menor que o máximo do modelo e truncar o prompt silenciosamente.
 5. **Prompts curtos.** Prompts de runtime por role, skills condensadas e orçamento de tokens por seção.
 6. **Poucas trocas de modelo e de role.** Cada troca custa prefill ou carga de modelo.
 
@@ -110,16 +112,16 @@ Registradas em `docs/decisions/`. O relatório de ambiente está em `docs/audit/
 - Código portável desde o início: paths via APIs de path, execução de comandos atrás de um módulo de plataforma.
 - Até existir sandbox, todo comando fora das classes `read`/`validate` exige aprovação.
 
-### 5.2 Hardware e modelos — `0002` (provisória até o benchmark)
+### 5.2 Hardware e modelos — `0002` (aceita, benchmark de 2026-09-11)
 
-Máquina: Ryzen 5 5600X, 32 GB RAM, GTX 1660 com 6 GB VRAM. Nenhum modelo de 14B+ cabe inteiro na VRAM.
+Máquina: Ryzen 5 5600X, 32 GB RAM, GTX 1660 com 6 GB VRAM. Nenhum modelo de 14B+ cabe inteiro na VRAM. Detalhes em `docs/audit/benchmark-2026-09-11.md`.
 
-- **Um único modelo residente é o caso normal.**
-- CODER candidato: Qwen3-Coder 30B-A3B (MoE, poucos parâmetros ativos).
-- REASONER: Gemma 4 26B-A4B, só por escalonamento (não coexiste com o CODER na RAM).
-- FAST: modelo pequeno que caiba inteiro na VRAM, escolhido no benchmark.
-- Devstral Small 2 24B: alternativa.
-- Contexto inicial modesto (16k, testar 32k).
+- FAST: `qwen3:4b` em 8k (100% na GPU, 39 tok/s). Não edita código.
+- CODER: `qwen3-coder:30b` em 16k (20 tok/s). **Exige parser tolerante de tool calls**, porque emite `<function=…>` que o Ollama 0.34 não converte.
+- Alternativa ao CODER: `gemma4:26b` (15 tok/s, 7/10 tool calls).
+- Escalonamento de formato: `devstral-small-2` (10/10 tool calls, 2 tok/s).
+- `qwen3:14b` descartado como padrão (3,2 tok/s).
+- **Um único modelo grande residente**; em 32k o CODER deixa só 0,6 GB de RAM livre.
 - Nomes de modelos são configuração; nenhum código depende deles.
 
 ### 5.3 Agent Core em Rust — `0003` (aceita)
@@ -137,6 +139,10 @@ Next.js em `output: "export"`, servido pelo Tauri a partir de `out/`. Sem SSR, A
 ### 5.6 Estrutura do monorepo — `0006` (aceita)
 
 Ver seção 7.1.
+
+### 5.7 Nome e ícone — `0007` (aceita)
+
+O projeto se chama **cd-ai**. O ícone é uma versão minimalista de uma foto do autor, com fonte em `apps/desktop/public/icon.svg`.
 
 ---
 
@@ -209,10 +215,10 @@ Agent Core | Model Provider | Tools | Permissions | Skills | Context | Workspace
 ### 7.1 Estrutura do repositório (decisão `0006`)
 
 ```text
-caua-ai/
+cd-ai/
 ├── apps/
 │   ├── desktop/          # Next.js (static export) — só apresentação
-│   └── cli/              # binário Rust headless (caua-ai)
+│   └── cli/              # binário Rust headless (cd-ai)
 ├── crates/
 │   └── agent-core/       # demais crates só quando uma fronteira real surgir
 ├── src-tauri/            # adaptador desktop: commands/events → agent-core
@@ -792,7 +798,7 @@ Salvar cada tarefa em formato estável e versionado (ex.: JSONL):
 Isso não exige nenhuma infraestrutura de ML e forma o dataset para o futuro:
 
 ```text
-Trajetórias validadas → filtro de qualidade → deduplicação → validação → fine-tuning/distillation → Cauã Coder
+Trajetórias validadas → filtro de qualidade → deduplicação → validação → fine-tuning/distillation → cd-coder
 ```
 
 Não implementar treinamento agora.
@@ -850,19 +856,32 @@ Sem conteúdo sensível desnecessário.
 
 ## 29. UI
 
-Interface desktop profissional, com informação progressiva, sem virar dashboard.
+Interface no modelo do app desktop do Claude Code (aba Code): a conversa fica no centro; não é uma IDE. Informação progressiva, sem virar dashboard. Detalhes de produto em `apps/desktop/PRODUCT.md`.
 
 ```text
-┌──────────────────────────────────────────────┐
-│ Cauã AI                        Model / Status│
-├────────────┬─────────────────────┬───────────┤
-│ Workspace  │                     │ Activity  │
-│ Files      │       Chat          │ Tools     │
-│ Git        │                     │ Skills    │
-├────────────┴─────────────────────┴───────────┤
-│ Terminal / Diff / Validação / Output         │
-└──────────────────────────────────────────────┘
+┌────────────┬───────────────────────────────────────────┐
+│ cd-ai    │ Tarefa · workspace · branch       [diff][>_]│
+│ + Nova     ├───────────────────────────────────────────┤
+│            │                                           │
+│ Workspace  │   conversa (coluna central)               │
+│  tarefas   │   · mensagens                             │
+│  + status  │   · atividade agrupada (colapsada)        │
+│            │   · edições e comandos compactos          │
+│            │   · relatório com evidências              │
+│            │                                           │
+│ Ollama ●   │   fase · modelo ● · contexto ▮▮▯          │
+│ Ajustes    │  ┌─────────────────────────────────────┐  │
+│            │  │ composer          modo · modelo  ↑  │  │
+│            │  └─────────────────────────────────────┘  │
+└────────────┴───────────────────────────────────────────┘
 ```
+
+Diff e terminal abrem sob demanda à direita; não ficam fixos.
+
+Melhorias de UX sobre a referência, decididas com o usuário:
+
+- **Atividade agrupada:** leituras e buscas consecutivas viram uma linha-resumo colapsada ("Explorou 4 arquivos · 2 buscas"), que só expande quando o usuário quiser. Edições e comandos ficam visíveis e compactos. Erros nunca colapsam.
+- **Estado sempre visível:** acima do composer ficam a fase da tarefa, o modelo (e se está carregado), o uso de contexto e, ao final, validado ou não validado.
 
 Mostrar: workspace, modelo (e se está carregado), tarefa, fase, arquivos alterados, tool calls, comandos, validações com evidência, diff, skills carregadas, approvals, erros.
 
@@ -912,7 +931,7 @@ Nunca baixar modelos sem ação explícita do usuário.
 
 ---
 
-## 32. Testes do próprio Cauã AI
+## 32. Testes do próprio cd-ai
 
 - **Agent Core:** transições de estado, retries, detecção de loop, cancelamento, conclusão, falhas, retomada após crash, `completed_unvalidated`.
 - **Model Provider:** streaming, cancelamento, resposta malformada, loop de reparo, contexto configurado.
@@ -933,7 +952,7 @@ Nunca baixar modelos sem ação explícita do usuário.
 
 ## 33. Definição de pronto
 
-Uma funcionalidade do Cauã AI está pronta quando, onde aplicável:
+Uma funcionalidade do cd-ai está pronta quando, onde aplicável:
 
 ```text
 implementada + typecheck + lint + testes + review + eval sem regressão
@@ -955,9 +974,9 @@ Analisar o ambiente (Bun, Rust, Tauri, Ollama, versões, hardware). Tomar e regi
 
 ### Fase 1 — Esqueleto
 
-Tauri 2 + Next.js (static export) + TypeScript + Tailwind. Crate `agent-core`. `src-tauri` como adaptador com um command IPC (`app_info`). CLI `caua-ai` usando o core. Biome, rustfmt e clippy configurados.
+Tauri 2 + Next.js (static export) + TypeScript + Tailwind. Crate `agent-core`. `src-tauri` como adaptador com um command IPC (`app_info`). CLI `cd-ai` usando o core. Biome, rustfmt e clippy configurados.
 
-**Saída:** `next build`, typecheck, Biome, `cargo test`, `cargo clippy` e `tauri build` (binário) passando; o app abre e mostra a versão do core via IPC; `caua-ai --version` roda. Empacotamento `.deb`/AppImage é validado no Linux (decisão 0001).
+**Saída:** `next build`, typecheck, Biome, `cargo test`, `cargo clippy` e `tauri build` (binário) passando; o app abre e mostra a versão do core via IPC; `cd-ai --version` roda. Empacotamento `.deb`/AppImage é validado no Linux (decisão 0001).
 
 ### Fase 2 — Workspace e segurança de path
 
@@ -981,7 +1000,7 @@ Conexão, health check, listagem, metadados, modelos carregados, streaming, canc
 
 Task → contexto básico (perfil + ripgrep) → modelo → tools → resultado → modelo, com limites, timeout, cancelamento, detecção de loop, estado persistente. Na UI e na CLI.
 
-**Saída:** o agente resolve uma tarefa simples real num repo de teste. A partir daqui, usar o Cauã AI em tarefas pequenas do próprio projeto (dogfooding).
+**Saída:** o agente resolve uma tarefa simples real num repo de teste. A partir daqui, usar o cd-ai em tarefas pequenas do próprio projeto (dogfooding).
 
 ### Fase 6 — Eval baseline
 
