@@ -4,7 +4,8 @@
   "scripts": {
     "dev": "next dev -p 1420",
     "build": "next build",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.11.1",

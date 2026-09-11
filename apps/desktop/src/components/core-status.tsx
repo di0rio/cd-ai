@@ -22,7 +22,7 @@ export function CoreStatus() {
   }[status.state];
 
   return (
-    <output aria-live="polite" className="text-xs text-neutral-500 dark:text-neutral-400">
+    <output aria-live="polite" className="block">
       {label}
     </output>
   );
