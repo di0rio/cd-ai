@@ -1,0 +1,565 @@
+{
+  "host": "http://localhost:11434",
+  "fillTokens": 4000,
+  "results": [
+    {
+      "model": "qwen3:4b",
+      "runs": [
+        {
+          "numCtx": 8192,
+          "loadSeconds": 7,
+          "promptTokens": 3916,
+          "prefillTokensPerSecond": 189.2,
+          "genTokens": 128,
+          "genTokensPerSecond": 39.4,
+          "allocatedGb": 3.6,
+          "vramGb": 3.6,
+          "gpuPercent": 100,
+          "freeRamGbAfter": 15.1
+        },
+        {
+          "numCtx": 32768,
+          "loadSeconds": 5.4,
+          "promptTokens": 3916,
+          "prefillTokensPerSecond": 174.7,
+          "genTokens": 128,
+          "genTokensPerSecond": 8.7,
+          "allocatedGb": 7.4,
+          "vramGb": 4,
+          "gpuPercent": 54,
+          "freeRamGbAfter": 12.7
+        }
+      ],
+      "tools": {
+        "valid": 8,
+        "no_call": 2,
+        "wrong_tool": 0,
+        "bad_args": 0
+      },
+      "toolSeconds": 114,
+      "toolCases": [
+        {
+          "prompt": "Open src/app/page.tsx so we can see how the layout is built.",
+          "expected": "read_file",
+          "outcome": "valid",
+          "called": "read_file",
+          "genTokens": 232
+        },
+        {
+          "prompt": "Find where the function getAppInfo is used in the project.",
+          "expected": "search",
+          "outcome": "valid",
+          "called": "search",
+          "genTokens": 724
+        },
+        {
+          "prompt": "Run the test suite with `cargo test --workspace`.",
+          "expected": "run_command",
+          "outcome": "valid",
+          "called": "run_command",
+          "genTokens": 223
+        },
+        {
+          "prompt": "In src/lib/ipc.ts replace `invoke<AppInfo>(\"app_info\")` with `invoke<AppInfo>(\"get_app_info\")`.",
+          "expected": "edit_file",
+          "outcome": "no_call",
+          "genTokens": 1024,
+          "doneReason": "length",
+          "content": "Okay, let's see. The user wants me to replace a specific string in the file src/lib/ipc.ts. The original string is `invoke<AppInfo>(\"app_info\")` and they want it changed to `invoke<AppInfo>(\"get_app_info\")`.\n\nFirst, I need to figure out which tool to use. The available tools are read_file, search, e"
+        },
+        {
+          "prompt": "Show me the contents of Cargo.toml at the repository root.",
+          "expected": "read_file",
+          "outcome": "valid",
+          "called": "read_file",
+          "genTokens": 380
+        },
+        {
+          "prompt": "Look for every TODO comment in the codebase.",
+          "expected": "search",
+          "outcome": "valid",
+          "called": "search",
+          "genTokens": 684
+        },
+        {
+          "prompt": "Check the TypeScript types by running `bun run typecheck`.",
+          "expected": "run_command",
+          "outcome": "valid",
+          "called": "run_command",
+          "genTokens": 491
+        },
+        {
+          "prompt": "In apps/cli/src/main.rs rename the constant declared as `const USAGE: &str` to HELP_TEXT.",
+          "expected": "edit_file",
+          "outcome": "no_call",
+          "genTokens": 1024,
+          "doneReason": "length",
+          "content": "Okay, let's see. The user wants me to rename the constant `const USAGE: &str` to `HELP_TEXT` in the file `apps/cli/src/main.rs`.\n\nFirst, I need to figure out which tool to use here. The available tools are read_file, search, edit_file, and run_command.\n\nSince the task is to rename a constant in a fi"
+        },
+        {
+          "prompt": "What does crates/agent-core/src/lib.rs export? Read it.",
+          "expected": "read_file",
+          "outcome": "valid",
+          "called": "read_file",
+          "genTokens": 256
+        },
+        {
+          "prompt": "Search for the string \"core v\" to find where the version label is rendered.",
+          "expected": "search",
+          "outcome": "valid",
+          "called": "search",
+          "genTokens": 340
+        }
+      ]
+    },
+    {
+      "model": "qwen3:14b",
+      "runs": [
+        {
+          "numCtx": 8192,
+          "loadSeconds": 32.1,
+          "promptTokens": 3922,
+          "prefillTokensPerSecond": 53.3,
+          "genTokens": 41,
+          "genTokensPerSecond": 3.2,
+          "allocatedGb": 10.1,
+          "vramGb": 3.9,
+          "gpuPercent": 39,
+          "freeRamGbAfter": 9.5
+        },
+        {
+          "numCtx": 32768,
+          "loadSeconds": 13.4,
+          "promptTokens": 3922,
+          "prefillTokensPerSecond": 53,
+          "genTokens": 44,
+          "genTokensPerSecond": 3.2,
+          "allocatedGb": 13.9,
+          "vramGb": 3.7,
+          "gpuPercent": 27,
+          "freeRamGbAfter": 5.5
+        }
+      ],
+      "tools": {
+        "valid": 9,
+        "no_call": 0,
+        "wrong_tool": 1,
+        "bad_args": 0
+      },
+      "toolSeconds": 74,
+      "toolCases": [
+        {
+          "prompt": "Open src/app/page.tsx so we can see how the layout is built.",
+          "expected": "read_file",
+          "outcome": "valid",
+          "called": "read_file",
+          "genTokens": 24
+        },
+        {
+          "prompt": "Find where the function getAppInfo is used in the project.",
+          "expected": "search",
+          "outcome": "valid",
+          "called": "search",
+          "genTokens": 21
+        },
+        {
+          "prompt": "Run the test suite with `cargo test --workspace`.",
+          "expected": "run_command",
+          "outcome": "valid",
+          "called": "run_command",
+          "genTokens": 23
+        },
+        {
+          "prompt": "In src/lib/ipc.ts replace `invoke<AppInfo>(\"app_info\")` with `invoke<AppInfo>(\"get_app_info\")`.",
+          "expected": "edit_file",
+          "outcome": "valid",
+          "called": "edit_file",
+          "genTokens": 51
+        },
+        {
+          "prompt": "Show me the contents of Cargo.toml at the repository root.",
+          "expected": "read_file",
+          "outcome": "valid",
+          "called": "read_file",
+          "genTokens": 22
+        },
+        {
+          "prompt": "Look for every TODO comment in the codebase.",
+          "expected": "search",
+          "outcome": "valid",
+          "called": "search",
+          "genTokens": 19
+        },
+        {
+          "prompt": "Check the TypeScript types by running `bun run typecheck`.",
+          "expected": "run_command",
+          "outcome": "valid",
+          "called": "run_command",
+          "genTokens": 24
+        },
+        {
+          "prompt": "In apps/cli/src/main.rs rename the constant declared as `const USAGE: &str` to HELP_TEXT.",
+          "expected": "edit_file",
+          "outcome": "wrong_tool",
+          "called": "search",
+          "genTokens": 23,
+          "doneReason": "stop",
+          "content": ""
+        },
+        {
+          "prompt": "What does crates/agent-core/src/lib.rs export? Read it.",
+          "expected": "read_file",
+          "outcome": "valid",
+          "called": "read_file",
+          "genTokens": 27
+        },
+        {
+          "prompt": "Search for the string \"core v\" to find where the version label is rendered.",
+          "expected": "search",
+          "outcome": "valid",
+          "called": "search",
+          "genTokens": 20
+        }
+      ]
+    },
+    {
+      "model": "qwen3-coder:30b",
+      "runs": [
+        {
+          "numCtx": 8192,
+          "loadSeconds": 28.9,
+          "promptTokens": 3914,
+          "prefillTokensPerSecond": 102.4,
+          "genTokens": 44,
+          "genTokensPerSecond": 20.1,
+          "allocatedGb": 18.3,
+          "vramGb": 3.9,
+          "gpuPercent": 21,
+          "freeRamGbAfter": 2.4
+        },
+        {
+          "numCtx": 32768,
+          "loadSeconds": 22.4,
+          "promptTokens": 3914,
+          "prefillTokensPerSecond": 94.1,
+          "genTokens": 44,
+          "genTokensPerSecond": 15.2,
+          "allocatedGb": 20.6,
+          "vramGb": 3.9,
+          "gpuPercent": 19,
+          "freeRamGbAfter": 0.6
+        }
+      ],
+      "tools": {
+        "valid": 3,
+        "no_call": 5,
+        "wrong_tool": 2,
+        "bad_args": 0
+      },
+      "toolSeconds": 29.3,
+      "toolCases": [
+        {
+          "prompt": "Open src/app/page.tsx so we can see how the layout is built.",
+          "expected": "read_file",
+          "outcome": "no_call",
+          "genTokens": 23,
+          "doneReason": "stop",
+          "content": "<function=read_file>\n<parameter=path>\nsrc/app/page.tsx\n</parameter>\n</function>\n</tool_call>"
+        },
+        {
+          "prompt": "Find where the function getAppInfo is used in the project.",
+          "expected": "search",
+          "outcome": "valid",
+          "called": "search",
+          "genTokens": 42
+        },
+        {
+          "prompt": "Run the test suite with `cargo test --workspace`.",
+          "expected": "run_command",
+          "outcome": "no_call",
+          "genTokens": 35,
+          "doneReason": "stop",
+          "content": "I'll run the test suite using the specified command.\n\n<function=run_command>\n<parameter=command>\ncargo test --workspace\n</parameter>\n</function>\n</tool_call>"
+        },
+        {
+          "prompt": "In src/lib/ipc.ts replace `invoke<AppInfo>(\"app_info\")` with `invoke<AppInfo>(\"get_app_info\")`.",
+          "expected": "edit_file",
+          "outcome": "wrong_tool",
+          "called": "search",
+          "genTokens": 68,
+          "doneReason": "stop",
+          "content": "I need to find the file `src/lib/ipc.ts` and replace `invoke<AppInfo>(\"app_info\")` with `invoke<AppInfo>(\"get_app_info\")`.\n\nFirst, let me search for the file:"
+        },
+        {
+          "prompt": "Show me the contents of Cargo.toml at the repository root.",
+          "expected": "read_file",
+          "outcome": "no_call",
+          "genTokens": 21,
+          "doneReason": "stop",
+          "content": "<function=read_file>\n<parameter=path>\nCargo.toml\n</parameter>\n</function>\n</tool_call>"
+        },
+        {
+          "prompt": "Look for every TODO comment in the codebase.",
+          "expected": "search",
+          "outcome": "no_call",
+          "genTokens": 40,
+          "doneReason": "stop",
+          "content": "I'll search for all TODO comments in the codebase to help identify pending tasks or areas that need attention.\n\n<function=search>\n<parameter=query>\nTODO\n</parameter>\n</function>\n</tool_call>"
+        },
+        {
+          "prompt": "Check the TypeScript types by running `bun run typecheck`.",
+          "expected": "run_command",
+          "outcome": "valid",
+          "called": "run_command",
+          "genTokens": 49
+        },
+        {
+          "prompt": "In apps/cli/src/main.rs rename the constant declared as `const USAGE: &str` to HELP_TEXT.",
+          "expected": "edit_file",
+          "outcome": "wrong_tool",
+          "called": "search",
+          "genTokens": 80,
+          "doneReason": "stop",
+          "content": "I need to find the file `apps/cli/src/main.rs` and locate the constant `USAGE` that needs to be renamed to `HELP_TEXT`.\n\nFirst, let me search for the USAGE constant in the file:"
+        },
+        {
+          "prompt": "What does crates/agent-core/src/lib.rs export? Read it.",
+          "expected": "read_file",
+          "outcome": "no_call",
+          "genTokens": 45,
+          "doneReason": "stop",
+          "content": "I'll read the contents of crates/agent-core/src/lib.rs to see what it exports.\n\n<function=read_file>\n<parameter=path>\ncrates/agent-core/src/lib.rs\n</parameter>\n</function>\n</tool_call>"
+        },
+        {
+          "prompt": "Search for the string \"core v\" to find where the version label is rendered.",
+          "expected": "search",
+          "outcome": "valid",
+          "called": "search",
+          "genTokens": 21
+        }
+      ]
+    },
+    {
+      "model": "gemma4:26b",
+      "runs": [
+        {
+          "numCtx": 8192,
+          "loadSeconds": 50.6,
+          "promptTokens": 4803,
+          "prefillTokensPerSecond": 110.9,
+          "genTokens": 42,
+          "genTokensPerSecond": 15.3,
+          "allocatedGb": 0.8,
+          "vramGb": 0.8,
+          "gpuPercent": 100,
+          "freeRamGbAfter": 1.4
+        },
+        {
+          "numCtx": 32768,
+          "loadSeconds": 27.3,
+          "promptTokens": 4803,
+          "prefillTokensPerSecond": 104.5,
+          "genTokens": 39,
+          "genTokensPerSecond": 13.4,
+          "allocatedGb": 0.8,
+          "vramGb": 0.8,
+          "gpuPercent": 100,
+          "freeRamGbAfter": 0.8
+        }
+      ],
+      "tools": {
+        "valid": 7,
+        "no_call": 0,
+        "wrong_tool": 3,
+        "bad_args": 0
+      },
+      "toolSeconds": 42.2,
+      "toolCases": [
+        {
+          "prompt": "Open src/app/page.tsx so we can see how the layout is built.",
+          "expected": "read_file",
+          "outcome": "valid",
+          "called": "read_file",
+          "genTokens": 21
+        },
+        {
+          "prompt": "Find where the function getAppInfo is used in the project.",
+          "expected": "search",
+          "outcome": "valid",
+          "called": "search",
+          "genTokens": 15
+        },
+        {
+          "prompt": "Run the test suite with `cargo test --workspace`.",
+          "expected": "run_command",
+          "outcome": "valid",
+          "called": "run_command",
+          "genTokens": 18
+        },
+        {
+          "prompt": "In src/lib/ipc.ts replace `invoke<AppInfo>(\"app_info\")` with `invoke<AppInfo>(\"get_app_info\")`.",
+          "expected": "edit_file",
+          "outcome": "wrong_tool",
+          "called": "read_file",
+          "genTokens": 21,
+          "doneReason": "stop",
+          "content": ""
+        },
+        {
+          "prompt": "Show me the contents of Cargo.toml at the repository root.",
+          "expected": "read_file",
+          "outcome": "valid",
+          "called": "read_file",
+          "genTokens": 17
+        },
+        {
+          "prompt": "Look for every TODO comment in the codebase.",
+          "expected": "search",
+          "outcome": "wrong_tool",
+          "called": "run_command",
+          "genTokens": 21,
+          "doneReason": "stop",
+          "content": ""
+        },
+        {
+          "prompt": "Check the TypeScript types by running `bun run typecheck`.",
+          "expected": "run_command",
+          "outcome": "valid",
+          "called": "run_command",
+          "genTokens": 18
+        },
+        {
+          "prompt": "In apps/cli/src/main.rs rename the constant declared as `const USAGE: &str` to HELP_TEXT.",
+          "expected": "edit_file",
+          "outcome": "wrong_tool",
+          "called": "read_file",
+          "genTokens": 23,
+          "doneReason": "stop",
+          "content": ""
+        },
+        {
+          "prompt": "What does crates/agent-core/src/lib.rs export? Read it.",
+          "expected": "read_file",
+          "outcome": "valid",
+          "called": "read_file",
+          "genTokens": 25
+        },
+        {
+          "prompt": "Search for the string \"core v\" to find where the version label is rendered.",
+          "expected": "search",
+          "outcome": "valid",
+          "called": "search",
+          "genTokens": 14
+        }
+      ]
+    },
+    {
+      "model": "devstral-small-2",
+      "runs": [
+        {
+          "numCtx": 8192,
+          "loadSeconds": 18.3,
+          "promptTokens": 4638,
+          "prefillTokensPerSecond": 42.1,
+          "genTokens": 43,
+          "genTokensPerSecond": 2.1,
+          "allocatedGb": 0,
+          "vramGb": 0,
+          "gpuPercent": 0,
+          "freeRamGbAfter": 4.9
+        },
+        {
+          "numCtx": 32768,
+          "loadSeconds": 19.4,
+          "promptTokens": 4638,
+          "prefillTokensPerSecond": 42,
+          "genTokens": 43,
+          "genTokensPerSecond": 2,
+          "allocatedGb": 0,
+          "vramGb": 0,
+          "gpuPercent": 0,
+          "freeRamGbAfter": 1.2
+        }
+      ],
+      "tools": {
+        "valid": 10,
+        "no_call": 0,
+        "wrong_tool": 0,
+        "bad_args": 0
+      },
+      "toolSeconds": 99.2,
+      "toolCases": [
+        {
+          "prompt": "Open src/app/page.tsx so we can see how the layout is built.",
+          "expected": "read_file",
+          "outcome": "valid",
+          "called": "read_file",
+          "genTokens": 14
+        },
+        {
+          "prompt": "Find where the function getAppInfo is used in the project.",
+          "expected": "search",
+          "outcome": "valid",
+          "called": "search",
+          "genTokens": 12
+        },
+        {
+          "prompt": "Run the test suite with `cargo test --workspace`.",
+          "expected": "run_command",
+          "outcome": "valid",
+          "called": "run_command",
+          "genTokens": 15
+        },
+        {
+          "prompt": "In src/lib/ipc.ts replace `invoke<AppInfo>(\"app_info\")` with `invoke<AppInfo>(\"get_app_info\")`.",
+          "expected": "edit_file",
+          "outcome": "valid",
+          "called": "edit_file",
+          "genTokens": 49
+        },
+        {
+          "prompt": "Show me the contents of Cargo.toml at the repository root.",
+          "expected": "read_file",
+          "outcome": "valid",
+          "called": "read_file",
+          "genTokens": 14
+        },
+        {
+          "prompt": "Look for every TODO comment in the codebase.",
+          "expected": "search",
+          "outcome": "valid",
+          "called": "search",
+          "genTokens": 10
+        },
+        {
+          "prompt": "Check the TypeScript types by running `bun run typecheck`.",
+          "expected": "run_command",
+          "outcome": "valid",
+          "called": "run_command",
+          "genTokens": 15
+        },
+        {
+          "prompt": "In apps/cli/src/main.rs rename the constant declared as `const USAGE: &str` to HELP_TEXT.",
+          "expected": "edit_file",
+          "outcome": "valid",
+          "called": "edit_file",
+          "genTokens": 39
+        },
+        {
+          "prompt": "What does crates/agent-core/src/lib.rs export? Read it.",
+          "expected": "read_file",
+          "outcome": "valid",
+          "called": "read_file",
+          "genTokens": 18
+        },
+        {
+          "prompt": "Search for the string \"core v\" to find where the version label is rendered.",
+          "expected": "search",
+          "outcome": "valid",
+          "called": "search",
+          "genTokens": 11
+        }
+      ]
+    }
+  ]
+}
