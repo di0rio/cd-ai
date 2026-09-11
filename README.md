@@ -52,6 +52,7 @@ cargo run -p cd-ai-cli -- --version
 
 | Comando | O que faz |
 | --- | --- |
+| `bun run verify` | Roda todos os checks: Biome, typecheck, testes do frontend, `cargo fmt`, clippy e testes do Rust |
 | `bun run build` | Gera o app desktop de produção (`tauri build`) |
 | `bun run check` | Lint e formatação com Biome |
 | `bun run format` | Formata o código com Biome |
