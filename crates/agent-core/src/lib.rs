@@ -1,5 +1,9 @@
+pub mod events;
 pub mod ollama;
+pub mod permissions;
+pub mod redactor;
 pub mod tool_call;
+pub mod tools;
 pub mod workspace;
 
 use serde::Serialize;

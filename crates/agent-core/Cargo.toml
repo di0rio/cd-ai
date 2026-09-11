@@ -4,9 +4,17 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+grep-regex = "0.1.14"
+grep-searcher = "0.1.17"
+ignore = "0.4.33"
 reqwest = { version = "0.13.5", default-features = false, features = ["json"] }
 serde.workspace = true
 serde_json = "1.0.151"
+sha2 = "0.11.0"
+similar = "3.2.0"
+tree-sitter = "0.27.0"
+tree-sitter-rust = "0.24.2"
+tree-sitter-typescript = "0.23.2"
 ts-rs = "12.0.1"
 
 [dev-dependencies]
