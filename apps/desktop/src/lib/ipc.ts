@@ -20,3 +20,29 @@ export function openWorkspace(): Promise<WorkspaceInfo | null> {
 export function currentWorkspace(): Promise<WorkspaceInfo | null> {
   return invoke<WorkspaceInfo | null>("current_workspace");
 }
+
+// Mirrors agent_core::ollama::{ModelInfo, LoadedModel, OllamaStatus}.
+export type ModelInfo = {
+  name: string;
+  size_bytes: number;
+  parameter_size: string;
+  quantization: string;
+};
+
+export type LoadedModel = {
+  name: string;
+  size_bytes: number;
+  vram_bytes: number;
+};
+
+export type OllamaStatus = {
+  reachable: boolean;
+  version: string | null;
+  models: ModelInfo[];
+  loaded: LoadedModel[];
+  error: string | null;
+};
+
+export function getOllamaStatus(): Promise<OllamaStatus> {
+  return invoke<OllamaStatus>("ollama_status");
+}

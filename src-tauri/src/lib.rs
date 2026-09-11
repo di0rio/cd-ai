@@ -41,6 +41,27 @@ fn current_workspace(
         .map(|workspace| workspace.info())
 }
 
+#[tauri::command]
+async fn ollama_status() -> agent_core::ollama::OllamaStatus {
+    let raw = std::env::var("OLLAMA_HOST")
+        .unwrap_or_else(|_| agent_core::ollama::DEFAULT_BASE_URL.to_string());
+    let base = if raw.starts_with("http") {
+        raw
+    } else {
+        format!("http://{raw}")
+    };
+    match agent_core::ollama::OllamaClient::new(&base) {
+        Ok(client) => client.status().await,
+        Err(error) => agent_core::ollama::OllamaStatus {
+            reachable: false,
+            version: None,
+            models: vec![],
+            loaded: vec![],
+            error: Some(error),
+        },
+    }
+}
+
 pub fn run() {
     tauri::Builder::default()
         .manage(AppState {
@@ -50,7 +71,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             app_info,
             open_workspace,
-            current_workspace
+            current_workspace,
+            ollama_status
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
