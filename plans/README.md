@@ -37,6 +37,14 @@ Cada executor deve:
 | 013 | Tooltip volta a funcionar em botões de ícone desabilitados | P3 | S | — | DONE |
 | 014 | Implementar a Fase 4 (tools, permissões, redator, eventos) | P1 | L | 002, 005, 006, 009, 010, 012 | DONE |
 
+### Geração 3
+
+Escrita pelo lead em 2026-09-11 sobre o commit `040369a`. Ponto de partida: `docs/handoff.md`.
+
+| Plano | Título | Prioridade | Esforço | Depende de | Status |
+|------|--------|-----------|---------|------------|--------|
+| 015 | Fase 5 — loop de ponta a ponta (core, bridge, CLI e UI) | P1 | L | 014 | TODO |
+
 O plano 009 foi adicionado depois do benchmark de modelos (`docs/audit/benchmark-2026-09-11.md`). O modelo CODER escolhido escreve tool calls num formato que o Ollama 0.34 não converte.
 
 Valores de status: TODO | IN PROGRESS | DONE | BLOCKED (com motivo de uma linha) | REJECTED (com justificativa de uma linha).
@@ -55,6 +63,19 @@ Valores de status: TODO | IN PROGRESS | DONE | BLOCKED (com motivo de uma linha)
 - **011 antes de 005.** O 005 reescreve `apps/cli/src/main.rs`; os testes do 011 travam o comportamento atual antes disso.
 - **012 produz o design da Fase 4** (`docs/design/fase-4-tool-engine.md`). A implementação das ferramentas/redator/permissões é o plano **014**, reservado, dependente de 002, 005, 006, 009, 010 e 012; o executor de 014 deve citar o documento de design (fonte da verdade da Fase 4).
 - **010 é pré-requisito de UI** para ligar o stream de eventos do Tool Engine à conversa (a conversa hoje assume lista estática).
+
+### Geração 3
+
+- **O 015 é dividido em partes com dono** (0 e A a G) e executado em 3 ondas (ver "Ondas e notas de dependência" no próprio plano).
+  - **Onda 1:** `core` faz 0 → A → B → C → D em sequência, porque todas editam o crate `agent-core`. A Parte 0 conserta os testes de `tools::command`, que falham no Windows na base `040369a`, então o gate está vermelho hoje. Em paralelo, `ui` faz a G1, só com os bindings que já existem.
+  - **Onda 2:** `bridge` (E) e `cli` (F), em crates diferentes.
+  - **Onda 3:** `ui` faz a G2.
+- **Arquivos disputados têm um dono por vez:**
+  - `bindings/` e `lib.rs` do core ficam só com o `core`;
+  - `apps/cli/src/main.rs`: A, depois F;
+  - `conversation.tsx`: G1, depois G2;
+  - `ipc.ts` fica só com a E.
+- **Sem worktrees:** todos usam o mesmo working tree. Um gate vermelho causado por arquivo fora do escopo de quem roda espera o aviso do lead e roda de novo; ninguém reporta pronto com o gate vermelho.
 
 ## Achados considerados e descartados
 
