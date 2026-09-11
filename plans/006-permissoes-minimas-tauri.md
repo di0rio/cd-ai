@@ -172,6 +172,8 @@ Se algum item falhar com erro de permissão no console (mensagens com `not allow
 
 Não há teste automatizado possível para a ACL sem E2E. A verificação é o Passo 3. Registre no status do plano quais itens foram conferidos manualmente.
 
+> **Status da execução (2026-09-11):** build validou os identificadores, app abre sem erro de permissão no log. Itens 1 a 3 do Passo 3 (visual) pendentes de conferência humana; item 4 pulado conforme definido (`withGlobalTauri` desligado, sem `window.__TAURI__`).
+
 ## Critérios de pronto
 
 - [ ] `src-tauri/capabilities/default.json` não contém `core:default`
