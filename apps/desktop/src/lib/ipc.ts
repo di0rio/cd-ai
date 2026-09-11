@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { Channel, invoke } from "@tauri-apps/api/core";
 
 // Mirrors agent_core::AppInfo. The Rust side is the source of truth.
 export type AppInfo = {
@@ -45,4 +45,28 @@ export type OllamaStatus = {
 
 export function getOllamaStatus(): Promise<OllamaStatus> {
   return invoke<OllamaStatus>("ollama_status");
+}
+
+// Mirrors agent_core::ollama::{ChatRequest, ChatEvent}.
+export type ChatMessage = { role: "system" | "user" | "assistant"; content: string };
+
+export type ChatRequest = { model: string; messages: ChatMessage[]; numCtx: number };
+
+export type ChatEvent =
+  | { event: "token"; data: { content: string } }
+  | { event: "thinking"; data: { content: string } }
+  | {
+      event: "done";
+      data: { promptTokens: number; genTokens: number; promptMs: number; genMs: number };
+    }
+  | { event: "error"; data: { message: string } };
+
+export async function startChat(request: ChatRequest, onEvent: (event: ChatEvent) => void): Promise<number> {
+  const channel = new Channel<ChatEvent>();
+  channel.onmessage = onEvent;
+  return invoke<number>("chat", { request, onEvent: channel });
+}
+
+export function cancelChat(id: number): Promise<boolean> {
+  return invoke<boolean>("cancel_chat", { id });
 }
