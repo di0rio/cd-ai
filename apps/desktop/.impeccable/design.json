@@ -1,0 +1,208 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-09-11T00:00:00Z",
+  "title": "Design System: cd-ai",
+  "extensions": {
+    "colorMeta": {
+      "accent": {
+        "role": "primary",
+        "displayName": "Verde-água de sinal",
+        "canonical": "oklch(0.52 0.1 195)",
+        "dark": "oklch(0.78 0.1 195)",
+        "tonalRamp": [
+          "oklch(0.15 0.1 195)",
+          "oklch(0.26 0.1 195)",
+          "oklch(0.37 0.1 195)",
+          "oklch(0.48 0.1 195)",
+          "oklch(0.6 0.1 195)",
+          "oklch(0.72 0.1 195)",
+          "oklch(0.84 0.07 195)",
+          "oklch(0.95 0.03 195)"
+        ]
+      },
+      "canvas": {
+        "role": "neutral",
+        "displayName": "Canvas",
+        "canonical": "oklch(0.99 0.002 250)",
+        "dark": "oklch(0.19 0.006 250)"
+      },
+      "sidebar": {
+        "role": "neutral",
+        "displayName": "Painel lateral",
+        "canonical": "oklch(0.965 0.004 250)",
+        "dark": "oklch(0.165 0.006 250)"
+      },
+      "raised": {
+        "role": "neutral",
+        "displayName": "Superfície elevada",
+        "canonical": "oklch(1 0 0)",
+        "dark": "oklch(0.225 0.007 250)"
+      },
+      "line": {
+        "role": "neutral",
+        "displayName": "Linha",
+        "canonical": "oklch(0.9 0.005 250)",
+        "dark": "oklch(0.3 0.008 250)"
+      },
+      "ink": {
+        "role": "neutral",
+        "displayName": "Tinta",
+        "canonical": "oklch(0.23 0.012 250)",
+        "dark": "oklch(0.94 0.005 250)",
+        "tonalRamp": [
+          "oklch(0.15 0.012 250)",
+          "oklch(0.26 0.012 250)",
+          "oklch(0.37 0.012 250)",
+          "oklch(0.48 0.012 250)",
+          "oklch(0.6 0.01 250)",
+          "oklch(0.72 0.008 250)",
+          "oklch(0.84 0.006 250)",
+          "oklch(0.95 0.004 250)"
+        ]
+      },
+      "ink-muted": {
+        "role": "neutral",
+        "displayName": "Tinta secundária",
+        "canonical": "oklch(0.45 0.012 250)",
+        "dark": "oklch(0.74 0.01 250)"
+      },
+      "ink-faint": {
+        "role": "neutral",
+        "displayName": "Tinta discreta",
+        "canonical": "oklch(0.55 0.01 250)",
+        "dark": "oklch(0.62 0.01 250)"
+      },
+      "ok": {
+        "role": "semantic",
+        "displayName": "Validado",
+        "canonical": "oklch(0.52 0.13 150)",
+        "dark": "oklch(0.76 0.14 150)"
+      },
+      "warn": {
+        "role": "semantic",
+        "displayName": "Atenção",
+        "canonical": "oklch(0.6 0.13 70)",
+        "dark": "oklch(0.8 0.13 75)"
+      },
+      "bad": {
+        "role": "semantic",
+        "displayName": "Falha",
+        "canonical": "oklch(0.55 0.19 25)",
+        "dark": "oklch(0.7 0.17 25)"
+      }
+    },
+    "typographyMeta": {
+      "title": { "displayName": "Title", "purpose": "Título de estado vazio; uma vez por tela." },
+      "conversation": { "displayName": "Conversation", "purpose": "Mensagens do usuário e do agente." },
+      "body": { "displayName": "Body", "purpose": "Linhas de atividade, sidebar, cabeçalho." },
+      "label": { "displayName": "Label", "purpose": "Rótulos de grupo, metadados, linha de estado." },
+      "code": { "displayName": "Code", "purpose": "Paths, comandos, nomes de modelo, código inline." }
+    },
+    "shadows": [],
+    "motion": [
+      {
+        "name": "ease-out-expo",
+        "value": "cubic-bezier(0.16, 1, 0.3, 1)",
+        "purpose": "Expandir/recolher atividade, sidebar e painéis (200ms)."
+      },
+      { "name": "press", "value": "scale(0.97) 100ms ease-out", "purpose": "Feedback de pressão em botões." },
+      {
+        "name": "material",
+        "value": "backdrop-filter: blur(16px) saturate(160%)",
+        "purpose": "Cabeçalho translúcido sobre a conversa."
+      }
+    ],
+    "breakpoints": [{ "name": "window-min", "value": "960px" }]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Ação principal da tela, como abrir workspace.",
+      "html": "<button class=\"ds-btn-primary\">Abrir workspace</button>",
+      "css": ".ds-btn-primary { display: inline-flex; align-items: center; gap: 8px; height: 36px; padding: 0 14px; border: 0; border-radius: 8px; background: var(--accent, oklch(0.52 0.1 195)); color: var(--accent-ink, oklch(0.99 0.01 195)); font: 500 14px/1 system-ui, sans-serif; transition: scale 100ms ease-out, opacity 150ms; } .ds-btn-primary:hover { opacity: 0.92; } .ds-btn-primary:active { scale: 0.97; } .ds-btn-primary:focus-visible { outline: 2px solid var(--accent, oklch(0.52 0.1 195)); outline-offset: 2px; }"
+    },
+    {
+      "name": "Icon Button",
+      "kind": "button",
+      "refersTo": "icon-button",
+      "description": "Toggles do cabeçalho (barra lateral, diff, terminal).",
+      "html": "<button class=\"ds-icon-btn\" aria-label=\"Terminal\" aria-pressed=\"false\"><svg viewBox=\"0 0 16 16\" width=\"16\" height=\"16\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><rect x=\"2\" y=\"3\" width=\"12\" height=\"10\" rx=\"1.75\"/><path d=\"m5 6.5 2 1.5-2 1.5M8.5 10H11\"/></svg></button>",
+      "css": ".ds-icon-btn { display: grid; place-items: center; width: 32px; height: 32px; border: 0; border-radius: 8px; background: transparent; color: var(--ink-muted, oklch(0.45 0.012 250)); transition: background-color 150ms, color 150ms, scale 150ms; } .ds-icon-btn:hover, .ds-icon-btn[aria-pressed=\"true\"] { background: var(--sidebar, oklch(0.965 0.004 250)); color: var(--ink, oklch(0.23 0.012 250)); } .ds-icon-btn:active { scale: 0.95; } .ds-icon-btn:focus-visible { outline: 2px solid var(--accent, oklch(0.52 0.1 195)); outline-offset: 2px; }"
+    },
+    {
+      "name": "Explore Row",
+      "kind": "custom",
+      "refersTo": "activity-row",
+      "description": "Atividade de rotina agrupada e recolhida.",
+      "html": "<button class=\"ds-row\" aria-expanded=\"false\"><svg viewBox=\"0 0 16 16\" width=\"16\" height=\"16\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\" stroke-linecap=\"round\"><circle cx=\"7\" cy=\"7\" r=\"4.25\"/><path d=\"m10.25 10.25 3.25 3.25\"/></svg><span>Explorou 3 arquivos · 1 busca</span></button>",
+      "css": ".ds-row { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 32px; padding: 0 8px; border: 0; border-radius: 8px; background: transparent; color: var(--ink-muted, oklch(0.45 0.012 250)); font: 400 14px/1.5 system-ui, sans-serif; text-align: left; transition: background-color 150ms, color 150ms; } .ds-row:hover { background: var(--sidebar, oklch(0.965 0.004 250)); color: var(--ink, oklch(0.23 0.012 250)); } .ds-row:focus-visible { outline: 2px solid var(--accent, oklch(0.52 0.1 195)); outline-offset: 2px; }"
+    },
+    {
+      "name": "Composer",
+      "kind": "input",
+      "refersTo": "composer",
+      "description": "Único campo de entrada de texto.",
+      "html": "<div class=\"ds-composer\"><textarea rows=\"1\" placeholder=\"Responder ao agente…\"></textarea></div>",
+      "css": ".ds-composer { border: 1px solid var(--line, oklch(0.9 0.005 250)); border-radius: 16px; background: var(--raised, #fff); transition: border-color 150ms; } .ds-composer:focus-within { border-color: color-mix(in oklch, var(--accent, oklch(0.52 0.1 195)) 60%, transparent); } .ds-composer textarea { display: block; width: 100%; resize: none; border: 0; background: transparent; padding: 14px 16px 10px; font: 400 15px/1.625 system-ui, sans-serif; color: var(--ink, oklch(0.23 0.012 250)); outline: none; }"
+    },
+    {
+      "name": "Report",
+      "kind": "card",
+      "refersTo": "report",
+      "description": "Veredito da tarefa com evidências.",
+      "html": "<section class=\"ds-report\"><strong>Validado</strong><p>`cd-ai --json` imprime o AppInfo em JSON.</p></section>",
+      "css": ".ds-report { border: 1px solid var(--line, oklch(0.9 0.005 250)); border-radius: 12px; padding: 14px 16px; font: 400 14px/1.5 system-ui, sans-serif; color: var(--ink, oklch(0.23 0.012 250)); } .ds-report strong { font-weight: 600; } .ds-report p { margin: 2px 0 0; color: var(--ink-muted, oklch(0.45 0.012 250)); }"
+    }
+  ],
+  "narrative": {
+    "northStar": "A Sala de Controle",
+    "overview": "O cd-ai é a sala de controle de um agente que trabalha sozinho no código do usuário. A interface é um painel de operação: mostra com precisão o que está acontecendo agora e o que já aconteceu. Gramática do app desktop do Claude Code, com rotina recolhida e estado sempre visível.",
+    "keyCharacteristics": [
+      "Duas camadas neutras frias (canvas e sidebar) e um único acento verde-água.",
+      "Superfícies planas; profundidade por tom e linha de 1px, nunca por sombra.",
+      "Fonte do sistema para tudo; monoespaçada só para código, paths e comandos.",
+      "Estado da tarefa sempre visível acima do composer.",
+      "Rotina recolhida, erro sempre aberto."
+    ],
+    "rules": [
+      {
+        "name": "A Regra da Voz Única",
+        "body": "O verde-água só aparece em ação primária, foco, seleção ou estado ao vivo.",
+        "section": "colors"
+      },
+      {
+        "name": "A Regra do Veredito",
+        "body": "Verde, âmbar e vermelho significam validado, não validado e falhou. Não são usados para mais nada.",
+        "section": "colors"
+      },
+      {
+        "name": "A Regra do Mono Honesto",
+        "body": "Monoespaçada só para o que é literalmente código, path, comando ou identificador.",
+        "section": "typography"
+      },
+      {
+        "name": "A Regra da Camada Dupla",
+        "body": "No máximo dois neutros por região; raised é reservado ao campo do composer.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "Do manter a linha de estado (fase, modelo, contexto) visível em qualquer tarefa aberta.",
+      "Do recolher a atividade de rotina (leituras e buscas bem-sucedidas) e deixar edições, comandos e erros à vista.",
+      "Do usar <meter>, <select> e inert nativos antes de reinventar controles.",
+      "Do manter todo valor dinâmico fora de atributos style no HTML estático. A CSP do Tauri bloqueia estilos inline.",
+      "Do respeitar prefers-reduced-motion (as transições viram instantâneas) e prefers-contrast (as linhas ficam mais fortes).",
+      "Do manter transições de estado entre 150 e 250ms, com ease-out exponencial cubic-bezier(0.16, 1, 0.3, 1)."
+    ],
+    "donts": [
+      "Don't transformar a interface numa IDE: nada de árvore de arquivos fixa, painéis permanentes ou terminal sempre aberto.",
+      "Don't usar logo, nome ou cores da Anthropic ou do Claude. A referência é de estrutura, não de marca.",
+      "Don't usar sombras, gradientes decorativos, texto em gradiente ou bordas coloridas grossas.",
+      "Don't mostrar \"validado\" sem evidência, nem esconder um \"não validado\" atrás de um tom neutro.",
+      "Don't carregar fontes, imagens ou scripts da rede.",
+      "Don't usar rótulos em caixa alta com tracking acima de títulos."
+    ]
+  }
+}
