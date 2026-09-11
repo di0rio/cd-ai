@@ -1,8 +1,8 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "Caua AI",
+  "productName": "cd-ai",
   "version": "0.1.0",
-  "identifier": "dev.caua.ai",
+  "identifier": "dev.cdai.desktop",
   "build": {
     "frontendDist": "../apps/desktop/out",
     "devUrl": "http://localhost:1420",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "Cauã AI",
+        "title": "cd-ai",
         "width": 1280,
         "height": 800,
         "minWidth": 960,

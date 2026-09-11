@@ -13,7 +13,7 @@ Agent Core ──────┤
 ```
 
 - `src-tauri` é **só o adaptador desktop**: commands e events do Tauri que chamam o core. Não contém lógica de agente.
-- A CLI (`caua-ai task "..."`) usa o mesmo core, sem UI. É ela que roda o eval.
+- A CLI (`cd-ai task "..."`) usa o mesmo core, sem UI. É ela que roda o eval.
 - Toda validação de path, permissão, classificação de comando, sandbox e redação de secrets vive no Rust. A webview nunca é fronteira de confiança.
 
 ## Motivos

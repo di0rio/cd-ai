@@ -10,7 +10,7 @@
       },
     },
     "apps/desktop": {
-      "name": "@caua-ai/desktop",
+      "name": "@cd-ai/desktop",
       "dependencies": {
         "@tauri-apps/api": "^2.11.1",
         "next": "^16.3.4",
@@ -48,7 +48,7 @@
 
     "@biomejs/cli-win32-x64": ["@biomejs/cli-win32-x64@2.5.13", "", { "os": "win32", "cpu": "x64" }, "sha512-VOofU/nW761XWzUeUNE8zzYNyPrxuMuNFMizL0qz7J75yeV8N7WFheUlk1/K6dOkaFpH9wJ+lDKlwjAbw0346w=="],
 
-    "@caua-ai/desktop": ["@caua-ai/desktop@workspace:apps/desktop"],
+    "@cd-ai/desktop": ["@cd-ai/desktop@workspace:apps/desktop"],
 
     "@emnapi/runtime": ["@emnapi/runtime@1.11.3", "", { "dependencies": { "tslib": "^2.4.0" } }, "sha512-Xz4Tpyki7XyrpbUK1jR1AhdAdaXyhhY4lZ3neLodmhpuWfy2PAQN5B46sAiU4liOXGLkHypn/qU+jvfWSCYYLA=="],
 

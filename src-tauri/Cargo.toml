@@ -1,10 +1,10 @@
 [package]
-name = "caua-ai-desktop"
+name = "cd-ai-desktop"
 version.workspace = true
 edition.workspace = true
 
 [lib]
-name = "caua_ai_desktop_lib"
+name = "cd_ai_desktop_lib"
 
 [build-dependencies]
 tauri-build = { version = "2.6.3", features = [] }
