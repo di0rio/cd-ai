@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { demoTasks } from "@/lib/demo-session";
+import { currentWorkspace, openWorkspace, type WorkspaceInfo } from "@/lib/ipc";
 import type { Task } from "@/lib/session";
 import { Composer } from "./composer";
 import { Conversation } from "./conversation";
@@ -15,6 +16,8 @@ export function AppShell() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [panel, setPanel] = useState<PanelKind | null>(null);
+  const [workspace, setWorkspace] = useState<WorkspaceInfo | null>(null);
+  const [workspaceError, setWorkspaceError] = useState<string | null>(null);
   const demo = tasks.length > 0 && tasks === demoTasks;
 
   useEffect(() => {
@@ -23,6 +26,11 @@ export function AppShell() {
       setTasks(demoTasks);
       setSelectedId(demoTasks[0].id);
     }
+  }, []);
+
+  useEffect(() => {
+    // Outside Tauri the call rejects and that is expected.
+    currentWorkspace().then(setWorkspace, () => {});
   }, []);
 
   useEffect(() => {
@@ -41,14 +49,27 @@ export function AppShell() {
   const task = tasks.find((candidate) => candidate.id === selectedId) ?? null;
   const togglePanel = (kind: PanelKind) => setPanel((current) => (current === kind ? null : kind));
 
+  const handleOpenWorkspace = async () => {
+    try {
+      const info = await openWorkspace();
+      if (info) {
+        setWorkspace(info);
+        setWorkspaceError(null);
+      }
+    } catch (error) {
+      setWorkspaceError(String(error));
+    }
+  };
+
   return (
     <div className="flex h-full">
       <Sidebar
         open={sidebarOpen}
-        workspace={task?.workspace ?? null}
+        workspace={workspace?.name ?? task?.workspace ?? null}
         tasks={tasks}
         selectedId={selectedId}
         onSelect={setSelectedId}
+        onOpenWorkspace={handleOpenWorkspace}
       />
 
       <main className="relative flex min-w-0 flex-1">
@@ -67,7 +88,7 @@ export function AppShell() {
               </span>
             </div>
           ) : (
-            <h1 className="font-medium text-ink-muted">Nenhum workspace aberto</h1>
+            <h1 className="font-medium text-ink-muted">{workspace ? workspace.name : "Nenhum workspace aberto"}</h1>
           )}
           {demo && (
             <span className="shrink-0 rounded-full bg-accent/12 px-2 py-0.5 text-xs text-accent">Demonstração</span>
@@ -97,7 +118,7 @@ export function AppShell() {
               <Composer task={task} />
             </>
           ) : (
-            <EmptyWorkspace />
+            <EmptyWorkspace workspace={workspace} error={workspaceError} onOpen={handleOpenWorkspace} />
           )}
         </div>
 
