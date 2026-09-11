@@ -582,12 +582,19 @@ impl ToolEngine {
 }
 
 /// Small helper to render a canonical path as workspace-relative when possible.
+///
+/// Always joins with `/`, even on Windows: the result crosses the IPC boundary
+/// to the model and the UI, both of which expect a forward-slash contract.
 pub fn display_path(workspace: &Workspace, path: &std::path::Path) -> String {
     if let Ok(relative) = path.strip_prefix(workspace.root()) {
         if relative.as_os_str().is_empty() {
             return ".".to_string();
         }
-        return relative.to_string_lossy().into_owned();
+        return relative
+            .components()
+            .map(|component| component.as_os_str().to_string_lossy())
+            .collect::<Vec<_>>()
+            .join("/");
     }
     path.display().to_string()
 }
