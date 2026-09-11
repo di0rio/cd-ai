@@ -35,7 +35,7 @@ Cada executor deve:
 | 011 | Testes de caracterização da CLI (antes do 005 reescrever `main.rs`) | P1 | S | — | DONE |
 | 012 | Design/spike da Fase 4: Tool Engine, permissões, redator, eventos | P1 | M | leitura de 001–009 | DONE |
 | 013 | Tooltip volta a funcionar em botões de ícone desabilitados | P3 | S | — | DONE |
-| 014 | Implementar a Fase 4 (tools, permissões, redator, eventos) | P1 | L | 002, 005, 006, 009, 010, 012 | TODO |
+| 014 | Implementar a Fase 4 (tools, permissões, redator, eventos) | P1 | L | 002, 005, 006, 009, 010, 012 | DONE |
 
 O plano 009 foi adicionado depois do benchmark de modelos (`docs/audit/benchmark-2026-09-11.md`). O modelo CODER escolhido escreve tool calls num formato que o Ollama 0.34 não converte.
 

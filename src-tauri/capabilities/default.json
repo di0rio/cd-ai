@@ -9,6 +9,8 @@
     "allow-current-workspace",
     "allow-ollama-status",
     "allow-chat",
-    "allow-cancel-chat"
+    "allow-cancel-chat",
+    "allow-run-tool",
+    "allow-respond-approval"
   ]
 }

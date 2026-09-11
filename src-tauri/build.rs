@@ -9,6 +9,8 @@ fn main() {
             "ollama_status",
             "chat",
             "cancel_chat",
+            "run_tool",
+            "respond_approval",
         ]),
     ))
     .expect("failed to run tauri-build");
