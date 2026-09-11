@@ -2,6 +2,7 @@ import Image from "next/image";
 import type { Task, TaskStatus } from "@/lib/session";
 import { CoreStatus } from "./core-status";
 import { Icon } from "./icons";
+import { OllamaIndicator } from "./ollama-status";
 
 const STATUS: Record<TaskStatus, { label: string; dot: string }> = {
   running: { label: "Em andamento", dot: "bg-accent animate-pulse" },
@@ -91,10 +92,7 @@ export function Sidebar({ open, workspace, tasks, selectedId, onSelect, onOpenWo
         </nav>
 
         <div className="space-y-1 border-t border-line px-4 py-3 text-xs text-ink-faint">
-          <p className="flex items-center gap-2">
-            <span className="size-1.5 rounded-full bg-ink-faint" />
-            Ollama · não verificado
-          </p>
+          <OllamaIndicator />
           <CoreStatus />
         </div>
       </div>

@@ -1,3 +1,4 @@
+pub mod ollama;
 pub mod workspace;
 
 use serde::Serialize;
