@@ -23,7 +23,7 @@ Cada executor deve:
 | 004 | Provider do Ollama no Rust + status real na sidebar | P1 | M | 001 | DONE |
 | 005 | Chat em streaming cancelável com o Ollama (core, IPC, CLI) | P2 | L | 004 | DONE |
 | 006 | Permissões mínimas no Tauri (ACL para os commands do app) | P2 | S | 003, 004, 005 | DONE |
-| 007 | Remover o `style=` inline gerado pelo `next/image` | P3 | S | 001 | TODO |
+| 007 | Remover o `style=` inline gerado pelo `next/image` | P3 | S | 001 | DONE |
 | 008 | Gerar os tipos TypeScript do IPC a partir do Rust | P2 | M | 003, 004 | TODO |
 | 009 | Parser tolerante de tool calls no formato `<function=…>` | P2 | S | 001 | TODO |
 
@@ -31,10 +31,10 @@ Cada executor deve:
 
 | Plano | Título | Prioridade | Esforço | Depende de | Status |
 |------|--------|-----------|---------|------------|--------|
-| 010 | Conversa segue eventos vivos (auto-scroll + comando que falha abre) | P1 | S | — | TODO |
+| 010 | Conversa segue eventos vivos (auto-scroll + comando que falha abre) | P1 | S | — | DONE |
 | 011 | Testes de caracterização da CLI (antes do 005 reescrever `main.rs`) | P1 | S | — | DONE |
 | 012 | Design/spike da Fase 4: Tool Engine, permissões, redator, eventos | P1 | M | leitura de 001–009 | TODO |
-| 013 | Tooltip volta a funcionar em botões de ícone desabilitados | P3 | S | — | TODO |
+| 013 | Tooltip volta a funcionar em botões de ícone desabilitados | P3 | S | — | DONE |
 
 O plano 009 foi adicionado depois do benchmark de modelos (`docs/audit/benchmark-2026-09-11.md`). O modelo CODER escolhido escreve tool calls num formato que o Ollama 0.34 não converte.
 
