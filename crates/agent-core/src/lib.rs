@@ -3,10 +3,14 @@ pub mod tool_call;
 pub mod workspace;
 
 use serde::Serialize;
+use ts_rs::TS;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[ts(export)]
 pub struct AppInfo {
+    #[ts(type = "string")]
     pub name: &'static str,
+    #[ts(type = "string")]
     pub version: &'static str,
 }
 

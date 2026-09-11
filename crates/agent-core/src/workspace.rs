@@ -4,9 +4,11 @@ use std::io;
 use std::path::{Component, Path, PathBuf};
 
 use serde::Serialize;
+use ts_rs::TS;
 
 /// What the UI needs to show an open workspace.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[ts(export)]
 pub struct WorkspaceInfo {
     pub name: String,
     pub root: String,

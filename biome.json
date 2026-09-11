@@ -1,5 +1,6 @@
 {
   "$schema": "./node_modules/@biomejs/biome/configuration_schema.json",
+  "files": { "includes": ["**", "!!apps/desktop/src/lib/bindings"] },
   "vcs": {
     "enabled": true,
     "clientKind": "git",

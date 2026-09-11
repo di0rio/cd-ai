@@ -24,7 +24,7 @@ Cada executor deve:
 | 005 | Chat em streaming cancelável com o Ollama (core, IPC, CLI) | P2 | L | 004 | DONE |
 | 006 | Permissões mínimas no Tauri (ACL para os commands do app) | P2 | S | 003, 004, 005 | DONE |
 | 007 | Remover o `style=` inline gerado pelo `next/image` | P3 | S | 001 | DONE |
-| 008 | Gerar os tipos TypeScript do IPC a partir do Rust | P2 | M | 003, 004 | TODO |
+| 008 | Gerar os tipos TypeScript do IPC a partir do Rust | P2 | M | 003, 004 | DONE |
 | 009 | Parser tolerante de tool calls no formato `<function=…>` | P2 | S | 001 | DONE |
 
 ### Geração 2
