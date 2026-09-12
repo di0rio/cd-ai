@@ -72,7 +72,7 @@ function TerminalLog({ task }: { task: Task }) {
             </pre>
           )}
           <p
-            className={`mt-1.5 ${command.exitCode === null ? "text-accent" : command.exitCode === 0 ? "text-ink-faint" : "text-bad"}`}
+            className={`mt-1.5 ${command.exitCode === null ? "text-signal" : command.exitCode === 0 ? "text-ink-faint" : "text-bad"}`}
           >
             {command.exitCode === null ? "rodando…" : `exit ${command.exitCode}`}
           </p>

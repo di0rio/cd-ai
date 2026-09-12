@@ -91,7 +91,7 @@ function Resume({ onResume }: { onResume: () => void }) {
       <button
         type="button"
         onClick={onResume}
-        className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-accent pr-3.5 pl-2.5 font-medium text-accent-ink transition-[scale] duration-100 active:scale-[0.97]"
+        className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-signal pr-3.5 pl-2.5 font-medium text-signal-ink transition-[scale] duration-100 active:scale-[0.97]"
       >
         <Icon name="chevron" className="size-4" />
         Retomar
@@ -258,7 +258,7 @@ function CommandRow({ event }: { event: CommandEvent }) {
   }, [failed]);
 
   const status = running ? (
-    <span className="flex items-center gap-1.5 text-accent">
+    <span className="flex items-center gap-1.5 text-signal">
       <span className="size-3 animate-spin rounded-full border-[1.5px] border-current border-t-transparent" />
       rodando
     </span>

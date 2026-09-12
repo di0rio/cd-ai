@@ -8,7 +8,7 @@ export const metadata: Metadata = {
 
 const DIRECTION_CONTRACT = `<!--
 THESIS: conversation-first coding agent in the grammar of the Claude Code desktop app (Code tab); refuses the IDE layout of fixed file tree, activity and terminal panes.
-OWN-WORLD: two cool-neutral layers (canvas, sidebar), one teal accent for primary action, selection and live state; system sans, mono only for code, paths and commands; 1px lines, 8-16px radii, translucent top bar.
+OWN-WORLD: two cool-neutral layers (canvas, sidebar), one teal signal for primary action, selection and live state; system sans, mono only for code, paths and commands; 1px lines, 8-16px radii, translucent top bar.
 STORY: pick a task, read what the agent did in plain language; routine exploration folds into one line, edits, commands and errors stay visible; every task ends on an evidence verdict.
 FIRST VIEWPORT: 16rem task sidebar left; conversation column max 46rem under a translucent 48px top bar; status line (phase, context) above the composer at the bottom; diff and terminal open on demand at the right.
 FORM: pinned by the user (Claude Code desktop canon, no roll), improved with grouped activity and always-visible state.

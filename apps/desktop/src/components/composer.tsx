@@ -5,6 +5,7 @@ import { formatTokens } from "@/lib/format";
 import { PHASES, type Phase, type Task, type TaskStatus } from "@/lib/session";
 import { IconButton } from "./icon-button";
 import { Icon, type IconName } from "./icons";
+import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 
 const PHASE_LABEL: Record<Phase, string> = {
   explore: "Explorar",
@@ -86,6 +87,8 @@ export function Composer({
       ? loadedModels.includes(activeModel)
       : Boolean(task?.modelLoaded && task.model === activeModel);
 
+  const loadedHint = loaded ? "Modelo carregado no Ollama" : "Modelo ainda não carregado no Ollama";
+
   const submit = () => {
     if (!canSend) return;
     if (running) {
@@ -97,6 +100,17 @@ export function Composer({
     setDraft("");
     if (inputRef.current) inputRef.current.style.height = "auto";
   };
+
+  const send = (
+    <button
+      type="submit"
+      disabled={!canSend}
+      aria-label={running ? "Enviar correção" : "Iniciar tarefa"}
+      className="grid size-8 place-items-center rounded-full bg-signal text-signal-ink transition-[scale,opacity] duration-150 active:scale-95 disabled:pointer-events-none disabled:opacity-30"
+    >
+      <Icon name="arrowUp" />
+    </button>
+  );
 
   return (
     <div className="relative px-6 pb-5 before:pointer-events-none before:absolute before:inset-x-0 before:-top-8 before:h-8 before:bg-linear-to-t before:from-canvas before:to-transparent">
@@ -120,7 +134,7 @@ export function Composer({
             event.preventDefault();
             submit();
           }}
-          className="rounded-2xl border border-line bg-raised transition-colors focus-within:border-accent/60"
+          className="rounded-2xl border border-line bg-raised transition-colors focus-within:border-signal/60"
         >
           <label htmlFor="composer" className="sr-only">
             Mensagem para o agente
@@ -147,14 +161,27 @@ export function Composer({
           />
           <div className="flex min-w-0 items-center gap-1 px-2.5 pb-2.5">
             {/* In a narrow column only the icons stay: the model name is what has to remain readable. */}
-            <span title={PERMISSION_HINT} className="flex shrink-0 items-center gap-1.5 px-1 text-xs text-ink-faint">
-              <Icon name="lock" className="size-3.5" />
-              <span className="hidden @lg:inline">{PERMISSION_MODE}</span>
-            </span>
-            <span
-              title={loaded ? "Modelo carregado no Ollama" : "Modelo ainda não carregado no Ollama"}
-              className={`ml-1 size-1.5 shrink-0 rounded-full ${loaded ? "bg-ok" : "bg-ink-faint"}`}
-            />
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span className="flex shrink-0 items-center gap-1.5 px-1 text-xs text-ink-faint">
+                  <Icon name="lock" className="size-3.5" />
+                  <span className="hidden @lg:inline">{PERMISSION_MODE}</span>
+                  {/* The tooltip is a hover affordance; a reader that never hovers still gets the rule. */}
+                  <span className="sr-only">{PERMISSION_HINT}</span>
+                </span>
+              </TooltipTrigger>
+              <TooltipContent>{PERMISSION_HINT}</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span
+                  role="img"
+                  aria-label={loadedHint}
+                  className={`ml-1 size-1.5 shrink-0 rounded-full ${loaded ? "bg-ok" : "bg-ink-faint"}`}
+                />
+              </TooltipTrigger>
+              <TooltipContent>{loadedHint}</TooltipContent>
+            </Tooltip>
             {names.length > 0 ? (
               <Select
                 label="Modelo"
@@ -172,15 +199,17 @@ export function Composer({
             </span>
             <div className="ml-auto flex items-center gap-1">
               {running && <IconButton label="Cancelar tarefa" icon="stop" onClick={onCancel} />}
-              <button
-                type="submit"
-                disabled={!canSend}
-                aria-label={running ? "Enviar correção" : "Iniciar tarefa"}
-                title={blocked}
-                className="grid size-8 place-items-center rounded-full bg-accent text-accent-ink transition-[scale,opacity] duration-150 active:scale-95 disabled:opacity-30"
-              >
-                <Icon name="arrowUp" />
-              </button>
+              {blocked ? (
+                <Tooltip>
+                  {/* A disabled button swallows pointer events, so the reason hangs on a wrapper. */}
+                  <TooltipTrigger asChild>
+                    <span className="inline-flex">{send}</span>
+                  </TooltipTrigger>
+                  <TooltipContent>{blocked}</TooltipContent>
+                </Tooltip>
+              ) : (
+                send
+              )}
             </div>
           </div>
         </form>
@@ -205,7 +234,7 @@ function StatusLine({ task }: { task: Task }) {
               className={`flex items-center gap-1.5 ${index === current ? "" : "sr-only @lg:not-sr-only"} ${index < current ? "text-ink-muted" : index === current ? "font-medium text-ink" : ""}`}
             >
               {index > 0 && <Icon name="chevron" className="hidden size-3 text-ink-faint @lg:block" />}
-              {index === current && <span className="size-1.5 animate-pulse rounded-full bg-accent" />}
+              {index === current && <span className="size-1.5 animate-pulse rounded-full bg-signal" />}
               {PHASE_LABEL[phase]}
             </li>
           ))}

@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { ComponentProps, ReactNode } from "react";
 
 // One stroke family: 16px grid, 1.5 stroke, round caps.
 const paths = {
@@ -8,6 +8,7 @@ const paths = {
   ),
   chevron: <path d="M6.5 4.5 10 8l-3.5 3.5" />,
   chevronDown: <path d="M4.5 6.5 8 10l3.5-3.5" />,
+  chevronUp: <path d="M4.5 9.5 8 6l3.5 3.5" />,
   search: (
     <>
       <circle cx="7" cy="7" r="4.25" />
@@ -51,9 +52,16 @@ const paths = {
 
 export type IconName = keyof typeof paths;
 
-export function Icon({ name, className = "size-4" }: { name: IconName; className?: string }) {
+// The rest of the props (ref, data-*) reach the <svg> so the shadcn primitives can use `asChild`
+// on an icon without pulling in a second icon family.
+export function Icon({
+  name,
+  className = "size-4",
+  ...props
+}: { name: IconName } & Omit<ComponentProps<"svg">, "viewBox" | "children">) {
   return (
     <svg
+      {...props}
       viewBox="0 0 16 16"
       fill="none"
       stroke="currentColor"

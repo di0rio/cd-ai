@@ -21,7 +21,7 @@ Cinco candidatos foram medidos: `qwen3:4b`, `qwen3:14b`, `qwen3-coder:30b`, `gem
 ## Regras que decorrem disso
 
 1. **Um único modelo grande residente.** CODER e alternativa (cerca de 19 GB cada) não cabem juntos na RAM. O Model Router prefere o modelo já carregado.
-2. ~~**O parser tolerante de tool calls é obrigatório antes do agente (Fase 4/5).** O `qwen3-coder` emite tool calls no formato próprio `<function=…><parameter=…>`, que o Ollama 0.34 não converte.~~ **Superada em 2026-09-12** (ver Revisão): o Ollama 0.34 converte, e o parser de `crates/agent-core/src/tool_call.rs` passa a ser rede de segurança, não requisito. Ver `plans/009-parser-tolerante-tool-calls.md`.
+2. **O parser tolerante de tool calls é obrigatório antes do agente (Fase 4/5).** O `qwen3-coder` emite tool calls no formato próprio `<function=…><parameter=…>`. **Qualificada em 2026-09-12** (ver Revisão): o Ollama 0.34 converte esse formato num pedido com uma tool só, mas volta ao texto com as seis tools que o agente usa. A regra continua valendo. Ver `plans/009-parser-tolerante-tool-calls.md`.
 3. **Contexto máximo de 16k no CODER.** Em 32k sobraram 0,6 GB de RAM livre.
 4. **O FAST não edita código.** O `qwen3:4b` raciocina mesmo com `think: false` e estoura o orçamento de tokens em edições.
 5. Nomes de modelos continuam sendo **configuração**. Nenhum código depende deles.
@@ -56,15 +56,19 @@ Model
 
 Dois achados durante a Fase 5 mexem com esta decisão. Ambos foram medidos na mesma máquina, com o Ollama 0.34.0.
 
-### 1. O Ollama 0.34 converte o formato do `qwen3-coder`
+### 1. O Ollama 0.34 converte o formato do `qwen3-coder` — às vezes
 
-A regra 2 dizia que o Ollama 0.34 não convertia o formato próprio `<function=…><parameter=…>`. A tag instalada declara `PARSER qwen3-coder` (`ollama show --modelfile qwen3-coder:30b`) e devolve `tool_calls` nativos:
+A regra 2 dizia, sem qualificar, que o Ollama 0.34 não converte o formato próprio `<function=…><parameter=…>`. A tag instalada declara `PARSER qwen3-coder` (`ollama show --modelfile qwen3-coder:30b`), e num pedido isolado, com **uma** tool no request, a resposta volta com `tool_calls` nativos:
 
 ```json
 [{"id": "call_jg7w1fx4", "function": {"name": "read_file", "arguments": {"path": "src/soma.ts"}}}]
 ```
 
-Isso é o primeiro gatilho da seção "Revisitar quando" disparando. Consequência: o parser tolerante de `crates/agent-core/src/tool_call.rs` deixa de ser pré-requisito e vira defesa em profundidade. Ele **não** deve ser removido antes do eval da Fase 6 medir se ainda pega alguma coisa na prática — a conversão pode não valer para todo formato que o modelo emite sob carga, e o custo de mantê-lo é baixo.
+Mas com as seis tools do agente no request, o mesmo modelo volta ao formato de texto. Isso foi observado duas vezes no mesmo dia: numa tarefa real do usuário pela UI e num teste de fumaça pela CLI, os dois com o markup `<function=…>` aparecendo no conteúdo da mensagem (inclusive um `</tool_call>` órfão, sem abertura).
+
+Então a regra 2 não está superada, está **qualificada**: a conversão existe, mas não é confiável na configuração que o agente realmente usa. O parser tolerante de `crates/agent-core/src/tool_call.rs` continua carregando o peso, e não é candidato a remoção. O eval da Fase 6 deve medir a taxa de cada formato com o número de tools que o agente usa de verdade, não com uma tool isolada — foi exatamente essa diferença que produziu a leitura errada aqui.
+
+Efeito colateral que a descoberta revelou, já corrigido: o conteúdo emitido como mensagem do assistente incluía o markup consumido pelo parser, então a conversa mostrava a chamada crua e a linha da ferramenta executada, em duplicidade.
 
 ### 2. A métrica que a tabela usou não é a que o agente sente
 
