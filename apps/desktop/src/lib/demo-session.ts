@@ -1,6 +1,10 @@
 import type { Task } from "./session";
 
 // Synthetic sessions for designing the UI in development (`?demo`). Never shown in production builds.
+// The task in flight is the one the composer treats as running, so Cancelar and the course
+// correction are inspectable too.
+export const demoRunningId = "demo-path-validation";
+
 export const demoTasks: Task[] = [
   {
     id: "demo-json-flag",
@@ -106,6 +110,90 @@ export const demoTasks: Task[] = [
     ],
   },
   {
+    id: "demo-approval-command",
+    title: "Resolver os avisos do clippy",
+    workspace: "cd-ai",
+    branch: "main",
+    status: "waiting_approval",
+    updated: "agora",
+    phase: "implement",
+    model: "qwen3-coder:30b",
+    modelLoaded: true,
+    contextUsed: 9_100,
+    contextLimit: 32_768,
+    events: [
+      { kind: "user", text: "O `cargo clippy` está reclamando no `agent-core`. Resolve os avisos." },
+      { kind: "read", path: "crates/agent-core/src/tools/mod.rs" },
+      { kind: "search", query: "clippy::", summary: "3 resultados em 2 arquivos" },
+      {
+        kind: "command",
+        id: 1,
+        command: "cargo clippy -p agent-core -- -D warnings",
+        exitCode: 101,
+        durationMs: 9200,
+        output: [
+          "warning: this expression creates a reference which is immediately dereferenced",
+          "   --> crates/agent-core/src/tools/mod.rs:212:31",
+          "",
+          "error: `agent-core` (lib) generated 3 warnings",
+        ].join("\n"),
+      },
+      {
+        kind: "assistant",
+        text: "São três avisos mecânicos, e o próprio clippy sabe aplicá-los. Como `--fix` reescreve arquivos, preciso da sua aprovação.",
+      },
+    ],
+    pendingApproval: {
+      id: "aprv_0007",
+      action: {
+        type: "runCommand",
+        argv: ["cargo", "clippy", "--fix", "--allow-dirty", "-p", "agent-core"],
+        class: "write",
+        cwd: "C:/Users/dev/cd-ai",
+      },
+    },
+  },
+  {
+    id: "demo-approval-edit",
+    title: "Corrigir a função de soma",
+    workspace: "soma",
+    branch: "main",
+    status: "waiting_approval",
+    updated: "agora",
+    phase: "implement",
+    model: "qwen3-coder:30b",
+    modelLoaded: true,
+    contextUsed: 4_300,
+    contextLimit: 32_768,
+    events: [
+      { kind: "user", text: "O teste de soma falha. Corrige e roda os testes." },
+      { kind: "read", path: "src/soma.test.ts" },
+      { kind: "read", path: "src/soma.ts" },
+      { kind: "failure", tool: "read_file", message: "arquivo não encontrado: src/soma.js" },
+      {
+        kind: "assistant",
+        text: "A função subtrai em vez de somar. A correção é de uma linha.",
+      },
+    ],
+    pendingApproval: {
+      id: "aprv_0008",
+      action: {
+        type: "editFile",
+        path: "src/soma.ts",
+        diff: [
+          "--- before",
+          "+++ after",
+          "-export function soma(a: number, b: number) {",
+          "-  return a - b;",
+          "+export function soma(a: number, b: number): number {",
+          "+  return a + b;",
+          " }",
+          "",
+        ].join("\n"),
+      },
+    },
+  },
+  {
     id: "demo-next-build",
     title: "Lentidão no build do Next",
     workspace: "cd-ai",
@@ -130,8 +218,38 @@ export const demoTasks: Task[] = [
         kind: "report",
         validated: false,
         summary: "Hipótese sem medição: excluir as pastas de build do antivírus.",
-        checks: [{ label: "Build antes e depois", command: "bun run --cwd apps/desktop build", ok: null }],
+        checks: [{ label: "Build", command: "bun run --cwd apps/desktop build", ok: null }],
       },
     ],
+    // A normal ending says nothing the report has not said, so there is no "a tarefa parou" line.
+    stopCause: { kind: "finished" },
+  },
+  {
+    id: "demo-interrupted",
+    title: "Migrar o store para SQLite",
+    workspace: "cd-ai",
+    branch: "main",
+    status: "cancelled",
+    updated: "3 h",
+    phase: "implement",
+    model: "qwen3-coder:30b",
+    modelLoaded: true,
+    contextUsed: 18_600,
+    contextLimit: 32_768,
+    events: [
+      { kind: "user", text: "Troca o store de arquivos por SQLite, mantendo o mesmo formato de evento." },
+      { kind: "read", path: "crates/agent-core/src/agent/storage.rs" },
+      { kind: "read", path: "crates/agent-core/Cargo.toml" },
+      { kind: "search", query: "load_events", summary: "6 resultados em 3 arquivos" },
+      {
+        kind: "assistant",
+        text: "O `storage.rs` grava três arquivos por tarefa. Vou começar pelo schema e só depois mexer na escrita.",
+      },
+      { kind: "edit", path: "crates/agent-core/src/agent/storage.rs", added: 42, removed: 7 },
+    ],
+    // The app closed with work in flight (D9): the only stop nobody decided, and the only one the
+    // conversation offers to pick up again.
+    stopCause: { kind: "interrupted" },
+    stopReason: "o app fechou com ela em andamento",
   },
 ];

@@ -37,6 +37,8 @@ const paths = {
   check: <path d="m3.75 8.25 2.75 2.75 5.75-6" />,
   x: <path d="m4.5 4.5 7 7m0-7-7 7" />,
   minus: <path d="M4.5 8h7" />,
+  // Solid, or an outlined square at this size reads as an empty checkbox.
+  stop: <rect x="4" y="4" width="8" height="8" rx="1.75" fill="currentColor" stroke="none" />,
   alert: <path d="M8 2.75 14 13H2zM8 6.75v2.5M8 11.25v.01" />,
   pencil: <path d="m10.25 3 2.75 2.75L6 12.75H3.25V10z" />,
   lock: (
