@@ -11,30 +11,91 @@ import {
   groupActivity,
   type Task,
 } from "@/lib/session";
+import { ApprovalBar } from "./approval-bar";
 import { Icon } from "./icons";
 
 const row = "-mx-2 flex min-h-8 w-[calc(100%+1rem)] items-center gap-2.5 rounded-lg px-2 text-left text-ink-muted";
 const interactiveRow = `${row} transition-[background-color,color,scale] duration-150 hover:bg-sidebar hover:text-ink active:scale-[0.995]`;
 
-// Mounted per task (keyed by id), so it opens scrolled to the latest activity.
-export function Conversation({ task }: { task: Task }) {
-  const scroller = useRef<HTMLDivElement>(null);
+type ConversationProps = {
+  task: Task;
+  // The decision travels to the Rust core through the caller; this component never decides permission.
+  onApprovalDecision?: (granted: boolean, reason?: string) => void;
+  // Absent while another task holds the single slot of this workspace, so the offer is never a lie.
+  onResume?: () => void;
+};
 
-  // Runs on mount and whenever a new batch of events arrives.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: intentionally reacts to event-list growth without reading it.
+// Mounted per task (keyed by id), so it opens scrolled to the latest activity.
+export function Conversation({ task, onApprovalDecision, onResume }: ConversationProps) {
+  const scroller = useRef<HTMLDivElement>(null);
+  // Following the live text is the default; a user who scrolls up is reading, and is not yanked back.
+  const following = useRef(true);
+  const pendingId = task.pendingApproval?.id;
+  const last = task.events.at(-1);
+  // Streaming tokens grow the last row without growing the list, so its length is what moves.
+  const tail = last?.kind === "assistant" ? last.text.length : 0;
+
+  // Runs on mount, whenever activity arrives or the last answer grows, and when an approval opens.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentionally reacts to growth without reading the events.
   useEffect(() => {
     const el = scroller.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [task.events.length]);
+    if (el && following.current) el.scrollTop = el.scrollHeight;
+  }, [task.events.length, tail, pendingId]);
 
   return (
-    <div ref={scroller} className="min-h-0 flex-1 overflow-y-auto">
-      <div className="mx-auto flex max-w-[46rem] flex-col gap-4 px-6 pt-18 pb-10">
+    <div
+      ref={scroller}
+      onScroll={(event) => {
+        const el = event.currentTarget;
+        following.current = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
+      }}
+      className="min-h-0 flex-1 overflow-y-auto"
+    >
+      {/* 46rem of column plus the 24px of breathing room on each side, so the rows line up with the composer. */}
+      <div className="mx-auto flex max-w-[49rem] flex-col gap-4 px-6 pt-18 pb-10">
         {groupActivity(task.events).map((block, index) => (
           // biome-ignore lint/suspicious/noArrayIndexKey: the activity log is append-only, so positions are stable
           <Block key={index} block={block} />
         ))}
+        {task.stopReason && <StopReason reason={task.stopReason} />}
+        {/* Only a task nobody chose to stop: the app closed with work in flight (D9). A cancellation
+            was a decision, and offering to undo it one gesture later would contradict it. */}
+        {task.stopCause?.kind === "interrupted" && onResume && <Resume onResume={onResume} />}
+        {task.pendingApproval && (
+          <ApprovalBar
+            key={task.pendingApproval.id}
+            approval={task.pendingApproval}
+            onDecision={onApprovalDecision ?? (() => {})}
+          />
+        )}
       </div>
+    </div>
+  );
+}
+
+function StopReason({ reason }: { reason: string }) {
+  return (
+    <div className={`${row} text-ink-faint`}>
+      <Icon name="stop" className="size-4" />
+      {/* One sentence, not a label and a value: the reason completes the phrase. */}
+      <span className="min-w-0 text-pretty">A tarefa parou: {reason}</span>
+    </div>
+  );
+}
+
+// A task that stopped short can be picked up again: the core rebuilds the messages from the
+// transcript and tells the model where it left off.
+function Resume({ onResume }: { onResume: () => void }) {
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={onResume}
+        className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-accent pr-3.5 pl-2.5 font-medium text-accent-ink transition-[scale] duration-100 active:scale-[0.97]"
+      >
+        <Icon name="chevron" className="size-4" />
+        Retomar
+      </button>
     </div>
   );
 }
@@ -69,6 +130,8 @@ function Block({ block }: { block: ActivityBlock }) {
       );
     case "command":
       return <CommandRow event={block} />;
+    case "failure":
+      return <ToolFailure tool={block.tool} message={block.message} />;
     case "report":
       return <Report validated={block.validated} summary={block.summary} checks={block.checks} />;
   }
@@ -77,8 +140,9 @@ function Block({ block }: { block: ActivityBlock }) {
 function InlineCode({ text }: { text: string }) {
   return text.split("`").map((part, index) =>
     index % 2 === 1 ? (
+      // box-decoration-clone: a chip that wraps keeps its rounding on both halves instead of being sliced.
       // biome-ignore lint/suspicious/noArrayIndexKey: segments of a static string
-      <code key={index} className="rounded-md bg-sidebar px-1 py-0.5 text-[0.85em]">
+      <code key={index} className="box-decoration-clone rounded-md bg-sidebar px-1 py-0.5 text-[0.85em]">
         {part}
       </code>
     ) : (
@@ -133,17 +197,20 @@ function ExploreGroup({ items }: { items: ExploreEvent[] }) {
             <li key={index} className="flex items-center gap-2 text-[0.8125rem] text-ink-muted">
               <Icon name={item.kind === "read" ? "file" : "search"} className="size-3.5 text-ink-faint" />
               <code className="min-w-0 truncate">{item.kind === "read" ? item.path : item.query}</code>
-              {item.kind === "search" && (
-                <span className="shrink-0 text-ink-faint">
-                  {item.matches === 0 ? "nenhum resultado" : plural(item.matches, "resultado", "resultados")}
-                </span>
-              )}
+              {item.kind === "search" && <span className="shrink-0 text-ink-faint">{searchDetail(item)}</span>}
             </li>
           ))}
         </ul>
       </Collapse>
     </div>
   );
+}
+
+// The core may send a ready-made summary or just a count; both are optional.
+function searchDetail(event: Extract<ActivityEvent, { kind: "search" }>) {
+  if (event.summary) return event.summary;
+  if (event.matches === undefined) return null;
+  return event.matches === 0 ? "nenhum resultado" : plural(event.matches, "resultado", "resultados");
 }
 
 function FailedLookup({ event }: { event: Extract<ActivityEvent, { kind: "read" | "search" }> }) {
@@ -153,6 +220,20 @@ function FailedLookup({ event }: { event: Extract<ActivityEvent, { kind: "read" 
       <span className="shrink-0">{event.kind === "read" ? "Não conseguiu ler" : "A busca falhou"}</span>
       <code className="min-w-0 truncate text-ink">{event.kind === "read" ? event.path : event.query}</code>
       <span className="ml-auto shrink-0 text-xs text-bad">{event.error}</span>
+    </div>
+  );
+}
+
+// A tool that failed is never collapsed, and the whole message stays readable.
+function ToolFailure({ tool, message }: { tool: string; message: string }) {
+  return (
+    <div className="-mx-2 px-2">
+      <div className="flex min-h-8 items-center gap-2.5 text-ink-muted">
+        <Icon name="alert" className="size-4 text-bad" />
+        <span className="shrink-0">A tool falhou</span>
+        <code className="min-w-0 truncate text-ink">{tool}</code>
+      </div>
+      <p className="mt-0.5 pl-6.5 text-[0.8125rem] text-pretty text-bad">{message}</p>
     </div>
   );
 }

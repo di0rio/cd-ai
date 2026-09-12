@@ -14,17 +14,30 @@ const STATUS: Record<TaskStatus, { label: string; dot: string }> = {
 
 type SidebarProps = {
   open: boolean;
+  /** Name to show in the Workspace row; a demonstration task fills it in without one being open. */
   workspace: string | null;
+  /** Whether a real workspace is open, which is what a new task needs. */
+  workspaceOpen: boolean;
   tasks: Task[];
   selectedId: string | null;
   onSelect: (id: string) => void;
   onOpenWorkspace: () => void;
+  onNewTask: () => void;
 };
 
 const rowButton =
   "flex h-8 w-full items-center gap-2.5 rounded-lg px-2 text-left transition-colors disabled:text-ink-faint";
 
-export function Sidebar({ open, workspace, tasks, selectedId, onSelect, onOpenWorkspace }: SidebarProps) {
+export function Sidebar({
+  open,
+  workspace,
+  workspaceOpen,
+  tasks,
+  selectedId,
+  onSelect,
+  onOpenWorkspace,
+  onNewTask,
+}: SidebarProps) {
   return (
     <aside
       aria-label="Barra lateral"
@@ -43,9 +56,10 @@ export function Sidebar({ open, workspace, tasks, selectedId, onSelect, onOpenWo
         <div className="px-2">
           <button
             type="button"
-            disabled
-            title="Disponível quando o agente estiver conectado"
-            className={`${rowButton} text-ink hover:bg-canvas`}
+            disabled={!workspaceOpen}
+            title={workspaceOpen ? undefined : "Abra um workspace para criar uma tarefa"}
+            onClick={onNewTask}
+            className={`${rowButton} text-ink enabled:hover:bg-canvas`}
           >
             <Icon name="plus" />
             Nova tarefa
