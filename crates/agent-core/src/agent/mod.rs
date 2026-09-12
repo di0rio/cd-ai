@@ -7,6 +7,7 @@ pub mod model;
 pub mod profile;
 pub mod prompt;
 pub mod runner;
+pub mod settings;
 pub mod state;
 pub mod storage;
 pub mod tool_calls;
@@ -16,6 +17,7 @@ pub use model::{ChatModel, ModelError, ModelReply, OllamaModel};
 pub use profile::{WorkspaceProfile, workspace_profile};
 pub use prompt::{estimate_tokens, system_prompt, trim_for_budget};
 pub use runner::{RESUME_NOTE, TaskContext, TaskStart, run_task, workspace_key};
+pub use settings::{Settings, SettingsStore};
 pub use state::{
     AgentLimits, CommandRecord, FileChange, StopReason, TaskMetrics, TaskReport, TaskState,
     TaskStatus, TaskSummary,

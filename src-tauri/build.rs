@@ -16,6 +16,8 @@ fn main() {
             "respond_approval",
             "list_tasks",
             "task_events",
+            "get_settings",
+            "set_preferred_model",
         ]),
     ))
     .expect("failed to run tauri-build");

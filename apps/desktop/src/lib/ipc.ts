@@ -7,6 +7,7 @@ import type { AppInfo } from "./bindings/AppInfo";
 import type { ChatEvent } from "./bindings/ChatEvent";
 import type { ChatRequest } from "./bindings/ChatRequest";
 import type { OllamaStatus } from "./bindings/OllamaStatus";
+import type { Settings } from "./bindings/Settings";
 import type { TaskSummary } from "./bindings/TaskSummary";
 import type { WorkspaceInfo } from "./bindings/WorkspaceInfo";
 
@@ -40,6 +41,7 @@ export type { SearchMatch } from "./bindings/SearchMatch";
 export type { SearchResult } from "./bindings/SearchResult";
 export type { SecretFileView } from "./bindings/SecretFileView";
 export type { SecretKind } from "./bindings/SecretKind";
+export type { Settings } from "./bindings/Settings";
 export type { StopReason } from "./bindings/StopReason";
 export type { TaskReport } from "./bindings/TaskReport";
 export type { TaskStatus } from "./bindings/TaskStatus";
@@ -121,6 +123,16 @@ export function listTasks(): Promise<TaskSummary[]> {
 /** Every event a task recorded, for replaying a conversation from disk. */
 export function taskEvents(taskId: string): Promise<AgentEventMessage[]> {
   return invoke<AgentEventMessage[]>("task_events", { taskId });
+}
+
+/** What the core remembered from the last runs. */
+export function getSettings(): Promise<Settings> {
+  return invoke<Settings>("get_settings");
+}
+
+/** Remembers the model for the next runs. The core answers even when it could not write. */
+export function setPreferredModel(model: string): Promise<void> {
+  return invoke<void>("set_preferred_model", { model });
 }
 
 export function respondApproval(

@@ -16,6 +16,8 @@
     "allow-steer-task",
     "allow-respond-approval",
     "allow-list-tasks",
-    "allow-task-events"
+    "allow-task-events",
+    "allow-get-settings",
+    "allow-set-preferred-model"
   ]
 }

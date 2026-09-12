@@ -62,7 +62,7 @@ impl fmt::Display for StorageError {
 
 impl std::error::Error for StorageError {}
 
-fn io_error(error: io::Error) -> StorageError {
+pub(super) fn io_error(error: io::Error) -> StorageError {
     StorageError::Io(error.to_string())
 }
 
@@ -302,7 +302,7 @@ fn validate_id(id: &str) -> Result<(), StorageError> {
 /// Serializes and redacts every string in the result (D8: nothing reaches disk unredacted).
 /// Walking the JSON covers all free text at once — message content, errors, report summaries,
 /// argv, tool arguments — instead of a per-field list that a new field could slip past.
-fn redacted_json<T: Serialize>(value: &T) -> Result<Value, StorageError> {
+pub(super) fn redacted_json<T: Serialize>(value: &T) -> Result<Value, StorageError> {
     let mut json = serde_json::to_value(value).map_err(format_error)?;
     redact_in_place(&mut json);
     Ok(json)
@@ -323,7 +323,7 @@ fn redact_in_place(value: &mut Value) {
 }
 
 /// Temp file in the same directory, then rename: a reader never sees a half-written state.
-fn write_atomic(path: &Path, contents: &str) -> Result<(), StorageError> {
+pub(super) fn write_atomic(path: &Path, contents: &str) -> Result<(), StorageError> {
     let temp = path.with_extension("tmp");
     fs::write(&temp, contents).map_err(io_error)?;
     fs::rename(&temp, path).map_err(|error| {
@@ -332,7 +332,7 @@ fn write_atomic(path: &Path, contents: &str) -> Result<(), StorageError> {
     })
 }
 
-fn format_error(error: serde_json::Error) -> StorageError {
+pub(super) fn format_error(error: serde_json::Error) -> StorageError {
     StorageError::Format(error.to_string())
 }
 
