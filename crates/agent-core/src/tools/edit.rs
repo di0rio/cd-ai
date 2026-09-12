@@ -58,7 +58,7 @@ pub fn edit_file(
         events,
         crate::events::ToolEvent::FileChanged {
             path: display_path(&engine.workspace, &canonical),
-            diff: unified_diff(&original, &content),
+            diff: event_diff(&original, &content),
             fuzzy,
             hash_before: hash_before.clone(),
             hash_after: hash_after.clone(),
@@ -128,10 +128,35 @@ pub fn write_file(
         });
     }
 
-    let hash = sha256_hex(args.content.as_bytes());
+    // The "before" of the diff has to be read while the old content is still on disk. A file
+    // that does not exist yet has an empty "before", so `hash_before` is the hash of the empty
+    // content: the field stays a real sha256 for every consumer instead of a special case.
+    let original = if exists {
+        read_utf8_lossy(&canonical)?
+    } else {
+        String::new()
+    };
+    let hash_before = sha256_hex(original.as_bytes());
+    let hash_after = sha256_hex(args.content.as_bytes());
     atomic_write(&canonical, args.content.as_bytes())?;
 
-    engine.emit(events, crate::events::ToolEvent::CheckpointCreated { hash });
+    // Same pair, in the same order, as `edit_file`: a write is a file change like any other, and
+    // without this event it never reaches `TaskState.files_changed` — nor the report.
+    engine.emit(
+        events,
+        crate::events::ToolEvent::FileChanged {
+            path: display_path(&engine.workspace, &canonical),
+            diff: event_diff(&original, &args.content),
+            // A write replaces the file wholesale: there was no approximate text match.
+            fuzzy: false,
+            hash_before,
+            hash_after: hash_after.clone(),
+        },
+    );
+    engine.emit(
+        events,
+        crate::events::ToolEvent::CheckpointCreated { hash: hash_after },
+    );
 
     Ok((
         decision,
@@ -330,6 +355,35 @@ fn unified_diff(before: &str, after: &str) -> String {
         }
     }
     out
+}
+
+/// Cap for the diff carried by a `FileChanged` event. The event is stored in the transcript and
+/// rendered in the conversation, and a single `write_file` can replace a whole file, so the same
+/// budget as the command output (`MAX_OUTPUT_BYTES`) applies — the other unbounded event payload.
+/// The approval dialog is never capped: it shows the complete diff (spec §aprovações).
+const MAX_EVENT_DIFF_BYTES: usize = 64 * 1024;
+
+/// Unified diff for the event, cut on a line boundary when it exceeds the cap, with a marker
+/// saying how much was left out instead of presenting a partial diff as the whole change.
+fn event_diff(before: &str, after: &str) -> String {
+    let diff = unified_diff(before, after);
+    if diff.len() <= MAX_EVENT_DIFF_BYTES {
+        return diff;
+    }
+    let mut kept = 0usize;
+    for line in diff.split_inclusive('\n') {
+        if kept + line.len() > MAX_EVENT_DIFF_BYTES {
+            break;
+        }
+        kept += line.len();
+    }
+    let omitted = diff[kept..].split_inclusive('\n').count();
+    let total = diff.len();
+    // No `+`/`-` prefix: the conversation counts added and removed lines off this diff.
+    format!(
+        "{}… diff truncado: {omitted} linhas omitidas de {total} bytes\n",
+        &diff[..kept]
+    )
 }
 
 fn count_lines(text: &str) -> usize {
@@ -573,6 +627,144 @@ mod tests {
             std::fs::read_to_string(dir.path().join("existe.txt")).unwrap(),
             "novo\n"
         );
+    }
+
+    /// The events of one call, in the order the engine emitted them.
+    fn positions(seen: &[crate::events::ToolEvent]) -> (Option<usize>, Option<usize>) {
+        (
+            seen.iter()
+                .position(|event| matches!(event, crate::events::ToolEvent::FileChanged { .. })),
+            seen.iter().position(|event| {
+                matches!(event, crate::events::ToolEvent::CheckpointCreated { .. })
+            }),
+        )
+    }
+
+    #[test]
+    fn write_file_reports_a_new_file_as_added_lines() {
+        let dir = tempdir().unwrap();
+        let mut engine = boot(dir.path());
+        let mut seen: Vec<crate::events::ToolEvent> = Vec::new();
+        let mut sink = |message: crate::events::ToolEventMessage| seen.push(message.event);
+
+        write_file(
+            &mut engine,
+            WriteFileArgs {
+                path: "novo.txt".into(),
+                content: "um\ndois\n".into(),
+                if_exists: IfExists::Error,
+            },
+            &mut sink,
+            &mut approve,
+        )
+        .unwrap();
+
+        let (changed, checkpoint) = positions(&seen);
+        // Same order as `edit_file`, so the conversation reconciles both the same way.
+        assert!(changed.unwrap() < checkpoint.unwrap());
+        let crate::events::ToolEvent::FileChanged {
+            path,
+            diff,
+            fuzzy,
+            hash_before,
+            hash_after,
+        } = &seen[changed.unwrap()]
+        else {
+            unreachable!()
+        };
+        assert_eq!(path, "novo.txt");
+        assert_eq!(diff, "--- before\n+++ after\n+um\n+dois\n");
+        assert!(!fuzzy);
+        assert_eq!(hash_before, &sha256_hex(b""));
+        assert_eq!(hash_after, &sha256_hex(b"um\ndois\n"));
+    }
+
+    #[test]
+    fn write_file_over_an_existing_file_diffs_the_old_content() {
+        let dir = tempdir().unwrap();
+        std::fs::write(dir.path().join("existe.txt"), "velho\n").unwrap();
+        let mut engine = boot(dir.path());
+        let mut seen: Vec<crate::events::ToolEvent> = Vec::new();
+        let mut sink = |message: crate::events::ToolEventMessage| seen.push(message.event);
+
+        write_file(
+            &mut engine,
+            WriteFileArgs {
+                path: "existe.txt".into(),
+                content: "novo\n".into(),
+                if_exists: IfExists::Overwrite,
+            },
+            &mut sink,
+            &mut approve,
+        )
+        .unwrap();
+
+        let (changed, _) = positions(&seen);
+        let crate::events::ToolEvent::FileChanged {
+            diff, hash_before, ..
+        } = &seen[changed.unwrap()]
+        else {
+            unreachable!()
+        };
+        assert_eq!(diff, "--- before\n+++ after\n-velho\n+novo\n");
+        assert_eq!(hash_before, &sha256_hex(b"velho\n"));
+    }
+
+    #[test]
+    fn denied_write_changes_nothing_and_reports_nothing() {
+        let dir = tempdir().unwrap();
+        let mut engine = boot(dir.path());
+        let mut seen: Vec<crate::events::ToolEvent> = Vec::new();
+        let mut sink = |message: crate::events::ToolEventMessage| seen.push(message.event);
+
+        let err = write_file(
+            &mut engine,
+            WriteFileArgs {
+                path: "novo.txt".into(),
+                content: "conteudo\n".into(),
+                if_exists: IfExists::Error,
+            },
+            &mut sink,
+            &mut deny,
+        )
+        .unwrap_err();
+
+        assert!(matches!(err, ToolError::PermissionDenied { .. }));
+        assert!(!dir.path().join("novo.txt").exists());
+        let (changed, checkpoint) = positions(&seen);
+        assert!(changed.is_none());
+        assert!(checkpoint.is_none());
+    }
+
+    #[test]
+    fn huge_write_truncates_the_diff_and_says_so() {
+        let dir = tempdir().unwrap();
+        let mut engine = boot(dir.path());
+        let mut seen: Vec<crate::events::ToolEvent> = Vec::new();
+        let mut sink = |message: crate::events::ToolEventMessage| seen.push(message.event);
+
+        let content = "linha de conteudo\n".repeat(8_000);
+        write_file(
+            &mut engine,
+            WriteFileArgs {
+                path: "grande.txt".into(),
+                content: content.clone(),
+                if_exists: IfExists::Error,
+            },
+            &mut sink,
+            &mut approve,
+        )
+        .unwrap();
+
+        let (changed, _) = positions(&seen);
+        let crate::events::ToolEvent::FileChanged { diff, .. } = &seen[changed.unwrap()] else {
+            unreachable!()
+        };
+        assert!(diff.len() < content.len());
+        assert!(diff.contains("… diff truncado:"));
+        // The marker is not counted as an added or removed line by the conversation.
+        let marker = diff.lines().last().unwrap();
+        assert!(!marker.starts_with('+') && !marker.starts_with('-'));
     }
 
     #[test]
