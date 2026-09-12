@@ -335,6 +335,7 @@ Cada parte lista escopo, passos, testes e verificação. **Arquivos fora do esco
    - no início de `run_tool`, se já estiver cancelado, devolva `ToolOutcome::err(ToolError::Cancelled)` sem executar nada;
    - adicione `ToolError::Cancelled`, com o `Display` "tarefa cancelada".
 4. Em `command.rs`, o `wait_with_timeout` passa a receber `&CancelToken`. O loop de polling checa `is_cancelled()`: se cancelado, chama `kill_process_tree`, marca `cancelled: true` no `RunStatus`, e o `run_command` emite `CommandCompleted` (com `exit_code: None`) e devolve `Err(ToolError::Cancelled)`.
+5. **Silencie o `kill_process_tree`** (decisão do lead na revisão da Parte 0): hoje o `taskkill` do Windows escreve `ERROR: The process "NNN" not found.` no stderr do processo de teste quando o filho já saiu sozinho. Passe `Stdio::null()` em stdout e stderr do `kill`/`taskkill` e ignore o status: um processo que já morreu não é erro. O cancelamento vai usar esse mesmo caminho com frequência.
 
 **Testes:**
 
@@ -400,7 +401,9 @@ Cada parte lista escopo, passos, testes e verificação. **Arquivos fora do esco
 
 ### Parte D — O loop (dono: `core`; depois da Parte C)
 
-**Escopo:** `crates/agent-core/src/agent/mod.rs` (declarar os módulos novos), `model.rs`, `tool_calls.rs`, `prompt.rs` e `runner.rs` (novos).
+**Escopo:** `crates/agent-core/src/agent/mod.rs` (declarar os módulos novos), `model.rs`, `tool_calls.rs`, `prompt.rs` e `runner.rs` (novos). Mais o passo 0 abaixo, que toca `events.rs` (dos dois módulos), `permissions.rs` e `agent/storage.rs`.
+
+**Passo 0 — replay tipado** (decisão do lead na revisão da Parte C): hoje `TaskStore::load_events` devolve `Vec<serde_json::Value>`, porque `AgentEvent` não consegue derivar `Deserialize` enquanto `ToolEvent` e `PermissionDecision` forem serialize-only. Acrescente `Deserialize` a `ToolEvent` (`crates/agent-core/src/events.rs`), a `PermissionDecision` (`permissions.rs`) e ao que mais faltar em `agent/state.rs` e `agent/events.rs`, e troque a assinatura para `load_events(id) -> Result<Vec<AgentEventMessage>, StorageError>`, pulando linha malformada como o `load_transcript` já faz. O contrato da Parte E promete o tipo, não `Value`.
 
 **Passos:**
 
@@ -488,6 +491,8 @@ Cada parte lista escopo, passos, testes e verificação. **Arquivos fora do esco
    | `task_events(task_id) -> Vec<AgentEventMessage>` | Replay de uma tarefa já existente. |
 
    Na inicialização do app, chame `TaskStore::recover_interrupted()`.
+
+   **Antes de um `resume`, valide com `store.load_state(id)`** (decisão do lead na revisão da Parte D): o `run_task` aceita um id inexistente ou de outro workspace, mas devolve `failed` com `StopReason::ModelError`, que é impreciso. Valide antes e devolva `Err(String)` com a mensagem certa; o caminho do `run_task` fica só como rede de segurança.
 3. **ACL:** atualize a lista do `build.rs` e as permissões `allow-*` da capability. Tire `run_tool` e ponha os 7 commands novos ou alterados. As três listas precisam bater (plano 006).
 4. **`ipc.ts`:**
    - remova `runTool`;
@@ -496,6 +501,7 @@ Cada parte lista escopo, passos, testes e verificação. **Arquivos fora do esco
    - reexporte os tipos novos dos bindings (`AgentEvent`, `AgentEventMessage`, `TaskSummary`, `TaskStatus`, `StopReason`, `TaskReport`).
 
    O `startTask` recebe `(request, model, numCtx, onEvent)` e cria o `Channel<AgentEventMessage>` como o `startChat`.
+5. **Limpe os warnings do próprio arquivo** (decisão do lead na revisão da G1): o `bun run check` aponta 26 `noUnusedImports` em `ipc.ts`, por causa dos `import type` seguidos de `export type` para o mesmo tipo. Como a Parte E é dona do arquivo, resolva de vez (reexporte sem importar duas vezes). Não são erros, mas poluem a saída do gate de todo mundo.
 
 **Verificar:** `bun run verify` sai com exit 0, e `bun tauri build --no-bundle` sai com exit 0.
 
@@ -630,6 +636,12 @@ Cada parte lista escopo, passos, testes e verificação. **Arquivos fora do esco
 4. **`sidebar.tsx`:** "Nova tarefa" é habilitado com um workspace aberto (limpa a seleção e foca o composer).
 5. **`conversation.tsx`:** a barra de aprovação chama `respondApproval(task.id, id, granted, reason)`. Numa tarefa `cancelled`/`Interrupted`, mostre o botão "Retomar", que chama `resumeTask`.
 
+**Decisões do lead na revisão da G1 (valem para a G2):**
+
+- A variante `failure` e o campo `id` do evento `command` estão aprovados; construa em cima deles.
+- **A negação não precisa de linha própria.** Quando a aprovação é negada, a tool devolve `PermissionDenied`, o engine emite `ToolFailed` e a G1 já renderiza isso como linha de falha, sempre aberta. Não duplique.
+- A demo usa um comando de classe `write` de propósito: comando `validate` é automático pela tabela de permissões e nunca pediria aprovação.
+
 **Testes:** o `applyAgentEvent` cobre token → texto, uma tarefa completa (`TaskFinished` com relatório não validado) e o replay idempotente (aplicar a mesma lista de eventos duas vezes gera o mesmo `Task`).
 
 **Verificar:** `bun run verify` sai com exit 0. A verificação manual no app é do lead (ver "Aceite").
@@ -718,6 +730,7 @@ No Windows, se o `cargo` não for encontrado: `$env:PATH = "$env:USERPROFILE\.ca
 - **Verifier (Fase 8):** vai trocar `completed_unvalidated` por `completed` quando houver evidência de validação depois da última edição. Até lá, o loop **nunca** produz `completed` (D11).
 - **Pendente do SPEC §29:** "editar" o comando na aprovação e o modo plano (read-only) ficam para depois. A barra de aprovação tem só aprovar e negar.
 - O `recover_interrupted` roda na inicialização do app. A CLI chama o mesmo método antes de um `--resume`.
+- **Comando cancelado não devolve output parcial** (decisão do lead na revisão da Parte B): o `run_command` devolve `Err(ToolError::Cancelled)` sem montar o `CommandResult`. O que o comando chegou a fazer já aparece na conversa pelos eventos `CommandStarted`/`CommandCompleted`, e no relatório ele entra com `exit_code` vazio. Se algum dia o parcial for necessário, o lugar é o `RunStatus`, não o `TaskReport`.
 - **Gate na base (`040369a`, Windows 11, 2026-09-11):** vermelho.
   - Biome, typecheck e testes TS (3/3) passam.
   - O `cargo test -p agent-core` passa em 135, falha em 3 (`tools::command`: `echo`, `sleep` e `ls` ausentes do PATH) e ignora 2.
