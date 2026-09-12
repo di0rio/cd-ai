@@ -48,6 +48,14 @@ const paths = {
       <path d="M5.5 7V5.25a2.5 2.5 0 0 1 5 0V7" />
     </>
   ),
+  gitBranch: (
+    <>
+      <circle cx="5.5" cy="3" r="2" />
+      <circle cx="10.5" cy="8" r="2" />
+      <circle cx="5.5" cy="13" r="2" />
+      <path d="M5.5 5v3M7.5 8H10.5M5.5 11v2M8.5 8H10.5" />
+    </>
+  ),
 } satisfies Record<string, ReactNode>;
 
 export type IconName = keyof typeof paths;

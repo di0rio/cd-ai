@@ -15,7 +15,7 @@ use serde_json::Value;
 use crate::agent::events::{AgentEvent, AgentEventMessage};
 use crate::agent::model::{ChatModel, ModelError, ModelReply};
 use crate::agent::profile::workspace_profile;
-use crate::agent::prompt::{is_exhausted, system_prompt, trim_for_budget};
+use crate::agent::prompt::{inherited_context, is_exhausted, system_prompt, trim_for_budget};
 use crate::agent::state::{
     AgentLimits, CommandRecord, FileChange, StopReason, TaskReport, TaskState, TaskStatus,
 };
@@ -76,6 +76,11 @@ pub enum TaskStart {
         request: String,
         model: String,
         num_ctx: u32,
+        /// Task this one continues, when the user wrote the request right after another task in
+        /// the same workspace. The new task inherits that task's report — request, outcome, files
+        /// changed, commands and final summary — and nothing else: the transcript stays where it
+        /// is, so continuity never costs a whole window (decision 0008).
+        continues: Option<String>,
     },
     Resume {
         task_id: String,
@@ -105,12 +110,25 @@ pub fn run_task(
             request,
             model: model_name,
             num_ctx,
+            continues,
         } => {
             let id = TaskStore::new_task_id();
-            let state = TaskState::new(&id, &key, &request, &model_name, num_ctx);
+            let inherited = match &continues {
+                Some(previous_id) => match inherit(ctx.store, previous_id, &key) {
+                    Ok(block) => Some(block),
+                    // Refusing is the honest answer: the only way to name a previous task is to
+                    // pick one of this workspace's own, so a failure here means the id is wrong —
+                    // and silently dropping the continuity would look exactly like the bug this
+                    // chaining exists to fix.
+                    Err(problem) => return unstartable(&id, &key, problem),
+                },
+                None => None,
+            };
+            let mut state = TaskState::new(&id, &key, &request, &model_name, num_ctx);
+            state.continues = continues;
             let profile = workspace_profile(&ctx.workspace).render();
             let messages = vec![
-                message("system", &system_prompt(&profile)),
+                message("system", &system_prompt(&profile, inherited.as_deref())),
                 message("user", &request),
             ];
             // Both go to the transcript: a resume rebuilds the conversation from it.
@@ -681,6 +699,40 @@ fn forward_chat_event(emitter: &mut Emitter<'_>, event: ChatEvent) {
     }
 }
 
+/// Builds what a new task inherits from the task it continues.
+///
+/// The previous summary is the last thing that task's model said, read from its transcript: the
+/// report is the state plus that text, so nothing new has to be persisted and a task that ended
+/// before chaining existed can be continued just the same. Reading one file at the start of a
+/// task is cheap; the point of option B is that what travels is the report, not the conversation.
+fn inherit(store: &TaskStore, previous_id: &str, workspace: &str) -> Result<String, String> {
+    let previous = store
+        .load_state(previous_id)
+        .map_err(|error| format!("não foi possível continuar a tarefa {previous_id}: {error}"))?;
+    if previous.workspace != workspace {
+        return Err(format!(
+            "a tarefa {previous_id} pertence a outro workspace ({}); abra aquela pasta para continuá-la",
+            previous.workspace
+        ));
+    }
+    Ok(inherited_context(
+        &previous,
+        &last_assistant_text(store, previous_id),
+    ))
+}
+
+/// The final text of a task: its report summary, already redacted on disk (D8).
+fn last_assistant_text(store: &TaskStore, id: &str) -> String {
+    store
+        .load_transcript(id)
+        .unwrap_or_default()
+        .into_iter()
+        .rev()
+        .find(|message| message.role == "assistant" && !message.content.trim().is_empty())
+        .map(|message| message.content)
+        .unwrap_or_default()
+}
+
 /// Rebuilds the conversation of an interrupted task (D9).
 ///
 /// The last assistant turn whose tool calls have no results is dropped: sending it again would
@@ -701,8 +753,10 @@ fn resume_messages(mut transcript: Vec<ChatMessage>, workspace: &Workspace) -> V
         }
     }
     if transcript.first().map(|first| first.role.as_str()) != Some("system") {
+        // Only a truncated or pre-`system` transcript lands here, so the rebuilt prompt carries no
+        // inherited block: the real one is the first line of every transcript this loop writes.
         let profile = workspace_profile(workspace).render();
-        transcript.insert(0, message("system", &system_prompt(&profile)));
+        transcript.insert(0, message("system", &system_prompt(&profile, None)));
     }
     transcript
 }
@@ -780,6 +834,7 @@ impl Emitter<'_> {
 mod tests {
     use super::*;
     use crate::agent::model::ScriptedModel;
+    use crate::agent::prompt::INHERITED_BEGIN;
     use crate::permissions::{ApprovalRequest, ApprovalResponse};
     use crate::tools::command::test_argv;
     use std::fs;
@@ -824,6 +879,16 @@ mod tests {
             request: request.to_string(),
             model: "modelo-x".to_string(),
             num_ctx: 16_384,
+            continues: None,
+        }
+    }
+
+    fn start_continuing(request: &str, previous: &str) -> TaskStart {
+        TaskStart::New {
+            request: request.to_string(),
+            model: "modelo-x".to_string(),
+            num_ctx: 16_384,
+            continues: Some(previous.to_string()),
         }
     }
 
@@ -1302,6 +1367,7 @@ mod tests {
                 request: "leia os três".to_string(),
                 model: "modelo-x".to_string(),
                 num_ctx: 5_120,
+                continues: None,
             },
             &mut grant,
         );
@@ -1375,6 +1441,7 @@ mod tests {
                 request: format!("use o token {token} no deploy"),
                 model: "modelo-x".to_string(),
                 num_ctx: 16_384,
+                continues: None,
             },
             &mut grant,
         );
@@ -1648,6 +1715,7 @@ mod tests {
                 request: "pedido".to_string(),
                 model: "modelo-x".to_string(),
                 num_ctx: 16,
+                continues: None,
             },
             &mut grant,
         );
@@ -1911,5 +1979,117 @@ mod tests {
         assert_eq!(results.len(), 2);
         assert!(results[0].content.contains("fn a()"));
         assert!(results[1].content.contains("fn b()"));
+    }
+
+    // 13 ───────────────────────────────────────────────────────────────────────────────────────
+    #[test]
+    fn a_continued_task_inherits_the_previous_report_and_not_its_transcript() {
+        let harness = harness(&[(
+            "src/soma.ts",
+            "export const soma = (a, b) => a - b;
+",
+        )]);
+        let mut first = ScriptedModel::new(vec![
+            ScriptedModel::calls(&[("read_file", serde_json::json!({ "path": "src/soma.ts" }))]),
+            ScriptedModel::text("li a soma; o operador está trocado"),
+        ]);
+        let (previous, _) = run(
+            harness.context(),
+            &mut first,
+            start("olhe a soma"),
+            &mut grant,
+        );
+        assert_eq!(previous.status, TaskStatus::CompletedUnvalidated);
+
+        let mut second = ScriptedModel::new(vec![ScriptedModel::text("pronto")]);
+        let (state, _) = run(
+            harness.context(),
+            &mut second,
+            start_continuing("agora conserte", &previous.id),
+            &mut grant,
+        );
+
+        assert_eq!(state.continues.as_deref(), Some(previous.id.as_str()));
+        let system = &second.seen[0][0].content;
+        assert!(system.contains(INHERITED_BEGIN), "o bloco é delimitado");
+        assert!(system.contains("olhe a soma"), "o pedido anterior");
+        assert!(
+            system.contains("li a soma; o operador está trocado"),
+            "o resumo anterior"
+        );
+        // O que não é herdado: a conversa da tarefa anterior (isso seria a opção A).
+        assert!(
+            !system.contains("export const soma"),
+            "nenhum resultado de tool da tarefa anterior viaja junto"
+        );
+        assert_eq!(second.seen[0][1].content, "agora conserte");
+    }
+
+    // 14 ───────────────────────────────────────────────────────────────────────────────────────
+    #[test]
+    fn a_task_that_continues_nothing_carries_no_inherited_block() {
+        let harness = harness(&[(
+            "Cargo.toml",
+            "[package]
+name = \"x\"
+",
+        )]);
+        let mut model = ScriptedModel::new(vec![ScriptedModel::text("pronto")]);
+        let (state, _) = run(harness.context(), &mut model, start("olhe"), &mut grant);
+
+        assert_eq!(state.continues, None);
+        assert!(!model.seen[0][0].content.contains(INHERITED_BEGIN));
+    }
+
+    // 15 ───────────────────────────────────────────────────────────────────────────────────────
+    #[test]
+    fn the_chain_survives_a_reload_from_disk() {
+        let harness = harness(&[(
+            "Cargo.toml",
+            "[package]
+name = \"x\"
+",
+        )]);
+        let mut first = ScriptedModel::new(vec![ScriptedModel::text("olhei")]);
+        let (previous, _) = run(harness.context(), &mut first, start("olhe"), &mut grant);
+        let mut second = ScriptedModel::new(vec![ScriptedModel::text("pronto")]);
+        let (state, _) = run(
+            harness.context(),
+            &mut second,
+            start_continuing("continue", &previous.id),
+            &mut grant,
+        );
+
+        let loaded = harness.store.load_state(&state.id).unwrap();
+        assert_eq!(loaded.continues.as_deref(), Some(previous.id.as_str()));
+        let listed = harness
+            .store
+            .list(&workspace_key(&harness.workspace))
+            .unwrap();
+        let summary = listed
+            .iter()
+            .find(|summary| summary.id == state.id)
+            .expect("a tarefa está na lista");
+        assert_eq!(summary.continues.as_deref(), Some(previous.id.as_str()));
+    }
+
+    // 16 ───────────────────────────────────────────────────────────────────────────────────────
+    #[test]
+    fn continuing_a_task_that_does_not_exist_fails_before_the_model_runs() {
+        let harness = harness(&[]);
+        let mut model = ScriptedModel::new(vec![ScriptedModel::text("não devia rodar")]);
+        let (state, events) = run(
+            harness.context(),
+            &mut model,
+            start_continuing("continue", "task_inexistente"),
+            &mut grant,
+        );
+
+        assert_eq!(state.status, TaskStatus::Failed);
+        assert!(model.seen.is_empty(), "o modelo nunca foi chamado");
+        assert!(
+            events.is_empty(),
+            "uma tarefa que nem começou não emite nada"
+        );
     }
 }

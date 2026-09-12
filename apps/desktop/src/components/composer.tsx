@@ -89,6 +89,9 @@ export function Composer({
 
   const loadedHint = loaded ? "Modelo carregado no Ollama" : "Modelo ainda não carregado no Ollama";
 
+  // When there's no task running but a completed task is selected, the next message continues it.
+  const willContinue = !running && task && task.status !== "running" && task.status !== "waiting_approval";
+
   const submit = () => {
     if (!canSend) return;
     if (running) {
@@ -105,7 +108,7 @@ export function Composer({
     <button
       type="submit"
       disabled={!canSend}
-      aria-label={running ? "Enviar correção" : "Iniciar tarefa"}
+      aria-label={running ? "Enviar correção" : willContinue ? "Continuar tarefa" : "Iniciar tarefa"}
       className="grid size-8 place-items-center rounded-full bg-signal text-signal-ink transition-[scale,opacity] duration-150 active:scale-95 disabled:pointer-events-none disabled:opacity-30"
     >
       <Icon name="arrowUp" />
@@ -114,7 +117,7 @@ export function Composer({
 
   return (
     <div className="relative px-6 pb-5 before:pointer-events-none before:absolute before:inset-x-0 before:-top-8 before:h-8 before:bg-linear-to-t before:from-canvas before:to-transparent">
-      {/* Container, not viewport: the room this column has also depends on the sidebar and the side panel. */}
+      {/* Container, not viewport: the room this column also depends on the sidebar and the side panel. */}
       <div className="@container mx-auto max-w-[46rem]">
         {task && <StatusLine task={task} />}
 
@@ -126,6 +129,12 @@ export function Composer({
         {steered && !error && (
           <p aria-live="polite" className="mb-2 px-1 text-[0.8125rem] text-ink-faint">
             Correção na fila: o agente lê no próximo passo.
+          </p>
+        )}
+        {willContinue && (
+          <p aria-live="polite" className="mb-2 px-1 text-[0.8125rem] text-ink-faint flex items-center gap-1.5">
+            <Icon name="gitBranch" className="size-3.5" />
+            <span>Esta mensagem continuará a tarefa selecionada</span>
           </p>
         )}
 
@@ -156,7 +165,13 @@ export function Composer({
                 submit();
               }
             }}
-            placeholder={running ? "Corrigir o rumo do agente…" : "Descrever uma tarefa para o agente…"}
+            placeholder={
+              running
+                ? "Corrigir o rumo do agente…"
+                : willContinue
+                  ? "Continuar a tarefa…"
+                  : "Descrever uma tarefa para o agente…"
+            }
             className="block max-h-50 w-full resize-none bg-transparent px-4 pt-3.5 pb-1 text-[0.9375rem] leading-relaxed placeholder:text-ink-faint focus:outline-none"
           />
           <div className="flex min-w-0 items-center gap-1 px-2.5 pb-2.5">

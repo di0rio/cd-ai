@@ -200,7 +200,15 @@ export function AppShell() {
     setTaskError(null);
     setStarting(true);
     try {
-      setRunningId(await startTask(text, model, NUM_CTX, handleEvent));
+      const selectedTask = tasks.find((t) => t.id === selectedId);
+      const continues =
+        selectedTask &&
+        selectedTask.workspace === workspace?.name &&
+        selectedTask.status !== "running" &&
+        selectedTask.status !== "waiting_approval"
+          ? selectedTask.id
+          : undefined;
+      setRunningId(await startTask(text, model, NUM_CTX, handleEvent, continues));
     } catch (error) {
       setTaskError(String(error));
     } finally {
@@ -371,6 +379,7 @@ function taskShell(id: string, title: string, model: string, workspace: string):
     contextUsed: 0,
     contextLimit: NUM_CTX,
     events: [],
+    continues: undefined,
   };
 }
 
@@ -379,6 +388,7 @@ function fromSummary(summary: TaskSummary, workspace: string): Task {
     ...taskShell(summary.id, summary.title, summary.model, workspace),
     status: summary.status,
     updated: relativeTime(summary.updatedAt),
+    continues: summary.continues ?? undefined,
   };
 }
 

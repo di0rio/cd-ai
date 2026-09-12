@@ -4,4 +4,8 @@ import type { TaskStatus } from "./TaskStatus";
 /**
  * A task as listed in the sidebar and by the CLI.
  */
-export type TaskSummary = { id: string, title: string, status: TaskStatus, updatedAt: string, model: string, };
+export type TaskSummary = { id: string, title: string, status: TaskStatus, updatedAt: string, model: string, 
+/**
+ * Id of the task this one continues, so a list can show a chain instead of loose fragments.
+ */
+continues: string | null, };

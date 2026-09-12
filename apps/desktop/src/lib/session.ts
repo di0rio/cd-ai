@@ -52,6 +52,8 @@ export type Task = {
   stopCause?: StopReason;
   // True while the last event is an assistant row still receiving tokens (plan 015, G2).
   streamingAssistant?: boolean;
+  // Id of the task this one continues, for showing the chain in the sidebar.
+  continues?: string | null;
 };
 
 // Routine exploration (successful reads and searches in a row) folds into one block; failures stay standalone.
