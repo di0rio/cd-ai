@@ -5,8 +5,9 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
 use agent_core::agent::{
-    AgentEvent, AgentEventMessage, AgentLimits, OllamaModel, StopReason, TaskContext, TaskReport,
-    TaskStart, TaskStatus, TaskStore, TaskSummary, run_task, workspace_key,
+    AgentEvent, AgentEventMessage, AgentLimits, OllamaModel, Settings, SettingsStore, StopReason,
+    TaskContext, TaskReport, TaskStart, TaskStatus, TaskStore, TaskSummary, run_task,
+    workspace_key,
 };
 use agent_core::ollama::{ChatEvent, ChatRequest, OllamaClient};
 use agent_core::permissions::{ApprovalRequest, ApprovalResponse};
@@ -20,6 +21,9 @@ struct AppState {
     /// `Err` only when the app data directory could not be opened at boot; the task commands then
     /// answer with that reason instead of pretending there is no history.
     store: Result<TaskStore, String>,
+    /// Same directory, same failure: without it preferences simply do not persist, which costs the
+    /// user a click and never a task.
+    settings: Result<SettingsStore, String>,
 }
 
 /// Course corrections typed while a task runs; the loop drains it each iteration.
@@ -464,6 +468,48 @@ async fn task_events(
     .map_err(|error| error.to_string())?
 }
 
+/// What the app remembered from the last runs. Reading never fails on content: an unreadable file
+/// answers as "nothing chosen yet", so the UI always has a value to fall back from.
+#[tauri::command]
+async fn get_settings(state: tauri::State<'_, AppState>) -> Result<Settings, String> {
+    let store = state.settings.clone()?;
+    tauri::async_runtime::spawn_blocking(move || store.load())
+        .await
+        .map_err(|error| error.to_string())
+}
+
+/// Remembers the model the user picked. The choice is the user's, so it goes to disk as it came;
+/// nothing here reads meaning into the name (decision 0002, rule 5).
+///
+/// Writing is a convenience and answers `Ok` even when it failed: the reason is logged, and a full
+/// or read-only disk must not turn picking a model into an error in the middle of a task.
+#[tauri::command]
+async fn set_preferred_model(
+    model: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    let store = match state.settings.clone() {
+        Ok(store) => store,
+        Err(error) => {
+            eprintln!("cd-ai: não foi possível guardar o modelo escolhido: {error}");
+            return Ok(());
+        }
+    };
+    // Read then write: a field this version does not know about survives the update.
+    let written = tauri::async_runtime::spawn_blocking(move || {
+        let mut settings = store.load();
+        settings.model = Some(model);
+        store.save(&settings)
+    })
+    .await;
+    match written {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => eprintln!("cd-ai: não foi possível guardar o modelo escolhido: {error}"),
+        Err(error) => eprintln!("cd-ai: não foi possível guardar o modelo escolhido: {error}"),
+    }
+    Ok(())
+}
+
 #[tauri::command]
 async fn ollama_status() -> agent_core::ollama::OllamaStatus {
     match agent_core::ollama::OllamaClient::new(&build_ollama_base()) {
@@ -551,11 +597,13 @@ pub fn run() {
         }
         Err(error) => Err(error.to_string()),
     };
+    let settings = SettingsStore::open_default().map_err(|error| error.to_string());
 
     tauri::Builder::default()
         .manage(AppState {
             workspace: Default::default(),
             store,
+            settings,
         })
         .manage(RunningTasks::default())
         .manage(ChatTasks::default())
@@ -572,6 +620,8 @@ pub fn run() {
             respond_approval,
             list_tasks,
             task_events,
+            get_settings,
+            set_preferred_model,
             ollama_status,
             chat,
             cancel_chat

@@ -8,16 +8,19 @@ import {
   cancelTask,
   currentWorkspace,
   getOllamaStatus,
+  getSettings,
   listTasks,
   openWorkspace,
   respondApproval,
   resumeTask,
+  setPreferredModel,
   startTask,
   steerTask,
   type TaskSummary,
   taskEvents,
   type WorkspaceInfo,
 } from "@/lib/ipc";
+import { defaultModel } from "@/lib/models";
 import type { Task } from "@/lib/session";
 import { Composer } from "./composer";
 import { Conversation } from "./conversation";
@@ -25,6 +28,7 @@ import { EmptyWorkspace } from "./empty-workspace";
 import { IconButton } from "./icon-button";
 import { type PanelKind, SidePanel } from "./side-panel";
 import { Sidebar } from "./sidebar";
+import { TooltipProvider } from "./ui/tooltip";
 
 // Decision 0002, rule 3: every task the UI starts gets the same context window.
 const NUM_CTX = 16_384;
@@ -40,6 +44,8 @@ export function AppShell() {
   const [models, setModels] = useState<string[]>([]);
   const [loadedModels, setLoadedModels] = useState<string[]>([]);
   const [chosenModel, setChosenModel] = useState<string | null>(null);
+  // The choice the core remembered from the last runs; only decides the default model.
+  const [preferredModel, setPreferred] = useState<string | null>(null);
   const [runningId, setRunningId] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
   const [taskError, setTaskError] = useState<string | null>(null);
@@ -51,14 +57,21 @@ export function AppShell() {
   const composerInput = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
-    // Invented sessions only in development with ?demo; production shows real state only.
+    // Invented sessions only in development with ?demo; production shows real state only, and a
+    // demonstration touches no IPC at all — hence the early return.
     if (process.env.NODE_ENV !== "production" && new URLSearchParams(window.location.search).has("demo")) {
       setTasks(demoTasks);
       setSelectedId(demoTasks[0].id);
       setRunningId(demoRunningId);
       setDemo(true);
       for (const task of demoTasks) replayed.current.add(task.id);
+      return;
     }
+    // Outside Tauri the call rejects and that is expected; the app then opens with no preference.
+    getSettings().then(
+      (settings) => setPreferred(settings.model),
+      () => {},
+    );
   }, []);
 
   useEffect(() => {
@@ -160,9 +173,16 @@ export function AppShell() {
   // There is no core behind a demonstration: the controls stay on screen to be looked at, and do nothing.
   const ignore = () => {};
   const task = tasks.find((candidate) => candidate.id === selectedId) ?? null;
-  const model = chosenModel ?? loadedModels[0] ?? models[0] ?? "";
+  const model = chosenModel ?? defaultModel(preferredModel, loadedModels, models);
   const running = starting || runningId !== null;
   const togglePanel = (kind: PanelKind) => setPanel((current) => (current === kind ? null : kind));
+
+  // The core remembers the choice for the next runs. It answers even when it could not write, and a
+  // rejection here only means there is no core (browser): either way the choice holds on screen.
+  const handleModelChange = (next: string) => {
+    setChosenModel(next);
+    setPreferredModel(next).catch(() => {});
+  };
 
   const handleOpenWorkspace = async () => {
     try {
@@ -244,91 +264,95 @@ export function AppShell() {
   };
 
   return (
-    <div className="flex h-full">
-      <Sidebar
-        open={sidebarOpen}
-        workspace={workspace?.name ?? task?.workspace ?? null}
-        workspaceOpen={Boolean(workspace)}
-        tasks={tasks}
-        selectedId={selectedId}
-        onSelect={setSelectedId}
-        onOpenWorkspace={handleOpenWorkspace}
-        onNewTask={handleNewTask}
-      />
+    // Long enough that the pointer has to rest on a control, short enough not to feel like the
+    // half-second lag of the native Windows tooltip this replaced.
+    <TooltipProvider delayDuration={400}>
+      <div className="flex h-full">
+        <Sidebar
+          open={sidebarOpen}
+          workspace={workspace?.name ?? task?.workspace ?? null}
+          workspaceOpen={Boolean(workspace)}
+          tasks={tasks}
+          selectedId={selectedId}
+          onSelect={setSelectedId}
+          onOpenWorkspace={handleOpenWorkspace}
+          onNewTask={handleNewTask}
+        />
 
-      <main className="relative flex min-w-0 flex-1">
-        <header className="material absolute inset-x-0 top-0 z-10 flex h-12 items-center gap-2 px-2.5 select-none">
-          <IconButton
-            label={sidebarOpen ? "Esconder barra lateral (Ctrl+B)" : "Mostrar barra lateral (Ctrl+B)"}
-            icon="panelLeft"
-            pressed={sidebarOpen}
-            onClick={() => setSidebarOpen((open) => !open)}
-          />
-          {task ? (
-            <div className="flex min-w-0 items-baseline gap-2.5">
-              <h1 className="truncate font-medium">{task.title}</h1>
-              <span className="truncate font-mono text-xs text-ink-faint">
-                {[task.workspace, task.branch].filter(Boolean).join(" · ")}
-              </span>
+        <main className="relative flex min-w-0 flex-1">
+          <header className="material absolute inset-x-0 top-0 z-10 flex h-12 items-center gap-2 px-2.5 select-none">
+            <IconButton
+              label={sidebarOpen ? "Esconder barra lateral (Ctrl+B)" : "Mostrar barra lateral (Ctrl+B)"}
+              icon="panelLeft"
+              pressed={sidebarOpen}
+              onClick={() => setSidebarOpen((open) => !open)}
+            />
+            {task ? (
+              <div className="flex min-w-0 items-baseline gap-2.5">
+                <h1 className="truncate font-medium">{task.title}</h1>
+                <span className="truncate font-mono text-xs text-ink-faint">
+                  {[task.workspace, task.branch].filter(Boolean).join(" · ")}
+                </span>
+              </div>
+            ) : (
+              <h1 className="font-medium text-ink-muted">{workspace ? workspace.name : "Nenhum workspace aberto"}</h1>
+            )}
+            {demo && (
+              <span className="shrink-0 rounded-full bg-signal/12 px-2 py-0.5 text-xs text-signal">Demonstração</span>
+            )}
+            <div className="ml-auto flex gap-0.5">
+              <IconButton
+                label="Alterações"
+                icon="diff"
+                pressed={panel === "diff"}
+                disabled={!task}
+                onClick={() => togglePanel("diff")}
+              />
+              <IconButton
+                label="Terminal"
+                icon="terminal"
+                pressed={panel === "terminal"}
+                disabled={!task}
+                onClick={() => togglePanel("terminal")}
+              />
             </div>
-          ) : (
-            <h1 className="font-medium text-ink-muted">{workspace ? workspace.name : "Nenhum workspace aberto"}</h1>
-          )}
-          {demo && (
-            <span className="shrink-0 rounded-full bg-accent/12 px-2 py-0.5 text-xs text-accent">Demonstração</span>
-          )}
-          <div className="ml-auto flex gap-0.5">
-            <IconButton
-              label="Alterações"
-              icon="diff"
-              pressed={panel === "diff"}
-              disabled={!task}
-              onClick={() => togglePanel("diff")}
-            />
-            <IconButton
-              label="Terminal"
-              icon="terminal"
-              pressed={panel === "terminal"}
-              disabled={!task}
-              onClick={() => togglePanel("terminal")}
-            />
+          </header>
+
+          <div className="flex min-w-0 flex-1 flex-col">
+            {task ? (
+              <Conversation
+                key={task.id}
+                task={task}
+                onApprovalDecision={demo ? undefined : handleApproval}
+                // One task per workspace (D5): no offer to resume while another one holds the slot.
+                onResume={demo ? ignore : running ? undefined : handleResume}
+              />
+            ) : (
+              <EmptyWorkspace workspace={workspace} error={workspaceError} onOpen={handleOpenWorkspace} />
+            )}
+            {(workspace || task) && (
+              <Composer
+                task={task}
+                running={running}
+                // A demonstration has a workspace in its own data, so the composer shows its normal state.
+                workspaceOpen={demo || Boolean(workspace)}
+                models={models}
+                loadedModels={loadedModels}
+                model={model}
+                onModelChange={demo ? setChosenModel : handleModelChange}
+                onStart={demo ? ignore : handleStart}
+                onSteer={demo ? ignore : handleSteer}
+                onCancel={demo ? ignore : handleCancel}
+                error={taskError}
+                inputRef={composerInput}
+              />
+            )}
           </div>
-        </header>
 
-        <div className="flex min-w-0 flex-1 flex-col">
-          {task ? (
-            <Conversation
-              key={task.id}
-              task={task}
-              onApprovalDecision={demo ? undefined : handleApproval}
-              // One task per workspace (D5): no offer to resume while another one holds the slot.
-              onResume={demo ? ignore : running ? undefined : handleResume}
-            />
-          ) : (
-            <EmptyWorkspace workspace={workspace} error={workspaceError} onOpen={handleOpenWorkspace} />
-          )}
-          {(workspace || task) && (
-            <Composer
-              task={task}
-              running={running}
-              // A demonstration has a workspace in its own data, so the composer shows its normal state.
-              workspaceOpen={demo || Boolean(workspace)}
-              models={models}
-              loadedModels={loadedModels}
-              model={model}
-              onModelChange={setChosenModel}
-              onStart={demo ? ignore : handleStart}
-              onSteer={demo ? ignore : handleSteer}
-              onCancel={demo ? ignore : handleCancel}
-              error={taskError}
-              inputRef={composerInput}
-            />
-          )}
-        </div>
-
-        {panel && task && <SidePanel kind={panel} task={task} onClose={() => setPanel(null)} />}
-      </main>
-    </div>
+          {panel && task && <SidePanel kind={panel} task={task} onClose={() => setPanel(null)} />}
+        </main>
+      </div>
+    </TooltipProvider>
   );
 }
 

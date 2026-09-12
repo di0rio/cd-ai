@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-set-preferred-model"
+description = "Enables the set_preferred_model command without any pre-configured scope."
+commands.allow = ["set_preferred_model"]
+
+[[permission]]
+identifier = "deny-set-preferred-model"
+description = "Denies the set_preferred_model command without any pre-configured scope."
+commands.deny = ["set_preferred_model"]
