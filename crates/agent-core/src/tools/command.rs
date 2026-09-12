@@ -3,15 +3,17 @@ use std::process::{Child, Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crate::permissions::{ApprovalAction, PermissionDecision, classify};
+use crate::permissions::{ApprovalAction, CommandClass, PermissionDecision, classify};
 use crate::redactor;
+use crate::tools::cancel::CancelToken;
 use crate::tools::{
     CommandResult, DEFAULT_COMMAND_TIMEOUT_MS, EventSink, MAX_OUTPUT_BYTES, Responder,
     RunCommandArgs, ToolEngine, ToolError,
 };
 
-/// run_command: argv only, never a shell (design D2). Every command asks the user,
-/// with the exact argv; the class is part of the approval (design D5/D8).
+/// run_command: argv only, never a shell (design D2). Commands classified `read`/`validate` run
+/// automatically (§20.4); every other class asks the user with the exact argv, never a model
+/// summary, and the class is part of the approval (design D5/D8).
 pub fn run_command(
     engine: &mut ToolEngine,
     args: RunCommandArgs,
@@ -43,16 +45,23 @@ pub fn run_command(
         None => engine.workspace.root().to_path_buf(),
     };
 
+    // §20.4: `read`/`validate` is `auto` in all three permission modes, so it never opens an
+    // approval. The decision comes only from this deterministic classification of the argv, never
+    // from a model claim (§20.5); compound argv was already refused above, so a mixed command
+    // cannot reach the automatic path.
     let class = classify(argv);
-    let decision = engine.ask_approval(
-        events,
-        responder,
-        ApprovalAction::RunCommand {
-            argv: argv.clone(),
-            class: class.clone(),
-            cwd: crate::tools::display_path(&engine.workspace, &cwd),
-        },
-    );
+    let decision = match class {
+        CommandClass::Read | CommandClass::Validate => PermissionDecision::Auto,
+        _ => engine.ask_approval(
+            events,
+            responder,
+            ApprovalAction::RunCommand {
+                argv: argv.clone(),
+                class: class.clone(),
+                cwd: crate::tools::display_path(&engine.workspace, &cwd),
+            },
+        ),
+    };
     if decision == PermissionDecision::Denied {
         return Err(ToolError::PermissionDenied {
             reason: "comando negado".to_string(),
@@ -84,7 +93,9 @@ pub fn run_command(
         .spawn()
         .map_err(|error| ToolError::Io(format!("não foi possível executar: {error}")))?;
 
-    let status = wait_with_timeout(&mut child, timeout, MAX_OUTPUT_BYTES);
+    // Cloned up front: the engine is borrowed mutably again to emit the events below.
+    let cancel = engine.cancel_token().clone();
+    let status = wait_with_timeout(&mut child, timeout, MAX_OUTPUT_BYTES, &cancel);
     let duration_ms = started.elapsed().as_millis() as u64;
 
     let (output, truncated, timed_out) = (
@@ -104,6 +115,11 @@ pub fn run_command(
         },
     );
 
+    // The tree is already dead; the task gets the cancellation, not a partial result.
+    if status.cancelled {
+        return Err(ToolError::Cancelled);
+    }
+
     Ok((
         decision,
         CommandResult {
@@ -120,13 +136,19 @@ pub fn run_command(
 struct RunStatus {
     exit_code: Option<i32>,
     timed_out: bool,
+    cancelled: bool,
     output_capped: bool,
     output: String,
 }
 
-/// Polls the child, killing the whole tree on timeout. Readers drain the pipes on
-/// background threads so a chatty or quiet child never deadlocks the timeout.
-fn wait_with_timeout(child: &mut Child, timeout: Duration, cap: usize) -> RunStatus {
+/// Polls the child, killing the whole tree on timeout or cancellation. Readers drain the
+/// pipes on background threads so a chatty or quiet child never deadlocks the timeout.
+fn wait_with_timeout(
+    child: &mut Child,
+    timeout: Duration,
+    cap: usize,
+    cancel: &CancelToken,
+) -> RunStatus {
     let stdout = child
         .stdout
         .take()
@@ -137,15 +159,25 @@ fn wait_with_timeout(child: &mut Child, timeout: Duration, cap: usize) -> RunSta
         .map(|pipe| thread::spawn(move || drain_capped(pipe, cap)));
 
     let deadline = Instant::now() + timeout;
+    let mut cancelled = false;
     let exit = loop {
         if let Some(status) = child.try_wait().unwrap_or(None) {
             break status.code();
         }
+        if cancel.is_cancelled() {
+            cancelled = true;
+            break None;
+        }
         if Instant::now() >= deadline {
-            break None; // timed out: caller kills and notifies
+            break None; // timed out
         }
         thread::sleep(Duration::from_millis(10));
     };
+
+    // Kill before joining the readers: they only finish once the child closes the pipes.
+    if exit.is_none() {
+        kill_process_tree(child);
+    }
 
     let stdout = stdout
         .and_then(|handle| handle.join().ok())
@@ -161,13 +193,10 @@ fn wait_with_timeout(child: &mut Child, timeout: Duration, cap: usize) -> RunSta
     }
     text.push_str(&String::from_utf8_lossy(&stderr));
 
-    let timed_out = exit.is_none();
-    if timed_out {
-        kill_process_tree(child);
-    }
     RunStatus {
         exit_code: exit,
-        timed_out,
+        timed_out: exit.is_none() && !cancelled,
+        cancelled,
         output_capped,
         output: text,
     }
@@ -210,19 +239,67 @@ fn windows_new_process_group() -> u32 {
     0x0000_0200 // CREATE_NEW_PROCESS_GROUP
 }
 
+/// Silent on purpose: a child that already exited on its own is not an error, and
+/// cancellation takes this path all the time.
 #[cfg(unix)]
 fn kill_process_tree(child: &Child) {
     let pgid = child.id() as i64;
     let _ = Command::new("kill")
         .args(["-KILL", &format!("-{pgid}")])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
         .status();
 }
 
+/// Silent on purpose: `taskkill` prints "The process NNN not found." whenever the child
+/// is already gone, which the cancel path hits routinely.
 #[cfg(not(unix))]
 fn kill_process_tree(child: &Child) {
     let _ = Command::new("taskkill")
         .args(["/T", "/F", "/PID", &child.id().to_string()])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
         .status();
+}
+
+/// Per-platform argv for tests that spawn real processes (plan 015, D15): the gate
+/// runs on Windows 11 too, where `echo`, `ls` and `sleep` are not executables.
+#[cfg(test)]
+pub(crate) mod test_argv {
+    fn owned(parts: &[&str]) -> Vec<String> {
+        parts.iter().map(|part| part.to_string()).collect()
+    }
+
+    pub fn echo(text: &str) -> Vec<String> {
+        if cfg!(windows) {
+            owned(&["cmd", "/C", "echo", text])
+        } else {
+            owned(&["echo", text])
+        }
+    }
+
+    pub fn list_cwd() -> Vec<String> {
+        if cfg!(windows) {
+            owned(&["cmd", "/C", "dir", "/B"])
+        } else {
+            owned(&["ls"])
+        }
+    }
+
+    pub fn sleep_secs(n: u64) -> Vec<String> {
+        if cfg!(windows) {
+            owned(&[
+                "powershell",
+                "-NoProfile",
+                "-Command",
+                &format!("Start-Sleep -Seconds {n}"),
+            ])
+        } else {
+            owned(&["sleep", &n.to_string()])
+        }
+    }
 }
 
 #[cfg(test)]
@@ -236,10 +313,41 @@ mod tests {
         ToolEngine::new(ws, "task_cmd")
     }
 
+    fn cv(args: &[&str]) -> Vec<String> {
+        args.iter().map(|s| s.to_string()).collect()
+    }
+
     fn approve(
         _request: crate::permissions::ApprovalRequest,
     ) -> crate::permissions::ApprovalResponse {
         crate::permissions::ApprovalResponse::Granted
+    }
+
+    /// Proves the automatic path: a `read`/`validate` command must never reach a responder.
+    fn never_asked(
+        request: crate::permissions::ApprovalRequest,
+    ) -> crate::permissions::ApprovalResponse {
+        panic!("approval must not be requested for {:?}", request.action);
+    }
+
+    fn approvals_asked(seen: &[crate::events::ToolEventMessage]) -> usize {
+        seen.iter()
+            .filter(|message| {
+                matches!(
+                    message.event,
+                    crate::events::ToolEvent::ApprovalRequired { .. }
+                )
+            })
+            .count()
+    }
+
+    fn started_class(
+        seen: &[crate::events::ToolEventMessage],
+    ) -> Option<crate::permissions::CommandClass> {
+        seen.iter().find_map(|message| match &message.event {
+            crate::events::ToolEvent::CommandStarted { class, .. } => Some(class.clone()),
+            _ => None,
+        })
     }
 
     #[test]
@@ -251,7 +359,7 @@ mod tests {
         let (decision, result) = run_command(
             &mut engine,
             RunCommandArgs {
-                argv: vec!["echo".into(), "ola".into()],
+                argv: test_argv::echo("ola"),
                 cwd: None,
                 timeout_ms: None,
             },
@@ -259,10 +367,99 @@ mod tests {
             &mut approve,
         )
         .unwrap();
-        assert_eq!(decision, PermissionDecision::Granted);
+        // `echo` is a read command on unix (auto) and a `cmd /C` wrapper on Windows (approved).
+        assert_ne!(decision, PermissionDecision::Denied);
         assert_eq!(result.exit_code, Some(0));
         assert!(result.output.contains("ola"));
         assert!(!result.timed_out);
+    }
+
+    #[test]
+    fn validate_command_runs_without_approval() {
+        let dir = tempdir().unwrap();
+        let mut engine = boot(dir.path());
+        let mut seen = Vec::new();
+        let mut sink = |message: crate::events::ToolEventMessage| seen.push(message);
+
+        // §20.4: `validate` is `auto`; `never_asked` panics if the approval path is taken.
+        let (decision, result) = run_command(
+            &mut engine,
+            RunCommandArgs {
+                argv: cv(&["cargo", "fmt", "--version"]),
+                cwd: None,
+                timeout_ms: Some(30_000),
+            },
+            &mut sink,
+            &mut never_asked,
+        )
+        .unwrap();
+
+        assert_eq!(decision, PermissionDecision::Auto);
+        assert_eq!(result.exit_code, Some(0));
+        assert_eq!(approvals_asked(&seen), 0);
+        assert_eq!(
+            started_class(&seen),
+            Some(crate::permissions::CommandClass::Validate)
+        );
+    }
+
+    #[test]
+    fn read_command_runs_without_approval() {
+        let dir = tempdir().unwrap();
+        let mut engine = boot(dir.path());
+        let mut seen = Vec::new();
+        let mut sink = |message: crate::events::ToolEventMessage| seen.push(message);
+
+        // The tempdir is not a repository, so the exit code is irrelevant: what matters is that
+        // `git status` (class read) never opens an approval. CommandStarted is emitted either way.
+        let _ = run_command(
+            &mut engine,
+            RunCommandArgs {
+                argv: cv(&["git", "status", "--short"]),
+                cwd: None,
+                timeout_ms: Some(30_000),
+            },
+            &mut sink,
+            &mut never_asked,
+        );
+
+        assert_eq!(approvals_asked(&seen), 0);
+        assert_eq!(
+            started_class(&seen),
+            Some(crate::permissions::CommandClass::Read)
+        );
+    }
+
+    #[test]
+    fn write_command_still_asks_for_approval() {
+        let dir = tempdir().unwrap();
+        let mut engine = boot(dir.path());
+        let mut seen = Vec::new();
+        let mut sink = |message: crate::events::ToolEventMessage| seen.push(message);
+        let mut asked = 0usize;
+        let mut count = |_: crate::permissions::ApprovalRequest| {
+            asked += 1;
+            crate::permissions::ApprovalResponse::Granted
+        };
+
+        // `git add -A` is class write: outside read/validate the approval is still mandatory.
+        let _ = run_command(
+            &mut engine,
+            RunCommandArgs {
+                argv: cv(&["git", "add", "-A"]),
+                cwd: None,
+                timeout_ms: Some(30_000),
+            },
+            &mut sink,
+            &mut count,
+        );
+
+        assert_eq!(asked, 1);
+        assert_eq!(approvals_asked(&seen), 1);
+        assert_eq!(
+            started_class(&seen),
+            Some(crate::permissions::CommandClass::Write)
+        );
     }
 
     #[test]
@@ -301,7 +498,7 @@ mod tests {
         let (_, result) = run_command(
             &mut engine,
             RunCommandArgs {
-                argv: vec!["sleep".into(), "5".into()],
+                argv: test_argv::sleep_secs(5),
                 cwd: None,
                 timeout_ms: Some(200),
             },
@@ -314,6 +511,52 @@ mod tests {
     }
 
     #[test]
+    fn cancel_kills_running_command() {
+        let dir = tempdir().unwrap();
+        let mut engine = boot(dir.path());
+        let cancel = CancelToken::default();
+        engine.set_cancel(cancel.clone());
+
+        let mut seen = Vec::new();
+        let mut sink = |message: crate::events::ToolEventMessage| seen.push(message);
+
+        let canceller = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(200));
+            cancel.cancel();
+        });
+
+        let started = Instant::now();
+        let err = run_command(
+            &mut engine,
+            RunCommandArgs {
+                argv: test_argv::sleep_secs(5),
+                cwd: None,
+                timeout_ms: Some(30_000),
+            },
+            &mut sink,
+            &mut approve,
+        )
+        .unwrap_err();
+        let elapsed = started.elapsed();
+        canceller.join().unwrap();
+
+        assert!(matches!(err, ToolError::Cancelled));
+        assert!(
+            elapsed < Duration::from_secs(3),
+            "cancelling must not wait for the command: took {elapsed:?}"
+        );
+        let completed = seen
+            .iter()
+            .rev()
+            .find_map(|message| match &message.event {
+                crate::events::ToolEvent::CommandCompleted { exit_code, .. } => Some(*exit_code),
+                _ => None,
+            })
+            .expect("a cancelled command still reports CommandCompleted");
+        assert!(completed.is_none());
+    }
+
+    #[test]
     fn denied_command_does_not_run() {
         let dir = tempdir().unwrap();
         let mut engine = boot(dir.path());
@@ -322,10 +565,11 @@ mod tests {
             crate::permissions::ApprovalResponse::Denied { reason: None }
         };
 
+        // `touch` is class write, so it is denied on every platform before anything is spawned.
         let err = run_command(
             &mut engine,
             RunCommandArgs {
-                argv: vec!["echo".into(), "nao-roda".into()],
+                argv: cv(&["touch", "nao-roda.txt"]),
                 cwd: None,
                 timeout_ms: None,
             },
@@ -334,6 +578,29 @@ mod tests {
         )
         .unwrap_err();
         assert!(matches!(err, ToolError::PermissionDenied { .. }));
+        assert!(!dir.path().join("nao-roda.txt").exists());
+    }
+
+    #[test]
+    fn compound_hiding_behind_a_validate_command_is_refused() {
+        let dir = tempdir().unwrap();
+        let mut engine = boot(dir.path());
+        let mut sink = |_: crate::events::ToolEventMessage| {};
+
+        // The automatic path must not be reachable by pairing a validate command with a dangerous
+        // one: compound argv is refused before the class is even consulted (D2).
+        let err = run_command(
+            &mut engine,
+            RunCommandArgs {
+                argv: cv(&["bun", "test", "&&", "rm", "-rf", "build"]),
+                cwd: None,
+                timeout_ms: None,
+            },
+            &mut sink,
+            &mut never_asked,
+        )
+        .unwrap_err();
+        assert!(matches!(err, ToolError::CompoundCommand));
     }
 
     #[test]
@@ -345,7 +612,7 @@ mod tests {
         let err = run_command(
             &mut engine,
             RunCommandArgs {
-                argv: vec!["echo".into(), "x".into()],
+                argv: test_argv::echo("x"),
                 cwd: Some("nao/existe".into()),
                 timeout_ms: None,
             },
@@ -366,7 +633,7 @@ mod tests {
         let (_, result) = run_command(
             &mut engine,
             RunCommandArgs {
-                argv: vec!["ls".into()],
+                argv: test_argv::list_cwd(),
                 cwd: None,
                 timeout_ms: Some(2000),
             },

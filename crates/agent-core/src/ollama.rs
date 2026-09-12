@@ -35,11 +35,68 @@ pub struct OllamaStatus {
     pub error: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct ChatMessage {
     pub role: String,
     pub content: String,
+    /// Native tool calls the model asked for, mirroring Ollama's `message.tool_calls`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tool_calls: Vec<ModelToolCall>,
+    /// Only on `role: "tool"` messages, carrying a tool result back to the model.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_name: Option<String>,
+}
+
+/// One entry of Ollama's `message.tool_calls`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ModelToolCall {
+    pub function: ModelFunctionCall,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ModelFunctionCall {
+    pub name: String,
+    /// Ollama sends the arguments already parsed as a JSON object.
+    #[ts(type = "Record<string, unknown>")]
+    pub arguments: serde_json::Value,
+}
+
+/// One tool offered to the model, in Ollama's function-calling shape.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ToolSpec {
+    pub r#type: String,
+    pub function: ToolFunctionSpec,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ToolFunctionSpec {
+    pub name: String,
+    pub description: String,
+    /// JSON Schema of the parameters.
+    #[ts(type = "Record<string, unknown>")]
+    pub parameters: serde_json::Value,
+}
+
+impl ToolSpec {
+    pub fn function(
+        name: impl Into<String>,
+        description: impl Into<String>,
+        parameters: serde_json::Value,
+    ) -> Self {
+        Self {
+            r#type: "function".to_string(),
+            function: ToolFunctionSpec {
+                name: name.into(),
+                description: description.into(),
+                parameters,
+            },
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, TS)]
@@ -50,6 +107,9 @@ pub struct ChatRequest {
     pub messages: Vec<ChatMessage>,
     /// Always explicit: the runtime default can silently truncate the prompt (SPEC §4).
     pub num_ctx: u32,
+    #[serde(default)]
+    #[ts(optional)]
+    pub tools: Option<Vec<ToolSpec>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, TS)]
@@ -66,6 +126,9 @@ pub enum ChatEvent {
     },
     Thinking {
         content: String,
+    },
+    ToolCalls {
+        calls: Vec<ModelToolCall>,
     },
     Done {
         #[ts(type = "number")]
@@ -111,6 +174,8 @@ struct StreamMessage {
     content: String,
     #[serde(default)]
     thinking: Option<String>,
+    #[serde(default)]
+    tool_calls: Vec<ModelToolCall>,
 }
 
 impl NdjsonChatParser {
@@ -162,6 +227,11 @@ impl NdjsonChatParser {
                     content: message.content,
                 });
             }
+            if !message.tool_calls.is_empty() {
+                events.push(ChatEvent::ToolCalls {
+                    calls: message.tool_calls,
+                });
+            }
         }
         if parsed.done {
             events.push(ChatEvent::Done {
@@ -173,6 +243,21 @@ impl NdjsonChatParser {
         }
         events
     }
+}
+
+/// Body for POST /api/chat. `tools` is sent only when the caller offers any: models
+/// behave differently once the key is present, even when it is an empty list.
+fn request_body(request: &ChatRequest) -> serde_json::Value {
+    let mut body = serde_json::json!({
+        "model": request.model,
+        "messages": request.messages,
+        "stream": true,
+        "options": { "num_ctx": request.num_ctx },
+    });
+    if let Some(tools) = request.tools.as_ref().filter(|tools| !tools.is_empty()) {
+        body["tools"] = serde_json::json!(tools);
+    }
+    body
 }
 
 pub struct OllamaClient {
@@ -366,12 +451,7 @@ impl OllamaClient {
             .build()
             .map_err(|error| error.to_string())?;
 
-        let body = serde_json::json!({
-            "model": request.model,
-            "messages": request.messages,
-            "stream": true,
-            "options": { "num_ctx": request.num_ctx },
-        });
+        let body = request_body(request);
 
         let url = format!("{}/api/chat", self.base_url);
         let mut response = http
@@ -557,6 +637,95 @@ mod tests {
         );
     }
 
+    #[test]
+    fn request_body_includes_tools_only_when_present() {
+        let mut request = ChatRequest {
+            model: "m".to_string(),
+            messages: vec![ChatMessage {
+                role: "user".to_string(),
+                content: "oi".to_string(),
+                ..Default::default()
+            }],
+            num_ctx: 2048,
+            tools: None,
+        };
+        assert!(request_body(&request).get("tools").is_none());
+
+        request.tools = Some(vec![]);
+        assert!(request_body(&request).get("tools").is_none());
+
+        request.tools = Some(vec![ToolSpec::function(
+            "read_file",
+            "lê um arquivo do workspace",
+            serde_json::json!({
+                "type": "object",
+                "properties": { "path": { "type": "string" } },
+                "required": ["path"],
+            }),
+        )]);
+        let body = request_body(&request);
+        assert_eq!(body["tools"][0]["type"], "function");
+        assert_eq!(body["tools"][0]["function"]["name"], "read_file");
+        assert_eq!(
+            body["tools"][0]["function"]["parameters"]["required"][0],
+            "path"
+        );
+    }
+
+    #[test]
+    fn parser_emits_tool_calls() {
+        let mut parser = NdjsonChatParser::default();
+        let line = "{\
+            \"message\":{\"role\":\"assistant\",\"content\":\"\",\
+            \"tool_calls\":[{\"function\":{\"name\":\"read_file\",\"arguments\":{\"path\":\"a.rs\"}}}]},\
+            \"done\":true}\n";
+        let events = parser.push(line.as_bytes());
+        assert_eq!(
+            events,
+            vec![
+                ChatEvent::ToolCalls {
+                    calls: vec![ModelToolCall {
+                        function: ModelFunctionCall {
+                            name: "read_file".to_string(),
+                            arguments: serde_json::json!({ "path": "a.rs" }),
+                        },
+                    }],
+                },
+                ChatEvent::Done {
+                    prompt_tokens: 0,
+                    gen_tokens: 0,
+                    prompt_ms: 0,
+                    gen_ms: 0,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn tool_message_serializes_role_and_name() {
+        let result = ChatMessage {
+            role: "tool".to_string(),
+            content: "ok: a.rs".to_string(),
+            tool_name: Some("read_file".to_string()),
+            ..Default::default()
+        };
+        let json = serde_json::to_value(&result).unwrap();
+        assert_eq!(json["role"], "tool");
+        assert_eq!(json["tool_name"], "read_file");
+        assert_eq!(json["content"], "ok: a.rs");
+        // Empty tool_calls never reach the wire.
+        assert!(json.get("tool_calls").is_none());
+
+        let user = ChatMessage {
+            role: "user".to_string(),
+            content: "oi".to_string(),
+            ..Default::default()
+        };
+        let json = serde_json::to_value(&user).unwrap();
+        assert!(json.get("tool_name").is_none());
+        assert!(json.get("tool_calls").is_none());
+    }
+
     #[tokio::test]
     #[ignore]
     async fn live_chat_streams_tokens() {
@@ -566,8 +735,10 @@ mod tests {
             messages: vec![ChatMessage {
                 role: "user".to_string(),
                 content: "responda só: ok".to_string(),
+                ..Default::default()
             }],
             num_ctx: 2048,
+            tools: None,
         };
         let mut saw_token = false;
         let mut saw_done = false;

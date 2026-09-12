@@ -1,3 +1,4 @@
+pub mod agent;
 pub mod events;
 pub mod ollama;
 pub mod permissions;

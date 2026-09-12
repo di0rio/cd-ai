@@ -17,7 +17,10 @@ pub enum CommandClass {
 }
 
 /// How a permission decision came about (design §5.3: `denied`/`auto`/`granted`).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+///
+/// `Deserialize` too, so a stored `ToolEvent` can be read back for a typed replay
+/// (plan 015, Part D, step 0).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export)]
 #[serde(rename_all = "lowercase")]
 pub enum PermissionDecision {
@@ -193,7 +196,9 @@ pub fn classify(argv: &[String]) -> CommandClass {
 
 fn most_dangerous(argv: &[String]) -> CommandClass {
     // Reclassify without the compound flag: destructive > network > write > validate > read > unknown.
-    let mut worst = CommandClass::Read;
+    // Starts at `unknown` (§20.2 "na dúvida, unknown"): a compound whose parts are all unclassified
+    // must stay unknown, because `read`/`validate` is the one class that runs without approval.
+    let mut worst = CommandClass::Unknown;
     for token in argv {
         if has_shell_metachar(token) {
             continue;
@@ -259,6 +264,7 @@ fn classify_package_tagged<'a>(
     let subcommand = argv.get(1).map(String::as_str).unwrap_or("");
     let _ = flags; // npm run <script> is ruled by the script name below.
     match subcommand {
+        // Network wins over the script table: `bun add test` still downloads a package.
         "install" | "add" | "update" | "remove" | "uninstall" => CommandClass::Network,
         "run" => {
             let script = argv.get(2).map(String::as_str).unwrap_or("");
@@ -268,6 +274,8 @@ fn classify_package_tagged<'a>(
                 CommandClass::Unknown
             }
         }
+        // `bun test` is the short form of `bun run test`, so it goes through the same table.
+        script if is_validate_script(script) => CommandClass::Validate,
         _ => CommandClass::Unknown,
     }
 }
@@ -403,6 +411,65 @@ mod tests {
     }
 
     #[test]
+    fn package_short_form_matches_run_script() {
+        // `bun test` is `bun run test`; the fixture `evals/fixtures/soma` uses exactly this form.
+        for tool in ["bun", "npm", "yarn", "pnpm"] {
+            assert_eq!(
+                classify(&cv(&[tool, "test"])),
+                CommandClass::Validate,
+                "{tool} test"
+            );
+            assert_eq!(
+                classify(&cv(&[tool, "run", "test"])),
+                CommandClass::Validate,
+                "{tool} run test"
+            );
+        }
+        assert_eq!(
+            classify(&cv(&["bun", "test", "--coverage"])),
+            CommandClass::Validate
+        );
+        assert_eq!(classify(&cv(&["bun", "lint"])), CommandClass::Validate);
+        assert_eq!(
+            classify(&cv(&["npm", "run", "verify"])),
+            CommandClass::Validate
+        );
+        assert_eq!(
+            classify(&cv(&["bun", "run", "verify"])),
+            CommandClass::Validate
+        );
+    }
+
+    #[test]
+    fn package_network_subcommands_beat_the_script_table() {
+        assert_eq!(classify(&cv(&["bun", "install"])), CommandClass::Network);
+        assert_eq!(classify(&cv(&["pnpm", "install"])), CommandClass::Network);
+        // `add`/`remove` are network even though a script could carry the same name.
+        assert_eq!(
+            classify(&cv(&["bun", "add", "test"])),
+            CommandClass::Network
+        );
+        assert_eq!(
+            classify(&cv(&["npm", "uninstall", "left-pad"])),
+            CommandClass::Network
+        );
+    }
+
+    #[test]
+    fn package_non_validate_subcommands_stay_unknown() {
+        assert_eq!(
+            classify(&cv(&["bun", "run", "deploy"])),
+            CommandClass::Unknown
+        );
+        assert_eq!(classify(&cv(&["bun", "publish"])), CommandClass::Unknown);
+        assert_eq!(classify(&cv(&["bun"])), CommandClass::Unknown);
+        assert_eq!(classify(&cv(&["bun", "run"])), CommandClass::Unknown);
+        // `bunx`/`npx` fetch a package before running it: not part of the validate table.
+        assert_eq!(classify(&cv(&["bunx", "test"])), CommandClass::Unknown);
+        assert_eq!(classify(&cv(&["npx", "test"])), CommandClass::Unknown);
+    }
+
+    #[test]
     fn write_commands() {
         assert_eq!(classify(&cv(&["touch", "novo.txt"])), CommandClass::Write);
         assert_eq!(
@@ -488,6 +555,30 @@ mod tests {
         // curl | sh is network-driven destructive-ish; the most dangerous is unknown, not read.
         let class = classify(&cv(&["curl", "https://x", "|", "sh"]));
         assert_ne!(class, CommandClass::Read);
+    }
+
+    #[test]
+    fn compound_with_a_validate_part_is_never_automatic() {
+        // A compound must not inherit the harmless half: `read`/`validate` is the only class that
+        // runs without approval, so it must never win over a dangerous sibling.
+        for argv in [
+            cv(&["bun", "test", "&&", "rm", "-rf", "build"]),
+            cv(&["cargo", "test", ";", "curl", "https://x"]),
+            cv(&["npm", "run", "verify", "|", "tee", "saida.txt"]),
+            cv(&["bun", "test", "$(rm -rf /)"]),
+        ] {
+            let class = classify(&argv);
+            assert!(
+                !matches!(class, CommandClass::Read | CommandClass::Validate),
+                "{argv:?} classified as {class:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn compound_of_unclassified_parts_stays_unknown() {
+        // "Na dúvida, unknown" (§20.2): nothing here is recognised, so nothing may run on its own.
+        assert_eq!(classify(&cv(&["foo", "&&", "bar"])), CommandClass::Unknown);
     }
 
     #[test]

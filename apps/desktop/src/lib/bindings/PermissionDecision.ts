@@ -2,5 +2,8 @@
 
 /**
  * How a permission decision came about (design §5.3: `denied`/`auto`/`granted`).
+ *
+ * `Deserialize` too, so a stored `ToolEvent` can be read back for a typed replay
+ * (plan 015, Part D, step 0).
  */
 export type PermissionDecision = "denied" | "auto" | "granted";
