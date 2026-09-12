@@ -40,7 +40,7 @@ export function EmptyWorkspace({ workspace, error, onOpen }: EmptyWorkspaceProps
         <button
           type="button"
           onClick={onOpen}
-          className="mt-8 inline-flex h-9 items-center gap-2 rounded-lg bg-accent px-3.5 font-medium text-accent-ink transition-[scale,opacity] active:scale-[0.97]"
+          className="mt-8 inline-flex h-9 items-center gap-2 rounded-lg bg-signal px-3.5 font-medium text-signal-ink transition-[scale,opacity] active:scale-[0.97]"
         >
           <Icon name="folder" />
           {workspace ? "Trocar workspace" : "Abrir workspace"}

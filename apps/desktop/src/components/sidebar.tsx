@@ -2,9 +2,10 @@ import type { Task, TaskStatus } from "@/lib/session";
 import { CoreStatus } from "./core-status";
 import { Icon } from "./icons";
 import { OllamaIndicator } from "./ollama-status";
+import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 
 const STATUS: Record<TaskStatus, { label: string; dot: string }> = {
-  running: { label: "Em andamento", dot: "bg-accent animate-pulse" },
+  running: { label: "Em andamento", dot: "bg-signal animate-pulse" },
   waiting_approval: { label: "Aguardando aprovação", dot: "bg-warn" },
   completed: { label: "Validada", dot: "bg-ok" },
   completed_unvalidated: { label: "Não validada", dot: "ring-[1.5px] ring-inset ring-warn" },
@@ -38,6 +39,18 @@ export function Sidebar({
   onOpenWorkspace,
   onNewTask,
 }: SidebarProps) {
+  const newTask = (
+    <button
+      type="button"
+      disabled={!workspaceOpen}
+      onClick={onNewTask}
+      className={`${rowButton} text-ink enabled:hover:bg-canvas disabled:pointer-events-none`}
+    >
+      <Icon name="plus" />
+      Nova tarefa
+    </button>
+  );
+
   return (
     <aside
       aria-label="Barra lateral"
@@ -54,16 +67,17 @@ export function Sidebar({
         </div>
 
         <div className="px-2">
-          <button
-            type="button"
-            disabled={!workspaceOpen}
-            title={workspaceOpen ? undefined : "Abra um workspace para criar uma tarefa"}
-            onClick={onNewTask}
-            className={`${rowButton} text-ink enabled:hover:bg-canvas`}
-          >
-            <Icon name="plus" />
-            Nova tarefa
-          </button>
+          {workspaceOpen ? (
+            newTask
+          ) : (
+            <Tooltip>
+              {/* A disabled button swallows pointer events, so the reason hangs on a wrapper. */}
+              <TooltipTrigger asChild>
+                <span className="flex">{newTask}</span>
+              </TooltipTrigger>
+              <TooltipContent>Abra um workspace para criar uma tarefa</TooltipContent>
+            </Tooltip>
+          )}
         </div>
 
         <div className="mt-5 px-2">

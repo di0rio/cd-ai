@@ -1,8 +1,14 @@
 @import "tailwindcss";
+/* Enter/exit utilities the shadcn components use (animate-in, fade-in-0, zoom-in-95, …).
+   Definitions only: no base reset, so it cannot move anything already on screen. */
+@import "tw-animate-css";
 
-/* Two neutral layers (canvas + sidebar), one teal accent, semantic ok/warn/bad. Light and dark follow the system. */
+/* Two neutral layers (canvas + sidebar), one teal signal, semantic ok/warn/bad. Light and dark follow the system. */
 :root {
   color-scheme: light dark;
+  /* Native controls (checkbox, radio, range, progress) would otherwise fall back to the
+     Windows blue, which breaks the single-voice rule of DESIGN.md. */
+  accent-color: var(--signal);
   --canvas: oklch(0.99 0.002 250);
   --sidebar: oklch(0.965 0.004 250);
   --raised: oklch(1 0 0);
@@ -10,8 +16,8 @@
   --ink: oklch(0.23 0.012 250);
   --ink-muted: oklch(0.45 0.012 250);
   --ink-faint: oklch(0.55 0.01 250);
-  --accent: oklch(0.52 0.1 195);
-  --accent-ink: oklch(0.99 0.01 195);
+  --signal: oklch(0.52 0.1 195);
+  --signal-ink: oklch(0.99 0.01 195);
   --ok: oklch(0.52 0.13 150);
   --warn: oklch(0.6 0.13 70);
   --bad: oklch(0.55 0.19 25);
@@ -26,8 +32,8 @@
     --ink: oklch(0.94 0.005 250);
     --ink-muted: oklch(0.74 0.01 250);
     --ink-faint: oklch(0.62 0.01 250);
-    --accent: oklch(0.78 0.1 195);
-    --accent-ink: oklch(0.2 0.03 195);
+    --signal: oklch(0.78 0.1 195);
+    --signal-ink: oklch(0.2 0.03 195);
     --ok: oklch(0.76 0.14 150);
     --warn: oklch(0.8 0.13 75);
     --bad: oklch(0.7 0.17 25);
@@ -41,6 +47,45 @@
   }
 }
 
+/* Bridge to the shadcn token names. Every one of them points at a project token and carries no
+   colour of its own, so the blocks above stay the single place a theme is defined — light, dark
+   and more-contrast all follow without being restated here.
+   Two names do NOT line up one to one:
+   - shadcn `primary` is the project signal (its `accent` is a neutral hover fill);
+   - shadcn `accent` is therefore the second neutral layer, `sidebar`. */
+:root {
+  --background: var(--canvas);
+  --foreground: var(--ink);
+  --card: var(--raised);
+  --card-foreground: var(--ink);
+  --popover: var(--raised);
+  --popover-foreground: var(--ink);
+  --primary: var(--signal);
+  --primary-foreground: var(--signal-ink);
+  --secondary: var(--sidebar);
+  --secondary-foreground: var(--ink);
+  --muted: var(--sidebar);
+  --muted-foreground: var(--ink-muted);
+  --accent: var(--sidebar);
+  --accent-foreground: var(--ink);
+  --destructive: var(--bad);
+  --destructive-foreground: var(--canvas);
+  --border: var(--line);
+  --input: var(--line);
+  --ring: var(--signal);
+}
+
+/* Not `inline`: the shadcn components read some of these as plain custom properties
+   (e.g. `rounded-[min(var(--radius-md),10px)]`), so they have to reach :root.
+   The values are the DESIGN.md scale, which is also what the project already uses. */
+@theme {
+  --radius: 8px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 12px;
+  --radius-2xl: 16px;
+}
+
 @theme inline {
   --color-canvas: var(--canvas);
   --color-sidebar: var(--sidebar);
@@ -49,11 +94,32 @@
   --color-ink: var(--ink);
   --color-ink-muted: var(--ink-muted);
   --color-ink-faint: var(--ink-faint);
-  --color-accent: var(--accent);
-  --color-accent-ink: var(--accent-ink);
+  --color-signal: var(--signal);
+  --color-signal-ink: var(--signal-ink);
   --color-ok: var(--ok);
   --color-warn: var(--warn);
   --color-bad: var(--bad);
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
   --font-sans: system-ui, "Segoe UI", -apple-system, Ubuntu, Cantarell, "Noto Sans", sans-serif;
   --font-mono:
     ui-monospace, "Cascadia Code", "Cascadia Mono", "JetBrains Mono", Consolas, "DejaVu Sans Mono", monospace;
@@ -84,18 +150,18 @@
   }
 
   ::selection {
-    background: color-mix(in oklch, var(--accent) 28%, transparent);
+    background: color-mix(in oklch, var(--signal) 28%, transparent);
   }
 
   :focus-visible {
-    outline: 2px solid var(--accent);
+    outline: 2px solid var(--signal);
     outline-offset: 2px;
   }
 
   * {
     scrollbar-width: thin;
     scrollbar-color: var(--line) transparent;
-    caret-color: var(--accent);
+    caret-color: var(--signal);
   }
 }
 

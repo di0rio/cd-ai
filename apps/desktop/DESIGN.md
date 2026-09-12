@@ -112,28 +112,28 @@ A densidade é de ferramenta de trabalho, não de página de marketing: texto do
 
 ## Colors
 
-Paleta contida: neutros de matiz fria (250) e um acento verde-água (195). Verde, âmbar e vermelho existem só como semântica. O tema escuro redefine os mesmos papéis em `apps/desktop/src/app/globals.css`, e o tema segue o sistema operacional.
+Paleta contida: neutros de matiz fria (250) e um acento verde-água (195). Verde, âmbar e vermelho existem só como semântica. O tema escuro redefine os mesmos papéis em `apps/desktop/src/app/globals.css`, e o tema segue o sistema operacional. Os componentes do shadcn/ui leem nomes próprios (`--primary`, `--accent`, `--muted`…); no mesmo arquivo eles são apenas apelidos destes tokens e não carregam cor alguma. Atenção ao par trocado: o `--primary` do shadcn é o `signal` do projeto, e o `--accent` dele é o neutro `sidebar`.
 
 ### Primary
 
-- **Verde-água de sinal** (accent): botão primário, anel de foco, ponto da fase ativa, spinner de comando em execução, seleção de texto. Nunca é usado como decoração nem em estado inativo.
-- **Tinta sobre sinal** (accent-ink): texto e ícones sobre o acento.
+- **Verde-água de sinal** (`signal`): botão primário, anel de foco, ponto da fase ativa, spinner de comando em execução, seleção de texto. Nunca é usado como decoração nem em estado inativo.
+- **Tinta sobre sinal** (`signal-ink`): texto e ícones sobre o acento.
 
 ### Neutral
 
-- **Canvas** (canvas): fundo da conversa e da área principal.
-- **Painel lateral** (sidebar): segunda camada, usada na sidebar, no balão de mensagem do usuário, nas saídas de comando e no hover das linhas.
-- **Superfície elevada** (raised): só o campo do composer, que é o único ponto de entrada de texto.
-- **Linha** (line): divisórias de 1px, bordas do composer e do relatório, trilho do medidor de contexto.
-- **Tinta** (ink): texto principal.
-- **Tinta secundária** (ink-muted): texto de apoio e linhas de atividade.
-- **Tinta discreta** (ink-faint): rótulos, metadados, placeholders, ícones em repouso.
+- **Canvas** (`canvas`): fundo da conversa e da área principal.
+- **Painel lateral** (`sidebar`): segunda camada, usada na sidebar, no balão de mensagem do usuário, nas saídas de comando e no hover das linhas.
+- **Superfície elevada** (`raised`): só o campo do composer, que é o único ponto de entrada de texto.
+- **Linha** (`line`): divisórias de 1px, bordas do composer e do relatório, trilho do medidor de contexto.
+- **Tinta** (`ink`): texto principal.
+- **Tinta secundária** (`ink-muted`): texto de apoio e linhas de atividade.
+- **Tinta discreta** (`ink-faint`): rótulos, metadados, placeholders, ícones em repouso.
 
 ### Semânticas
 
-- **Validado** (ok): veredito validado, check de comando que passou, linhas adicionadas.
-- **Atenção** (warn): "não validado", tarefa aguardando aprovação, contexto acima de 80%.
-- **Falha** (bad): comando que falhou, leitura que falhou, linhas removidas, "Ollama offline".
+- **Validado** (`ok`): veredito validado, check de comando que passou, linhas adicionadas.
+- **Atenção** (`warn`): "não validado", tarefa aguardando aprovação, contexto acima de 80%.
+- **Falha** (`bad`): comando que falhou, leitura que falhou, linhas removidas, "Ollama offline".
 
 ### Named Rules
 
@@ -202,8 +202,8 @@ Cantos suaves e consistentes, crescendo com o tamanho da superfície:
 
 ### Buttons
 
-- **Primário:** fundo verde-água, texto `accent-ink`, altura de 36px, padding horizontal de 14px, raio de 8px. Ao pressionar, escala 0.97 em cerca de 100ms. Desabilitado fica com opacidade de 40%.
-- **Ícone:** 32×32, raio de 8px, tinta secundária. No hover ganha fundo `sidebar` e tinta principal. Quando é um toggle ligado (`aria-pressed`), mantém o fundo `sidebar`. Tem sempre `aria-label` e `title`.
+- **Primário:** fundo verde-água, texto `signal-ink`, altura de 36px, padding horizontal de 14px, raio de 8px. Ao pressionar, escala 0.97 em cerca de 100ms. Desabilitado fica com opacidade de 40%.
+- **Ícone:** 32×32, raio de 8px, tinta secundária. No hover ganha fundo `sidebar` e tinta principal. Quando é um toggle ligado (`aria-pressed`), mantém o fundo `sidebar`. Tem sempre `aria-label` e um tooltip próprio — nunca o `title` nativo, que chega com meio segundo de atraso e com a aparência do sistema.
 - **Enviar:** círculo verde-água de 32px com seta; fica desabilitado enquanto o agente não está conectado.
 
 ### Inputs / Fields

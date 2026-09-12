@@ -63,7 +63,7 @@ export function ApprovalBar({ approval, onDecision }: ApprovalBarProps) {
             value={reason}
             onChange={(event) => setReason(event.target.value)}
             placeholder="Motivo da negação (opcional)"
-            className="h-9 w-full rounded-lg border border-line bg-transparent px-2.5 text-[0.8125rem] transition-colors placeholder:text-ink-faint focus:border-accent/60 focus:outline-none"
+            className="h-9 w-full rounded-lg border border-line bg-transparent px-2.5 text-[0.8125rem] transition-colors placeholder:text-ink-faint focus:border-signal/60 focus:outline-none"
           />
         </label>
         <button
@@ -76,7 +76,7 @@ export function ApprovalBar({ approval, onDecision }: ApprovalBarProps) {
         <button
           type="button"
           onClick={() => onDecision(true)}
-          className="h-9 shrink-0 rounded-lg bg-accent px-3.5 font-medium text-accent-ink transition-[scale] duration-100 active:scale-[0.97]"
+          className="h-9 shrink-0 rounded-lg bg-signal px-3.5 font-medium text-signal-ink transition-[scale] duration-100 active:scale-[0.97]"
         >
           Aprovar
         </button>
