@@ -1,6 +1,6 @@
 # 0002 — Hardware e modelos locais
 
-Status: **aceita** (2026-09-11, com base em `docs/audit/benchmark-2026-09-11.md`).
+Status: **aceita** (2026-09-11, com base em `docs/audit/benchmark-2026-09-11.md`), **com revisão em 2026-09-12** — ver "Revisão" no fim.
 
 ## Contexto
 
@@ -21,7 +21,7 @@ Cinco candidatos foram medidos: `qwen3:4b`, `qwen3:14b`, `qwen3-coder:30b`, `gem
 ## Regras que decorrem disso
 
 1. **Um único modelo grande residente.** CODER e alternativa (cerca de 19 GB cada) não cabem juntos na RAM. O Model Router prefere o modelo já carregado.
-2. **O parser tolerante de tool calls é obrigatório antes do agente (Fase 4/5).** O `qwen3-coder` emite tool calls no formato próprio `<function=…><parameter=…>`, que o Ollama 0.34 não converte. Ver `plans/009-parser-tolerante-tool-calls.md`.
+2. ~~**O parser tolerante de tool calls é obrigatório antes do agente (Fase 4/5).** O `qwen3-coder` emite tool calls no formato próprio `<function=…><parameter=…>`, que o Ollama 0.34 não converte.~~ **Superada em 2026-09-12** (ver Revisão): o Ollama 0.34 converte, e o parser de `crates/agent-core/src/tool_call.rs` passa a ser rede de segurança, não requisito. Ver `plans/009-parser-tolerante-tool-calls.md`.
 3. **Contexto máximo de 16k no CODER.** Em 32k sobraram 0,6 GB de RAM livre.
 4. **O FAST não edita código.** O `qwen3:4b` raciocina mesmo com `think: false` e estoura o orçamento de tokens em edições.
 5. Nomes de modelos continuam sendo **configuração**. Nenhum código depende deles.
@@ -51,3 +51,40 @@ Model
 - houver uma versão do Ollama que converta o formato do `qwen3-coder`;
 - houver mais RAM ou VRAM;
 - o eval da Fase 6 mostrar taxas de sucesso diferentes das deste benchmark de tool calls isoladas.
+
+## Revisão (2026-09-12)
+
+Dois achados durante a Fase 5 mexem com esta decisão. Ambos foram medidos na mesma máquina, com o Ollama 0.34.0.
+
+### 1. O Ollama 0.34 converte o formato do `qwen3-coder`
+
+A regra 2 dizia que o Ollama 0.34 não convertia o formato próprio `<function=…><parameter=…>`. A tag instalada declara `PARSER qwen3-coder` (`ollama show --modelfile qwen3-coder:30b`) e devolve `tool_calls` nativos:
+
+```json
+[{"id": "call_jg7w1fx4", "function": {"name": "read_file", "arguments": {"path": "src/soma.ts"}}}]
+```
+
+Isso é o primeiro gatilho da seção "Revisitar quando" disparando. Consequência: o parser tolerante de `crates/agent-core/src/tool_call.rs` deixa de ser pré-requisito e vira defesa em profundidade. Ele **não** deve ser removido antes do eval da Fase 6 medir se ainda pega alguma coisa na prática — a conversão pode não valer para todo formato que o modelo emite sob carga, e o custo de mantê-lo é baixo.
+
+### 2. A métrica que a tabela usou não é a que o agente sente
+
+A tabela acima classifica os modelos por tokens de **geração** por segundo. Num agente, cada iteração do loop reenvia a conversa inteira, então o que domina o tempo de resposta é o **prefill** (processamento do prompt), não a geração. Medido com um prompt de 6,4k tokens, tamanho realista de uma iteração:
+
+| Modelo | Prefill | Geração | Fração na GPU |
+|---|---|---|---|
+| `qwen3-coder:30b` | 6440 tok em 61,6 s (105 tok/s) | 17,2 tok/s | 4,2 GB de 20,4 GB (21%) |
+| `qwen3:4b` | 6442 tok em 38,4 s (168 tok/s) | 12,8 tok/s | 79% |
+
+Dos 63 s daquela chamada, 61,6 s foram prefill e 1,4 s foram geração. O `scripts/bench-models.ts` já coleta `prefillTokensPerSecond`; foi a leitura da tabela que privilegiou a geração.
+
+O gargalo é a VRAM, não o modelo: com 20,4 GB de pesos e 6 GB de placa, 79% do CODER roda na CPU. Note que nem o `qwen3:4b` chega a 100% de GPU, porque o KV cache de 16k disputa a mesma memória.
+
+Decorre disso, e ainda **não** está implementado:
+
+- O cliente não manda `keep_alive` (`crates/agent-core/src/ollama.rs`, que envia só `num_ctx` nas options). Com o padrão de 5 minutos do Ollama, uma tarefa parada num prompt de aprovação perde o modelo da memória e paga o recarregamento de 20 GB do disco ao retomar. Aconteceu no aceite registrado em `docs/audit/fase-5-aceite.md`.
+- Baixar o `num_ctx` do CODER de 16k para 8k libera VRAM do KV cache para mais camadas na GPU. A regra 3 fixou 16k por RAM livre; o critério de VRAM sugere revisitar o número.
+- `OLLAMA_KV_CACHE_TYPE=q8_0` corta o KV cache pela metade pelo mesmo motivo. Não foi medido.
+
+### 3. `cd-ai-coder`
+
+O CODER passa a ter um Modelfile versionado em `models/cd-ai-coder.Modelfile`, derivado do `qwen3-coder:30b`, com `temperature` 0.15 e `top_p` 0.7 no lugar dos padrões do modelo (0.7 e 0.8), que são calibrados para conversa. Isso não muda nenhuma das medições acima — os pesos são os mesmos — e não contradiz a regra 5: o nome continua sendo configuração, descoberta pela listagem do Ollama, e nenhum código depende dele.
