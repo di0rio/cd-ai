@@ -25,7 +25,7 @@ use crate::agent::tool_calls::{
     to_request, to_request_from_text, tool_specs,
 };
 use crate::events::{ToolEvent, ToolEventMessage};
-use crate::ollama::{ChatEvent, ChatMessage};
+use crate::ollama::{ChatEvent, ChatMessage, ModelFunctionCall, ModelToolCall};
 use crate::permissions::ApprovalRequest;
 use crate::redactor;
 use crate::tool_call::parse_text_tool_calls;
@@ -37,6 +37,13 @@ use crate::workspace::Workspace;
 pub const RESUME_NOTE: &str = "A tarefa foi interrompida. Continue de onde parou.";
 /// How many times the same call, or the same error, is tolerated before it counts as a loop (D7).
 const LOOP_REPEATS: u32 = 3;
+/// How many `write_file` calls in a row carrying the same content count as a loop, even when the
+/// path changes every time (D7).
+const SAME_CONTENT_WRITES: usize = 3;
+/// Below this many characters, repeated content is not evidence of anything: empty files, barrels
+/// and one-line stubs are legitimately written to several paths in a row. A false positive costs
+/// the user a task that was going fine, so the bar is deliberately high.
+const LOOP_CONTENT_MIN_CHARS: usize = 200;
 
 /// Everything the loop needs besides the model and the responder.
 pub struct TaskContext<'a> {
@@ -220,6 +227,7 @@ fn run_loop(
     let mut seen_signatures: HashMap<String, u32> = HashMap::new();
     let mut last_error: Option<String> = None;
     let mut error_repeats = 0_u32;
+    let mut repeated_write: Option<RepeatedWrite> = None;
     // Command ids are per engine, so this maps them to their record in the state.
     let mut command_records: HashMap<u64, usize> = HashMap::new();
 
@@ -301,31 +309,38 @@ fn run_loop(
         state.metrics.model_ms += reply.prompt_ms + reply.gen_ms;
 
         // 6. Native tool calls first, the text format as fallback (D2).
-        let calls = collect_calls(&reply);
+        let turn = read_turn(&reply);
 
-        if !reply.content.trim().is_empty() {
-            final_text = reply.content.clone();
+        // Only the prose is a message: the `<function=…>` markup of the text format is machinery,
+        // and showing it made the user read every call twice (once raw, once as the tool line).
+        if !turn.text.trim().is_empty() {
+            final_text = turn.text.clone();
             emitter.emit(AgentEvent::AssistantMessage {
-                content: redact(&reply.content),
+                content: redact(&turn.text),
             });
         }
+        // The model gets its own turn back as prose plus the calls in the native shape, never as
+        // the text markup it wrote: the loop already parsed it, and replaying the markup is how a
+        // model learns to keep answering in a format it was never offered. The calls themselves
+        // stay, so the model still sees what it asked for next to the result that answers it, and
+        // so a resumed task can tell an unanswered call from a finished turn (D9).
         let assistant = ChatMessage {
             role: "assistant".to_string(),
-            content: reply.content.clone(),
-            tool_calls: reply.tool_calls.clone(),
+            content: turn.text.clone(),
+            tool_calls: turn.tool_calls.clone(),
             tool_name: None,
         };
         let _ = ctx.store.append_transcript(&state.id, &assistant);
         messages.push(assistant);
 
         // 7. No tool calls: the model says it is done (D11).
-        if calls.is_empty() {
+        if turn.calls.is_empty() {
             let _ = ctx.store.save_state(state);
             break StopReason::Finished;
         }
 
         // 8. Run each call.
-        for call in calls {
+        for call in turn.calls {
             if ctx.cancel.is_cancelled() {
                 return (StopReason::Cancelled, final_text);
             }
@@ -374,6 +389,38 @@ fn run_loop(
                 );
                 let _ = ctx.store.save_state(state);
                 return (StopReason::LoopDetected { detail }, final_text);
+            }
+
+            // Rewriting the same content under another name is not progress, and the exact
+            // signature never catches it: one byte of path is enough to look like a new call. Only
+            // a run of consecutive writes counts — any other tool in between is a change in the
+            // project, so the run resets — and only content long enough that writing it twice
+            // cannot be a legitimate stub (D7).
+            if let ToolRequest::WriteFile(args) = &request {
+                let content = normalize_content(&args.content);
+                let mut run = match repeated_write.take() {
+                    Some(previous) if previous.content == content => previous,
+                    _ => RepeatedWrite {
+                        content,
+                        paths: Vec::new(),
+                    },
+                };
+                run.paths.push(args.path.clone());
+                if run.paths.len() >= SAME_CONTENT_WRITES
+                    && run.content.chars().count() >= LOOP_CONTENT_MIN_CHARS
+                {
+                    let detail = format!(
+                        "tentou gravar o mesmo conteúdo {} vezes seguidas, mudando só o caminho ({}); \
+                         nada mudou no projeto entre as tentativas",
+                        run.paths.len(),
+                        run.paths.join(", ")
+                    );
+                    let _ = ctx.store.save_state(state);
+                    return (StopReason::LoopDetected { detail }, final_text);
+                }
+                repeated_write = Some(run);
+            } else {
+                repeated_write = None;
             }
 
             let started_tool = Instant::now();
@@ -458,33 +505,83 @@ struct PendingCall {
     request: Result<ToolRequest, String>,
 }
 
+/// A model turn split into the three things the loop does with it: what to run, what the user
+/// reads, and what goes back to the model as its own message.
+struct ModelTurn {
+    calls: Vec<PendingCall>,
+    /// Prose only. In the text fallback the markup is stripped by the parser that consumed it.
+    text: String,
+    tool_calls: Vec<ModelToolCall>,
+}
+
+/// A run of consecutive `write_file` calls that all carried the same content, whatever the path.
+struct RepeatedWrite {
+    content: String,
+    paths: Vec<String>,
+}
+
+/// Content as loop detection compares it: line endings and edge whitespace do not make a rewrite
+/// a different rewrite.
+fn normalize_content(content: &str) -> String {
+    content.replace("\r\n", "\n").trim().to_string()
+}
+
 /// Native `tool_calls` when there are any; otherwise the text format of the CODER model (D2).
-fn collect_calls(reply: &ModelReply) -> Vec<PendingCall> {
+fn read_turn(reply: &ModelReply) -> ModelTurn {
     if !reply.tool_calls.is_empty() {
-        return reply
-            .tool_calls
-            .iter()
-            .map(|call| PendingCall {
-                name: call.function.name.clone(),
-                input: call.function.arguments.clone(),
-                request: to_request(&call.function.name, &call.function.arguments),
-            })
-            .collect();
+        return ModelTurn {
+            calls: reply
+                .tool_calls
+                .iter()
+                .map(|call| PendingCall {
+                    name: call.function.name.clone(),
+                    input: call.function.arguments.clone(),
+                    request: to_request(&call.function.name, &call.function.arguments),
+                })
+                .collect(),
+            text: reply.content.clone(),
+            tool_calls: reply.tool_calls.clone(),
+        };
     }
-    // `parse_text_tool_calls` already drops any name that was not offered.
-    parse_text_tool_calls(&reply.content, &TOOL_NAMES)
-        .iter()
-        .map(|call| PendingCall {
+
+    // `parse_text_tool_calls` already drops any name that was not offered, and hands back the
+    // content without the blocks it consumed.
+    let parsed = parse_text_tool_calls(&reply.content, &TOOL_NAMES);
+    if parsed.calls.is_empty() {
+        // Nothing was consumed, so nothing was stripped: the reply is plain prose.
+        return ModelTurn {
+            calls: Vec::new(),
+            text: reply.content.clone(),
+            tool_calls: Vec::new(),
+        };
+    }
+
+    let mut calls = Vec::new();
+    let mut tool_calls = Vec::new();
+    for call in &parsed.calls {
+        let input = Value::Object(
+            call.arguments
+                .iter()
+                .map(|(key, value)| (key.clone(), Value::String(value.clone())))
+                .collect(),
+        );
+        tool_calls.push(ModelToolCall {
+            function: ModelFunctionCall {
+                name: call.name.clone(),
+                arguments: input.clone(),
+            },
+        });
+        calls.push(PendingCall {
             name: call.name.clone(),
-            input: Value::Object(
-                call.arguments
-                    .iter()
-                    .map(|(key, value)| (key.clone(), Value::String(value.clone())))
-                    .collect(),
-            ),
+            input,
             request: to_request_from_text(call),
-        })
-        .collect()
+        });
+    }
+    ModelTurn {
+        calls,
+        text: parsed.prose,
+        tool_calls,
+    }
 }
 
 /// Appends a tool result to the conversation and to the transcript.
@@ -1576,6 +1673,219 @@ mod tests {
         let results = tool_messages(&model, 1);
         assert_eq!(results[0].content, "erro: caminho fora do workspace");
         assert!(state.files_read.is_empty());
+    }
+
+    /// The reply the user saw in the conversation: one sentence of prose, the call written as
+    /// text, and an orphan `</tool_call>` the model closed without ever opening.
+    const REAL_TEXT_CALL: &str = "Vou criar um código TypeScript ainda mais simples e direto ao ponto, como uma função que calcula o aluguel de carro com base em dias e valor diário. <function=write_file>\n<parameter=path>\naluguelCarro/simple.ts\n</parameter>\n<parameter=content>\nexport const aluguel = (dias: number, diaria: number) => dias * diaria;\n</parameter>\n</function>\n</tool_call>";
+    const REAL_PROSE: &str = "Vou criar um código TypeScript ainda mais simples e direto ao ponto, como uma função que calcula o aluguel de carro com base em dias e valor diário.";
+
+    fn assistant_messages(events: &[AgentEventMessage]) -> Vec<String> {
+        events
+            .iter()
+            .filter_map(|message| match &message.event {
+                AgentEvent::AssistantMessage { content } => Some(content.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn report_of(events: &[AgentEventMessage]) -> TaskReport {
+        events
+            .iter()
+            .find_map(|message| match &message.event {
+                AgentEvent::TaskFinished { report, .. } => Some(report.clone()),
+                _ => None,
+            })
+            .expect("taskFinished")
+    }
+
+    #[test]
+    fn the_text_markup_never_reaches_the_conversation() {
+        let harness = harness(&[]);
+        let mut model = ScriptedModel::new(vec![
+            ScriptedModel::text(REAL_TEXT_CALL),
+            ScriptedModel::text("criei aluguelCarro/simple.ts"),
+        ]);
+        let (state, events) = run(
+            harness.context(),
+            &mut model,
+            start("calcule o aluguel"),
+            &mut grant,
+        );
+
+        assert_eq!(state.stop_reason, Some(StopReason::Finished));
+        assert!(
+            harness
+                .workspace
+                .root()
+                .join("aluguelCarro/simple.ts")
+                .exists()
+        );
+
+        // The user reads the prose once, and never the markup.
+        let seen = assistant_messages(&events);
+        assert_eq!(
+            seen,
+            vec![
+                REAL_PROSE.to_string(),
+                "criei aluguelCarro/simple.ts".to_string()
+            ]
+        );
+        for junk in ["<function=", "<parameter=", "tool_call"] {
+            assert!(
+                !seen.iter().any(|text| text.contains(junk)),
+                "sobrou {junk} em {seen:?}"
+            );
+        }
+
+        // The model gets its turn back as prose plus the call in the native shape.
+        let assistant = model.seen[1]
+            .iter()
+            .find(|message| message.role == "assistant")
+            .expect("turno do assistente");
+        assert_eq!(assistant.content, REAL_PROSE);
+        assert_eq!(assistant.tool_calls.len(), 1);
+        assert_eq!(assistant.tool_calls[0].function.name, "write_file");
+        assert_eq!(
+            assistant.tool_calls[0].function.arguments["path"],
+            serde_json::json!("aluguelCarro/simple.ts")
+        );
+
+        // And the summary of the report is prose too.
+        assert_eq!(report_of(&events).summary, "criei aluguelCarro/simple.ts");
+    }
+
+    #[test]
+    fn a_reply_that_is_only_a_text_call_says_nothing_to_the_user() {
+        let harness = harness(&[("a.rs", "fn a() {}\n")]);
+        let mut model = ScriptedModel::new(vec![
+            ScriptedModel::text(
+                "<function=read_file>\n<parameter=path>\na.rs\n</parameter>\n</function>\n</tool_call>",
+            ),
+            ScriptedModel::text("li o arquivo"),
+        ]);
+        let (state, events) = run(harness.context(), &mut model, start("leia"), &mut grant);
+
+        assert_eq!(state.stop_reason, Some(StopReason::Finished));
+        assert_eq!(state.files_read, vec!["a.rs"]);
+        // Only the closing turn is a message: the first one was nothing but markup.
+        assert_eq!(
+            assistant_messages(&events),
+            vec!["li o arquivo".to_string()]
+        );
+        let assistant = model.seen[1]
+            .iter()
+            .find(|message| message.role == "assistant")
+            .expect("turno do assistente");
+        assert!(assistant.content.is_empty(), "{}", assistant.content);
+        assert_eq!(assistant.tool_calls.len(), 1);
+    }
+
+    #[test]
+    fn the_same_content_under_new_names_is_a_loop() {
+        let harness = harness(&[]);
+        let content = "export function calcularAluguel(dias: number, diaria: number): number {\n  if (dias <= 0) throw new Error(\"dias precisa ser maior que zero\");\n  if (diaria <= 0) throw new Error(\"a diária precisa ser maior que zero\");\n  return dias * diaria;\n}\n\nconsole.log(calcularAluguel(3, 120));\n";
+        assert!(content.chars().count() >= LOOP_CONTENT_MIN_CHARS);
+        // The real run: the same file five times, with a new name each time.
+        let mut model = ScriptedModel::new(
+            [
+                "aluguelCarro/simple.ts",
+                "aluguelCarro/calcularAluguel.ts",
+                "aluguelCarro/aluguel.ts",
+                "aluguelCarro/index.ts",
+                "aluguelCarro/main.ts",
+            ]
+            .iter()
+            .map(|path| {
+                ScriptedModel::calls(&[(
+                    "write_file",
+                    serde_json::json!({ "path": path, "content": content }),
+                )])
+            })
+            .collect(),
+        );
+        let (state, _) = run(
+            harness.context(),
+            &mut model,
+            start("calcule o aluguel"),
+            &mut grant,
+        );
+
+        assert_eq!(state.status, TaskStatus::Failed);
+        match state.stop_reason {
+            Some(StopReason::LoopDetected { ref detail }) => {
+                assert!(detail.contains("mesmo conteúdo"), "{detail}");
+                assert!(detail.contains("aluguelCarro/aluguel.ts"), "{detail}");
+            }
+            other => panic!("esperava loopDetected, veio {other:?}"),
+        }
+        // The third write is stopped before it runs, well short of the five of the real run.
+        assert_eq!(state.iterations, 3);
+        let root = harness.workspace.root();
+        assert!(root.join("aluguelCarro/simple.ts").exists());
+        assert!(root.join("aluguelCarro/calcularAluguel.ts").exists());
+        assert!(!root.join("aluguelCarro/aluguel.ts").exists());
+    }
+
+    #[test]
+    fn two_writes_with_different_content_are_not_a_loop() {
+        let harness = harness(&[]);
+        let source =
+            "export function soma(a: number, b: number): number {\n  return a + b;\n}\n".repeat(4);
+        let test = "import { soma } from \"./soma\";\n\nit(\"soma\", () => {\n  expect(soma(2, 2)).toBe(4);\n});\n".repeat(4);
+        let mut model = ScriptedModel::new(vec![
+            ScriptedModel::calls(&[(
+                "write_file",
+                serde_json::json!({ "path": "src/soma.ts", "content": source }),
+            )]),
+            ScriptedModel::calls(&[(
+                "write_file",
+                serde_json::json!({ "path": "src/soma.test.ts", "content": test }),
+            )]),
+            ScriptedModel::text("criei a função e o teste"),
+        ]);
+        let (state, _) = run(
+            harness.context(),
+            &mut model,
+            start("escreva a soma e o teste"),
+            &mut grant,
+        );
+
+        assert_eq!(state.stop_reason, Some(StopReason::Finished));
+        let root = harness.workspace.root();
+        assert!(root.join("src/soma.ts").exists());
+        assert!(root.join("src/soma.test.ts").exists());
+    }
+
+    #[test]
+    fn repeating_a_short_stub_is_not_a_loop() {
+        let harness = harness(&[]);
+        // Three identical barrels in a row is normal scaffolding, not a model going in circles.
+        let mut model = ScriptedModel::new(
+            ["a", "b", "c"]
+                .iter()
+                .map(|dir| {
+                    ScriptedModel::calls(&[(
+                        "write_file",
+                        serde_json::json!({ "path": format!("src/{dir}/index.ts"), "content": "export {};\n" }),
+                    )])
+                })
+                .chain([ScriptedModel::text("criei os três barrels")])
+                .collect(),
+        );
+        let (state, _) = run(
+            harness.context(),
+            &mut model,
+            start("crie os barrels"),
+            &mut grant,
+        );
+
+        assert_eq!(state.stop_reason, Some(StopReason::Finished));
+        let root = harness.workspace.root();
+        for dir in ["a", "b", "c"] {
+            assert!(root.join(format!("src/{dir}/index.ts")).exists());
+        }
     }
 
     #[test]
