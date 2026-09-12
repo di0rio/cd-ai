@@ -1,0 +1,32 @@
+# cd-ai-coder — o modelo CODER do cd-ai, derivado do qwen3-coder:30b.
+#
+# Criar ou atualizar:
+#   ollama create cd-ai-coder -f models/cd-ai-coder.Modelfile
+#
+# `ollama create` a partir de um modelo existente reaproveita as camadas: isso
+# não duplica os 20 GB no disco, só cria um nome com outros parâmetros.
+#
+# Por que este arquivo existe: fixar o nome e a amostragem que o agente usa,
+# em vez de depender de qual tag cada máquina baixou e dos padrões do modelo,
+# que são calibrados para conversa, não para tool calling.
+
+FROM qwen3-coder:30b
+
+# O padrão do qwen3-coder é 0.7 / top_p 0.8, bom para escrever texto e ruim
+# para emitir a mesma chamada de ferramenta duas vezes seguidas. No loop do
+# agente, uma tool call malformada custa uma iteração inteira, e cada
+# iteração paga o prefill do contexto de novo.
+PARAMETER temperature 0.15
+PARAMETER top_p 0.7
+PARAMETER top_k 20
+PARAMETER repeat_penalty 1.05
+
+# Só vale quando alguém roda `ollama run cd-ai-coder` na mão. O app e a CLI
+# mandam num_ctx nas options do request (crates/agent-core/src/ollama.rs), e
+# o valor do request sempre ganha do valor do Modelfile.
+PARAMETER num_ctx 8192
+
+# Sem SYSTEM de propósito. O prompt do agente é montado em
+# crates/agent-core/src/agent/prompt.rs com o perfil do workspace anexado, e
+# vai como mensagem `system` no request — que substitui o SYSTEM do
+# Modelfile. Duplicar aqui só criaria duas versões para divergirem.
