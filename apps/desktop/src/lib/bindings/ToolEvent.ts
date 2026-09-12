@@ -6,5 +6,8 @@ import type { PermissionDecision } from "./PermissionDecision";
 /**
  * Structured tool activity routed to the UI and CLI (design §7), in the style of plan 005
  * (`#[serde(tag = "event", content = "data")]`).
+ *
+ * `Deserialize` as well as `Serialize`: a stored event is read back from `events.jsonl` to
+ * replay a task, and the replay is typed (plan 015, Part D, step 0).
  */
 export type ToolEvent = { "event": "toolStarted", "data": { tool: string, requestId: number, } } | { "event": "toolCompleted", "data": { tool: string, requestId: number, durationMs: number, truncated: boolean, decision: PermissionDecision, } } | { "event": "toolFailed", "data": { tool: string, requestId: number, message: string, } } | { "event": "fileRead", "data": { path: string, startLine: number, lineCount: number, totalLines: number, truncated: boolean, redacted: number, } } | { "event": "fileChanged", "data": { path: string, diff: string, fuzzy: boolean, hashBefore: string, hashAfter: string, } } | { "event": "commandStarted", "data": { id: number, argv: Array<string>, class: CommandClass, } } | { "event": "commandCompleted", "data": { id: number, exitCode: number | null, durationMs: number, truncated: boolean, outputLen: number, } } | { "event": "approvalRequired", "data": { id: string, taskId: string, action: ApprovalAction, } } | { "event": "approvalGranted", "data": { id: string, } } | { "event": "approvalDenied", "data": { id: string, reason: string | null, } } | { "event": "checkpointCreated", "data": { hash: string, } };

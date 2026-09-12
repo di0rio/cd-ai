@@ -1,11 +1,14 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::permissions::{ApprovalAction, CommandClass, PermissionDecision};
 
 /// Structured tool activity routed to the UI and CLI (design §7), in the style of plan 005
 /// (`#[serde(tag = "event", content = "data")]`).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+///
+/// `Deserialize` as well as `Serialize`: a stored event is read back from `events.jsonl` to
+/// replay a task, and the replay is typed (plan 015, Part D, step 0).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export)]
 #[serde(
     rename_all = "camelCase",

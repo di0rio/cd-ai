@@ -1,3 +1,4 @@
+pub mod cancel;
 pub mod command;
 pub mod edit;
 pub mod read;
@@ -13,6 +14,7 @@ use crate::permissions::{
     ApprovalAction, ApprovalRequest, ApprovalResponse, PermissionDecision, PermissionManager,
 };
 use crate::redactor::SecretFileView;
+use crate::tools::cancel::CancelToken;
 use crate::workspace::Workspace;
 use crate::workspace::WorkspaceError;
 
@@ -210,6 +212,7 @@ pub enum ToolError {
     UnknownCommand,
     PermissionDenied { reason: String },
     SecretDenied,
+    Cancelled,
     Io(String),
 }
 
@@ -240,6 +243,7 @@ impl std::fmt::Display for ToolError {
             Self::UnknownCommand => write!(f, "comando vazio ou desconhecido"),
             Self::PermissionDenied { reason } => write!(f, "permissão negada: {reason}"),
             Self::SecretDenied => write!(f, "leitura de arquivo de secret negada"),
+            Self::Cancelled => write!(f, "tarefa cancelada"),
             Self::Io(message) => write!(f, "erro de E/S: {message}"),
         }
     }
@@ -360,6 +364,7 @@ pub struct ToolEngine {
     sequence: u64,
     request_id: u64,
     command_next_id: u64,
+    cancel: CancelToken,
 }
 
 impl ToolEngine {
@@ -371,7 +376,17 @@ impl ToolEngine {
             sequence: 0,
             request_id: 0,
             command_next_id: 0,
+            cancel: CancelToken::default(),
         }
+    }
+
+    /// Shares the task's token, so cancelling it also stops whatever the engine is running.
+    pub fn set_cancel(&mut self, token: CancelToken) {
+        self.cancel = token;
+    }
+
+    pub fn cancel_token(&self) -> &CancelToken {
+        &self.cancel
     }
 
     pub fn emit(&mut self, events: EventSink, event: ToolEvent) {
@@ -464,6 +479,10 @@ impl ToolEngine {
         events: EventSink,
         responder: Responder,
     ) -> ToolOutcome {
+        // A cancelled task runs nothing: no approval is asked and no event is emitted.
+        if self.cancel.is_cancelled() {
+            return ToolOutcome::err(ToolError::Cancelled);
+        }
         self.request_id += 1;
         let request_id = self.request_id;
         let tool: &'static str = request.tool_name();
@@ -690,6 +709,31 @@ mod tests {
         let hash = sha256_hex(b"hello");
         assert_eq!(hash.len(), 64);
         assert!(hash.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn cancelled_engine_runs_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let ws = Workspace::open(dir.path()).unwrap();
+        let mut engine = ToolEngine::new(ws, "task_cancel");
+        let token = cancel::CancelToken::default();
+        engine.set_cancel(token.clone());
+        token.cancel();
+
+        let mut seen = Vec::new();
+        let mut sink = |message: ToolEventMessage| seen.push(message);
+        let mut refuse = |_: ApprovalRequest| -> ApprovalResponse {
+            panic!("a cancelled engine must never ask for approval")
+        };
+
+        let outcome = engine.run_tool(
+            ToolRequest::ListDirectory(ListDirectoryArgs { path: ".".into() }),
+            &mut sink,
+            &mut refuse,
+        );
+        assert!(!outcome.ok);
+        assert_eq!(outcome.error, Some(ToolError::Cancelled));
+        assert!(seen.is_empty(), "nothing runs, so nothing is emitted");
     }
 
     #[test]
