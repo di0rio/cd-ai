@@ -13,6 +13,7 @@ import {
 } from "@/lib/session";
 import { ApprovalBar } from "./approval-bar";
 import { Icon } from "./icons";
+import { Markdown } from "./Markdown";
 
 const row = "-mx-2 flex min-h-8 w-[calc(100%+1rem)] items-center gap-2.5 rounded-lg px-2 text-left text-ink-muted";
 const interactiveRow = `${row} transition-[background-color,color,scale] duration-150 hover:bg-sidebar hover:text-ink active:scale-[0.995]`;
@@ -105,15 +106,11 @@ function Block({ block }: { block: ActivityBlock }) {
     case "user":
       return (
         <div className="ml-auto max-w-[85%] rounded-2xl bg-sidebar px-4 py-2.5 text-[0.9375rem] leading-relaxed">
-          <InlineCode text={block.text} />
+          <Markdown content={block.text} />
         </div>
       );
     case "assistant":
-      return (
-        <p className="text-[0.9375rem] leading-relaxed text-pretty">
-          <InlineCode text={block.text} />
-        </p>
-      );
+      return <Markdown content={block.text} />;
     case "explore":
       return <ExploreGroup items={block.items} />;
     case "read":
@@ -135,20 +132,6 @@ function Block({ block }: { block: ActivityBlock }) {
     case "report":
       return <Report validated={block.validated} summary={block.summary} checks={block.checks} />;
   }
-}
-
-function InlineCode({ text }: { text: string }) {
-  return text.split("`").map((part, index) =>
-    index % 2 === 1 ? (
-      // box-decoration-clone: a chip that wraps keeps its rounding on both halves instead of being sliced.
-      // biome-ignore lint/suspicious/noArrayIndexKey: segments of a static string
-      <code key={index} className="box-decoration-clone rounded-md bg-sidebar px-1 py-0.5 text-[0.85em]">
-        {part}
-      </code>
-    ) : (
-      part
-    ),
-  );
 }
 
 function Collapse({ open, children }: { open: boolean; children: ReactNode }) {
@@ -308,7 +291,7 @@ function Report({ validated, summary, checks }: { validated: boolean; summary: s
         <div className="min-w-0">
           <h3 className="font-semibold">{validated ? "Validado" : "Não validado"}</h3>
           <p className="mt-0.5 text-pretty text-ink-muted">
-            <InlineCode text={summary} />
+            <Markdown content={summary} />
           </p>
         </div>
       </div>
