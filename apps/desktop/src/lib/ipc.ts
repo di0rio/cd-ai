@@ -1,40 +1,17 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
 
+// Only the types these wrappers name are imported; everything else in the IPC surface is
+// re-exported below without being imported twice.
+import type { AgentEventMessage } from "./bindings/AgentEventMessage";
 import type { AppInfo } from "./bindings/AppInfo";
-import type { ApprovalAction } from "./bindings/ApprovalAction";
-import type { ApprovalRequest } from "./bindings/ApprovalRequest";
 import type { ChatEvent } from "./bindings/ChatEvent";
 import type { ChatRequest } from "./bindings/ChatRequest";
-import type { CommandClass } from "./bindings/CommandClass";
-import type { CommandResult } from "./bindings/CommandResult";
-import type { DirEntry } from "./bindings/DirEntry";
-import type { EditFileArgs } from "./bindings/EditFileArgs";
-import type { EditFileResult } from "./bindings/EditFileResult";
-import type { EnvKey } from "./bindings/EnvKey";
-import type { IfExists } from "./bindings/IfExists";
-import type { ListDirectoryArgs } from "./bindings/ListDirectoryArgs";
-import type { ListDirectoryResult } from "./bindings/ListDirectoryResult";
 import type { OllamaStatus } from "./bindings/OllamaStatus";
-import type { PermissionDecision } from "./bindings/PermissionDecision";
-import type { ReadFileArgs } from "./bindings/ReadFileArgs";
-import type { ReadFileResult } from "./bindings/ReadFileResult";
-import type { RunCommandArgs } from "./bindings/RunCommandArgs";
-import type { SearchArgs } from "./bindings/SearchArgs";
-import type { SearchMatch } from "./bindings/SearchMatch";
-import type { SearchResult } from "./bindings/SearchResult";
-import type { SecretFileView } from "./bindings/SecretFileView";
-import type { SecretKind } from "./bindings/SecretKind";
-import type { ToolError } from "./bindings/ToolError";
-import type { ToolEvent } from "./bindings/ToolEvent";
-import type { ToolEventMessage } from "./bindings/ToolEventMessage";
-import type { ToolOutcome } from "./bindings/ToolOutcome";
-import type { ToolOutput } from "./bindings/ToolOutput";
-import type { ToolRequest } from "./bindings/ToolRequest";
-import type { Truncation } from "./bindings/Truncation";
+import type { TaskSummary } from "./bindings/TaskSummary";
 import type { WorkspaceInfo } from "./bindings/WorkspaceInfo";
-import type { WriteFileArgs } from "./bindings/WriteFileArgs";
-import type { WriteFileResult } from "./bindings/WriteFileResult";
 
+export type { AgentEvent } from "./bindings/AgentEvent";
+export type { AgentEventMessage } from "./bindings/AgentEventMessage";
 export type { AppInfo } from "./bindings/AppInfo";
 export type { ApprovalAction } from "./bindings/ApprovalAction";
 export type { ApprovalRequest } from "./bindings/ApprovalRequest";
@@ -42,6 +19,7 @@ export type { ChatEvent } from "./bindings/ChatEvent";
 export type { ChatMessage } from "./bindings/ChatMessage";
 export type { ChatRequest } from "./bindings/ChatRequest";
 export type { CommandClass } from "./bindings/CommandClass";
+export type { CommandRecord } from "./bindings/CommandRecord";
 export type { CommandResult } from "./bindings/CommandResult";
 export type { DirEntry } from "./bindings/DirEntry";
 export type { EditFileArgs } from "./bindings/EditFileArgs";
@@ -62,6 +40,10 @@ export type { SearchMatch } from "./bindings/SearchMatch";
 export type { SearchResult } from "./bindings/SearchResult";
 export type { SecretFileView } from "./bindings/SecretFileView";
 export type { SecretKind } from "./bindings/SecretKind";
+export type { StopReason } from "./bindings/StopReason";
+export type { TaskReport } from "./bindings/TaskReport";
+export type { TaskStatus } from "./bindings/TaskStatus";
+export type { TaskSummary } from "./bindings/TaskSummary";
 export type { ToolError } from "./bindings/ToolError";
 export type { ToolEvent } from "./bindings/ToolEvent";
 export type { ToolEventMessage } from "./bindings/ToolEventMessage";
@@ -99,12 +81,53 @@ export function cancelChat(id: number): Promise<boolean> {
   return invoke("cancel_chat", { id });
 }
 
-export function runTool(request: ToolRequest, onEvent: (event: ToolEventMessage) => void): Promise<ToolOutcome> {
-  const channel = new Channel<ToolEventMessage>();
+/** Starts a task in the open workspace and resolves with its id. Rejects if one is already running. */
+export async function startTask(
+  request: string,
+  model: string,
+  numCtx: number,
+  onEvent: (event: AgentEventMessage) => void,
+): Promise<string> {
+  const channel = new Channel<AgentEventMessage>();
   channel.onmessage = onEvent;
-  return invoke<ToolOutcome>("run_tool", { request, onEvent: channel });
+  return invoke<string>("start_task", { request, model, numCtx, onEvent: channel });
 }
 
-export function respondApproval(id: string, granted: boolean, reason?: string | null): Promise<boolean> {
-  return invoke<boolean>("respond_approval", { id, granted, reason });
+/** Picks an interrupted task back up; rejects if the id is unknown or belongs to another workspace. */
+export async function resumeTask(
+  taskId: string,
+  model: string,
+  numCtx: number,
+  onEvent: (event: AgentEventMessage) => void,
+): Promise<string> {
+  const channel = new Channel<AgentEventMessage>();
+  channel.onmessage = onEvent;
+  return invoke<string>("resume_task", { taskId, model, numCtx, onEvent: channel });
+}
+
+export function cancelTask(taskId: string): Promise<boolean> {
+  return invoke<boolean>("cancel_task", { taskId });
+}
+
+/** Queues a course correction; the loop reads it at the top of its next iteration. */
+export function steerTask(taskId: string, text: string): Promise<boolean> {
+  return invoke<boolean>("steer_task", { taskId, text });
+}
+
+export function listTasks(): Promise<TaskSummary[]> {
+  return invoke<TaskSummary[]>("list_tasks");
+}
+
+/** Every event a task recorded, for replaying a conversation from disk. */
+export function taskEvents(taskId: string): Promise<AgentEventMessage[]> {
+  return invoke<AgentEventMessage[]>("task_events", { taskId });
+}
+
+export function respondApproval(
+  taskId: string,
+  id: string,
+  granted: boolean,
+  reason?: string | null,
+): Promise<boolean> {
+  return invoke<boolean>("respond_approval", { taskId, id, granted, reason });
 }

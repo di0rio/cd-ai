@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-steer-task"
+description = "Enables the steer_task command without any pre-configured scope."
+commands.allow = ["steer_task"]
+
+[[permission]]
+identifier = "deny-steer-task"
+description = "Denies the steer_task command without any pre-configured scope."
+commands.deny = ["steer_task"]

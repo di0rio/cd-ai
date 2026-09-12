@@ -10,7 +10,12 @@
     "allow-ollama-status",
     "allow-chat",
     "allow-cancel-chat",
-    "allow-run-tool",
-    "allow-respond-approval"
+    "allow-start-task",
+    "allow-resume-task",
+    "allow-cancel-task",
+    "allow-steer-task",
+    "allow-respond-approval",
+    "allow-list-tasks",
+    "allow-task-events"
   ]
 }
