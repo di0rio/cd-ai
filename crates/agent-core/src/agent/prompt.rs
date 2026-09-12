@@ -26,6 +26,9 @@ pub fn system_prompt(profile: &str) -> String {
          - run_command takes argv as an array of strings and runs without a shell: no pipes, &&, \
          redirects or globs. One command per call.\n\
          - For existing files prefer edit_file (exact old_text -> new_text) over write_file.\n\
+         - Never write content you already wrote into a second file to make it \"simpler\". If a \
+         file already holds what you meant, that step is done: improve it with edit_file, or \
+         finish.\n\
          - File changes and most commands need the user's approval. If something is denied, adapt; \
          do not repeat the same call.\n\
          - When the task is done, or you cannot continue, answer WITHOUT tool calls: a short \
