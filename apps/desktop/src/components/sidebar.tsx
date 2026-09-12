@@ -60,11 +60,7 @@ export function Sidebar({
       }`}
     >
       <div className="flex h-full w-64 flex-col">
-        <div className="flex h-12 items-center gap-2.5 px-4 font-semibold tracking-[-0.01em]">
-          {/* biome-ignore lint/performance/noImgElement: static export with unoptimized images; next/image only adds an inline style the CSP blocks */}
-          <img src="/icon.svg" alt="" width={20} height={20} className="size-5 rounded-[5px]" />
-          cd-ai
-        </div>
+        <div className="flex h-12 items-center gap-2.5 px-4 font-semibold tracking-[-0.01em]">cd-ai</div>
 
         <div className="px-2">
           {workspaceOpen ? (

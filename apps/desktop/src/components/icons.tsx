@@ -56,6 +56,13 @@ const paths = {
       <path d="M5.5 5v3M7.5 8H10.5M5.5 11v2M8.5 8H10.5" />
     </>
   ),
+  copy: (
+    <>
+      <rect x="5" y="3" width="8" height="8" rx="1.5" />
+      <path d="M4 3v-1a1 1 0 0 1 1-1h8a1 1 0 0 1 1 1v1" />
+      <rect x="3" y="5" width="8" height="8" rx="1.5" />
+    </>
+  ),
 } satisfies Record<string, ReactNode>;
 
 export type IconName = keyof typeof paths;

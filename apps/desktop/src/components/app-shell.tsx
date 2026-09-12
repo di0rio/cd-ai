@@ -146,19 +146,6 @@ export function AppShell() {
     };
   }, [selectedId]);
 
-  useEffect(() => {
-    function onKeyDown(event: KeyboardEvent) {
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "b") {
-        event.preventDefault();
-        setSidebarOpen((open) => !open);
-      } else if (event.key === "Escape") {
-        setPanel(null);
-      }
-    }
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, []);
-
   const handleEvent = useCallback((message: AgentEventMessage) => {
     setTasks((previous) => applyLive(previous, message, workspaceName.current));
     if (message.event === "taskStarted") {
@@ -176,6 +163,37 @@ export function AppShell() {
   const model = chosenModel ?? defaultModel(preferredModel, loadedModels, models);
   const running = starting || runningId !== null;
   const togglePanel = (kind: PanelKind) => setPanel((current) => (current === kind ? null : kind));
+
+  const [zoomLevel, setZoomLevel] = useState(1);
+  const zoomIn = useCallback(() => setZoomLevel((z) => Math.min(z + 0.1, 2)), []);
+  const zoomOut = useCallback(() => setZoomLevel((z) => Math.max(z - 0.1, 0.5)), []);
+  const zoomReset = useCallback(() => setZoomLevel(1), []);
+
+  useEffect(() => {
+    document.documentElement.style.zoom = `${zoomLevel}`;
+  }, [zoomLevel]);
+
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "b") {
+        event.preventDefault();
+        setSidebarOpen((open) => !open);
+      } else if (event.key === "Escape") {
+        setPanel(null);
+      } else if ((event.ctrlKey || event.metaKey) && (event.key === "=" || event.key === "+")) {
+        event.preventDefault();
+        zoomIn();
+      } else if ((event.ctrlKey || event.metaKey) && event.key === "-") {
+        event.preventDefault();
+        zoomOut();
+      } else if ((event.ctrlKey || event.metaKey) && event.key === "0") {
+        event.preventDefault();
+        zoomReset();
+      }
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [zoomIn, zoomOut, zoomReset]);
 
   // The core remembers the choice for the next runs. It answers even when it could not write, and a
   // rejection here only means there is no core (browser): either way the choice holds on screen.
@@ -289,12 +307,6 @@ export function AppShell() {
 
         <main className="relative flex min-w-0 flex-1">
           <header className="material absolute inset-x-0 top-0 z-10 flex h-12 items-center gap-2 px-2.5 select-none">
-            <IconButton
-              label={sidebarOpen ? "Esconder barra lateral (Ctrl+B)" : "Mostrar barra lateral (Ctrl+B)"}
-              icon="panelLeft"
-              pressed={sidebarOpen}
-              onClick={() => setSidebarOpen((open) => !open)}
-            />
             {task ? (
               <div className="flex min-w-0 items-baseline gap-2.5">
                 <h1 className="truncate font-medium">{task.title}</h1>
