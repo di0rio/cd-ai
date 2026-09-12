@@ -363,14 +363,22 @@ async fn start_task(
     request: String,
     model: String,
     num_ctx: u32,
+    // Task this one continues: it inherits that task's report, never its conversation.
+    continues: Option<String>,
     on_event: Channel<AgentEventMessage>,
     state: tauri::State<'_, AppState>,
     tasks: tauri::State<'_, RunningTasks>,
 ) -> Result<String, String> {
+    // Checked here for the same reason a resume is: `run_task` refuses a wrong id too, but as a
+    // failed task with no events, and the user would only see a row that never ran.
+    if let Some(previous_id) = &continues {
+        task_of_workspace(&state, previous_id, "continuá-la")?;
+    }
     let start = TaskStart::New {
         request,
         model: model.clone(),
         num_ctx,
+        continues,
     };
     spawn_task(state, tasks, start, model, num_ctx, on_event).await
 }
@@ -386,20 +394,33 @@ async fn resume_task(
 ) -> Result<String, String> {
     // Checked here so a wrong id fails with its own message: `run_task` would accept it and come
     // back `failed` with an imprecise reason, which stays only as a safety net.
-    let workspace = open_workspace_of(&state)?;
-    let store = state.store.clone()?;
-    let existing = store
-        .load_state(&task_id)
+    task_of_workspace(&state, &task_id, "retomá-la")?;
+    let start = TaskStart::Resume { task_id };
+    spawn_task(state, tasks, start, model, num_ctx, on_event).await
+}
+
+/// Loads a task of the open workspace, refusing an id from anywhere else. The workspace boundary
+/// is decided here, in Rust: the frontend only ever names an id.
+///
+/// `what` completes "abra aquela pasta para …", so the refusal says what was being attempted.
+fn task_of_workspace(
+    state: &tauri::State<'_, AppState>,
+    task_id: &str,
+    what: &str,
+) -> Result<agent_core::agent::TaskState, String> {
+    let key = workspace_key(&open_workspace_of(state)?);
+    let existing = state
+        .store
+        .clone()?
+        .load_state(task_id)
         .map_err(|error| error.to_string())?;
-    let key = workspace_key(&workspace);
     if existing.workspace != key {
         return Err(format!(
-            "a tarefa pertence a outro workspace ({}); abra aquela pasta para retomá-la",
+            "a tarefa pertence a outro workspace ({}); abra aquela pasta para {what}",
             existing.workspace
         ));
     }
-    let start = TaskStart::Resume { task_id };
-    spawn_task(state, tasks, start, model, num_ctx, on_event).await
+    Ok(existing)
 }
 
 #[tauri::command]

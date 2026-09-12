@@ -89,10 +89,11 @@ export async function startTask(
   model: string,
   numCtx: number,
   onEvent: (event: AgentEventMessage) => void,
+  continues?: string,
 ): Promise<string> {
   const channel = new Channel<AgentEventMessage>();
   channel.onmessage = onEvent;
-  return invoke<string>("start_task", { request, model, numCtx, onEvent: channel });
+  return invoke<string>("start_task", { request, model, numCtx, continues, onEvent: channel });
 }
 
 /** Picks an interrupted task back up; rejects if the id is unknown or belongs to another workspace. */

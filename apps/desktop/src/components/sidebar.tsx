@@ -99,6 +99,7 @@ export function Sidebar({
               {tasks.map((task) => {
                 const status = STATUS[task.status];
                 const active = task.id === selectedId;
+                const continuesTask = tasks.find((t) => t.id === task.continues);
                 return (
                   <li key={task.id}>
                     <button
@@ -110,6 +111,23 @@ export function Sidebar({
                       <span className={`size-1.5 shrink-0 rounded-full ${status.dot}`} />
                       <span className="sr-only">{status.label}:</span>
                       <span className="min-w-0 flex-1 truncate">{task.title}</span>
+                      {task.continues && (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Icon
+                              name="gitBranch"
+                              className="size-3.5 shrink-0 text-ink-faint hover:text-ink"
+                              // biome-ignore format: ternary in JSX attribute triggers formatter flip-flop
+                              aria-label={continuesTask ? `Continua ${continuesTask.title}` : "Continua tarefa anterior"}
+                            />
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            {continuesTask
+                              ? `Continua: ${continuesTask.title}`
+                              : "Continua tarefa anterior (não carregada)"}
+                          </TooltipContent>
+                        </Tooltip>
+                      )}
                       <span className="shrink-0 text-xs text-ink-faint">{task.updated}</span>
                     </button>
                   </li>

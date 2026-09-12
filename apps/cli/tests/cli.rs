@@ -228,3 +228,47 @@ fn task_with_unreachable_ollama_fails_cleanly() {
         .count();
     assert_eq!(saved, 1, "esperava uma tarefa em {}", tasks.display());
 }
+
+#[test]
+fn continue_and_resume_together_exit_2() {
+    let output = run_cli(&["task", "--model", "m", "--resume", "task_1", "--continue"]);
+    assert_eq!(output.status.code(), Some(2));
+    assert!(
+        stderr(&output).contains("escolha um"),
+        "{}",
+        stderr(&output)
+    );
+}
+
+#[test]
+fn continue_without_a_previous_task_exits_1_with_message() {
+    let data = TempDir::new("data-cont");
+    let workspace = TempDir::new("ws-cont");
+    let output = run_cli_env(
+        &[
+            "task",
+            "--model",
+            "modelo-de-teste",
+            "--workspace",
+            workspace.as_str(),
+            "--continue",
+            "continue o que você fazia",
+        ],
+        &[
+            ("OLLAMA_HOST", "http://127.0.0.1:9"),
+            ("CD_AI_DATA_DIR", data.as_str()),
+        ],
+    );
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        stderr(&output).contains("não há tarefa anterior"),
+        "{}",
+        stderr(&output)
+    );
+}
+
+#[test]
+fn help_mentions_continue() {
+    let output = run_cli(&["--help"]);
+    assert!(stdout(&output).contains("--continue"));
+}

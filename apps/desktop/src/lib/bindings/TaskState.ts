@@ -12,7 +12,14 @@ export type TaskState = { id: string,
 /**
  * Workspace root, for display and for filtering the task list.
  */
-workspace: string, request: string, model: string, numCtx: number, status: TaskStatus, stopReason: StopReason | null, createdAt: string, updatedAt: string, iterations: number, filesRead: Array<string>, filesChanged: Array<FileChange>, commands: Array<CommandRecord>, 
+workspace: string, request: string, 
+/**
+ * Task this one continues, when the request came right after another one in the same
+ * workspace. Only the previous report is inherited, never its transcript: a task still has
+ * one request, and continuity is a chain of tasks, not a task with many turns.
+ * Absent from states written before chaining existed, hence the default.
+ */
+continues: string | null, model: string, numCtx: number, status: TaskStatus, stopReason: StopReason | null, createdAt: string, updatedAt: string, iterations: number, filesRead: Array<string>, filesChanged: Array<FileChange>, commands: Array<CommandRecord>, 
 /**
  * Redacted before reaching disk (D8).
  */

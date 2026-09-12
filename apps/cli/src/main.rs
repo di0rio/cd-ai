@@ -17,8 +17,11 @@ use agent_core::workspace::Workspace;
 
 const USAGE: &str = "uso: cd-ai [--version | --help]
      cd-ai chat --model <nome> [--ctx <n>] <prompt>
-     cd-ai task --model <nome> [--ctx <n>] [--workspace <pasta>] [--max-iterations <n>] <pedido…>
-     cd-ai task --resume <id> --model <nome> [--ctx <n>] [--workspace <pasta>]";
+     cd-ai task --model <nome> [--ctx <n>] [--workspace <pasta>] [--max-iterations <n>] [--continue] <pedido…>
+     cd-ai task --resume <id> --model <nome> [--ctx <n>] [--workspace <pasta>]
+
+--continue: a tarefa nova continua a última deste workspace e herda o relatório dela (pedido,
+arquivos alterados, comandos e resumo), nunca a conversa inteira.";
 
 const DEFAULT_CTX: u32 = 8192;
 
@@ -177,6 +180,8 @@ struct TaskArgs {
     workspace: String,
     max_iterations: Option<u32>,
     resume: Option<String>,
+    /// Whether this task continues the most recent one of the workspace.
+    cont: bool,
     request: String,
 }
 
@@ -186,6 +191,7 @@ fn parse_task_args(args: impl Iterator<Item = String>) -> Result<TaskArgs, ExitC
     let mut workspace = ".".to_string();
     let mut max_iterations = None;
     let mut resume = None;
+    let mut cont = false;
     let mut request = Vec::new();
     let mut args = args;
 
@@ -213,6 +219,7 @@ fn parse_task_args(args: impl Iterator<Item = String>) -> Result<TaskArgs, ExitC
                 };
                 resume = Some(value);
             }
+            "--continue" => cont = true,
             // Everything after `--` is the request, so a request may start with a hyphen.
             "--" => {
                 request.extend(args.by_ref());
@@ -232,6 +239,13 @@ fn parse_task_args(args: impl Iterator<Item = String>) -> Result<TaskArgs, ExitC
         return Err(ExitCode::from(2));
     };
     let request = request.join(" ").trim().to_string();
+    if resume.is_some() && cont {
+        eprintln!(
+            "--resume retoma a mesma tarefa e --continue começa outra: escolha um
+{USAGE}"
+        );
+        return Err(ExitCode::from(2));
+    }
     if resume.is_some() && !request.is_empty() {
         eprintln!("--resume não aceita um pedido novo\n{USAGE}");
         return Err(ExitCode::from(2));
@@ -247,6 +261,7 @@ fn parse_task_args(args: impl Iterator<Item = String>) -> Result<TaskArgs, ExitC
         workspace,
         max_iterations,
         resume,
+        cont,
         request,
     })
 }
@@ -365,17 +380,32 @@ fn resolve_start(
     workspace: &Workspace,
     args: &TaskArgs,
 ) -> Result<TaskStart, String> {
+    let key = workspace_key(workspace);
     let Some(task_id) = args.resume.clone() else {
+        // `--continue` names the workspace's most recent task; the core validates it again and
+        // builds what is inherited from its report.
+        let continues = if args.cont {
+            let last = store
+                .list(&key)
+                .map_err(|error| format!("não foi possível ler as tarefas: {error}"))?
+                .into_iter()
+                .next()
+                .ok_or("não há tarefa anterior neste workspace para continuar".to_string())?;
+            eprintln!("continuando de {} ({})", last.id, last.title);
+            Some(last.id)
+        } else {
+            None
+        };
         return Ok(TaskStart::New {
             request: args.request.clone(),
             model: args.model.clone(),
             num_ctx: args.num_ctx,
+            continues,
         });
     };
     let state = store
         .load_state(&task_id)
         .map_err(|error| format!("não foi possível retomar {task_id}: {error}"))?;
-    let key = workspace_key(workspace);
     if state.workspace != key {
         return Err(format!(
             "a tarefa {task_id} pertence a outro workspace ({}); abra aquela pasta para retomá-la",

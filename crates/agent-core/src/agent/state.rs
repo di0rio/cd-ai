@@ -128,6 +128,12 @@ pub struct TaskState {
     /// Workspace root, for display and for filtering the task list.
     pub workspace: String,
     pub request: String,
+    /// Task this one continues, when the request came right after another one in the same
+    /// workspace. Only the previous report is inherited, never its transcript: a task still has
+    /// one request, and continuity is a chain of tasks, not a task with many turns.
+    /// Absent from states written before chaining existed, hence the default.
+    #[serde(default)]
+    pub continues: Option<String>,
     pub model: String,
     pub num_ctx: u32,
     pub status: TaskStatus,
@@ -157,6 +163,7 @@ impl TaskState {
             id: id.into(),
             workspace: workspace.into(),
             request: request.into(),
+            continues: None,
             model: model.into(),
             num_ctx,
             status: TaskStatus::Running,
@@ -191,6 +198,7 @@ impl TaskState {
             status: self.status,
             updated_at: self.updated_at.clone(),
             model: self.model.clone(),
+            continues: self.continues.clone(),
         }
     }
 }
@@ -205,6 +213,8 @@ pub struct TaskSummary {
     pub status: TaskStatus,
     pub updated_at: String,
     pub model: String,
+    /// Id of the task this one continues, so a list can show a chain instead of loose fragments.
+    pub continues: Option<String>,
 }
 
 /// What the task delivered. `validated` is always false in phase 5 (D11): the Verifier is phase 8.
@@ -296,6 +306,22 @@ mod tests {
         .unwrap();
         assert_eq!(metrics.tool_ms, 3_532_469);
         assert_eq!(metrics.approval_wait_ms, 0);
+    }
+
+    #[test]
+    fn a_state_written_before_chaining_still_loads() {
+        // Shape of a real `state.json` from before `continues` existed: it must keep loading, or
+        // the app breaks on every task already on disk.
+        let state: TaskState = serde_json::from_str(
+            r#"{"id":"task_1","workspace":"C:/projeto","request":"pedido","model":"qwen3",
+                "numCtx":16384,"status":"completed_unvalidated","stopReason":{"kind":"finished"},
+                "createdAt":"2026-09-11T10:00:00Z","updatedAt":"2026-09-11T10:05:00Z",
+                "iterations":3,"filesRead":[],"filesChanged":[],"commands":[],"errors":[],
+                "retries":0,"metrics":{"promptTokens":0,"genTokens":0,"modelMs":0,"toolMs":0}}"#,
+        )
+        .unwrap();
+        assert_eq!(state.continues, None);
+        assert_eq!(state.summary().continues, None);
     }
 
     #[test]
