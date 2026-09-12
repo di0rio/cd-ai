@@ -1,0 +1,7 @@
+{
+  "name": "soma-fixture",
+  "private": true,
+  "scripts": {
+    "test": "bun test"
+  }
+}

@@ -54,6 +54,16 @@ Pra ver a interface com sessões de exemplo, abra `http://localhost:1420/?demo`.
 cargo run -p cd-ai-cli -- --version
 ```
 
+Com o Ollama rodando, o `task` resolve uma tarefa de ponta a ponta no terminal:
+
+```bash
+cargo run -p cd-ai-cli -- task --model <modelo> [--workspace <pasta>] "<pedido>"
+```
+
+Cada escrita e cada comando que não seja leitura pedem aprovação no terminal (`Aprovar? [s/N]`). Sem
+terminal interativo a ação é negada — não existe aprovação automática. Uma tarefa interrompida volta
+com `--resume <id>`, e o Ctrl+C cancela a tarefa e os processos filhos.
+
 ### Binário de release (sem instalador)
 
 ```bash
