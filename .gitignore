@@ -8,3 +8,6 @@ src-tauri/gen/schemas/
 .env
 .env.*
 !.env.example
+evals/results/*
+!evals/results/.gitkeep
+!evals/results/*-baseline.json

@@ -26,7 +26,9 @@ Este fixture **não** entra no `bun run verify`, que roda os testes só em `apps
    cd-ai task --workspace <cópia> --model <modelo> "O teste de soma falha. Corrija e rode os testes."
    ```
 
-3. Aprove as ações pelo terminal (`Aprovar? [s/N]`). Não existe aprovação automática.
+3. Aprove as ações pelo terminal (`Aprovar? [s/N]`). Não existe aprovação automática no `task`.
+   Para a suíte headless (Fase 6), use `cd-ai eval --scripted` ou `cd-ai eval --model <modelo>` —
+   aí a cópia da fixture é aprovada sozinha. Ver [evals/README.md](../../evals/README.md).
 
 ## Pedido de aceite
 

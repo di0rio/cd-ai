@@ -1,5 +1,6 @@
 use std::cell::RefCell;
 use std::io::{IsTerminal, Write};
+use std::path::PathBuf;
 use std::process::ExitCode;
 use std::rc::Rc;
 use std::sync::mpsc::{Receiver, RecvTimeoutError};
@@ -10,6 +11,7 @@ use agent_core::agent::{
     AgentEvent, AgentEventMessage, AgentLimits, OllamaModel, StopReason, TaskContext, TaskReport,
     TaskStart, TaskState, TaskStatus, TaskStore, run_task, workspace_key,
 };
+use agent_core::eval::{EvalDriver, EvalOptions, EvalTask, default_report_path, run_suite};
 use agent_core::ollama::{ChatEvent, ChatMessage, ChatRequest, OllamaClient};
 use agent_core::permissions::{ApprovalAction, ApprovalRequest, ApprovalResponse, CommandClass};
 use agent_core::tools::cancel::CancelToken;
@@ -19,9 +21,13 @@ const USAGE: &str = "uso: cd-ai [--version | --help]
      cd-ai chat --model <nome> [--ctx <n>] <prompt>
      cd-ai task --model <nome> [--ctx <n>] [--workspace <pasta>] [--max-iterations <n>] [--continue] <pedido…>
      cd-ai task --resume <id> --model <nome> [--ctx <n>] [--workspace <pasta>]
+     cd-ai eval --model <nome> [--suite <pasta>] [--task <id>] [--out <arquivo>] [--ctx <n>]
+     cd-ai eval --scripted [--suite <pasta>] [--task <id>] [--out <arquivo>] [--ctx <n>]
 
 --continue: a tarefa nova continua a última deste workspace e herda o relatório dela (pedido,
-arquivos alterados, comandos e resumo), nunca a conversa inteira.";
+arquivos alterados, comandos e resumo), nunca a conversa inteira.
+eval: corre a suíte em evals/ sobre cópias descartáveis e aprova sozinho. --scripted não fala com
+o Ollama.";
 
 const DEFAULT_CTX: u32 = 8192;
 
@@ -45,6 +51,7 @@ async fn main() -> ExitCode {
         }
         Some("chat") => chat(args).await,
         Some("task") => task(args).await,
+        Some("eval") => eval_cmd(args).await,
         Some(other) => {
             eprintln!("argumento desconhecido: {other}\n{USAGE}");
             ExitCode::from(2)
@@ -264,6 +271,243 @@ fn parse_task_args(args: impl Iterator<Item = String>) -> Result<TaskArgs, ExitC
         cont,
         request,
     })
+}
+
+/// Everything `cd-ai eval` accepts, parsed before the suite is opened.
+struct EvalArgs {
+    model: Option<String>,
+    scripted: bool,
+    suite: String,
+    task: Option<String>,
+    out: Option<String>,
+    num_ctx: u32,
+}
+
+fn parse_eval_args(args: impl Iterator<Item = String>) -> Result<EvalArgs, ExitCode> {
+    let mut model = None;
+    let mut scripted = false;
+    let mut suite = "evals".to_string();
+    let mut task = None;
+    let mut out = None;
+    let mut num_ctx = TASK_CTX;
+    let mut args = args;
+
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--model" => {
+                let Some(value) = flag_value(&mut args, "--model", "um nome") else {
+                    return Err(ExitCode::from(2));
+                };
+                model = Some(value);
+            }
+            "--scripted" => scripted = true,
+            "--suite" => {
+                let Some(value) = flag_value(&mut args, "--suite", "uma pasta") else {
+                    return Err(ExitCode::from(2));
+                };
+                suite = value;
+            }
+            "--task" => {
+                let Some(value) = flag_value(&mut args, "--task", "o id de uma tarefa") else {
+                    return Err(ExitCode::from(2));
+                };
+                task = Some(value);
+            }
+            "--out" => {
+                let Some(value) = flag_value(&mut args, "--out", "um arquivo") else {
+                    return Err(ExitCode::from(2));
+                };
+                out = Some(value);
+            }
+            "--ctx" => num_ctx = parse_number(&mut args, "--ctx")?,
+            other if other.starts_with('-') => {
+                eprintln!("flag desconhecida: {other}\n{USAGE}");
+                return Err(ExitCode::from(2));
+            }
+            other => {
+                eprintln!("argumento inesperado: {other}\n{USAGE}");
+                return Err(ExitCode::from(2));
+            }
+        }
+    }
+
+    if scripted && model.is_some() {
+        eprintln!("--scripted não aceita --model\n{USAGE}");
+        return Err(ExitCode::from(2));
+    }
+    if !scripted && model.is_none() {
+        eprintln!("faltou --model <nome> ou --scripted\n{USAGE}");
+        return Err(ExitCode::from(2));
+    }
+
+    Ok(EvalArgs {
+        model,
+        scripted,
+        suite,
+        task,
+        out,
+        num_ctx,
+    })
+}
+
+async fn eval_cmd(args: impl Iterator<Item = String>) -> ExitCode {
+    let args = match parse_eval_args(args) {
+        Ok(args) => args,
+        Err(code) => return code,
+    };
+
+    let suite_dir = PathBuf::from(&args.suite);
+    let model_name = if args.scripted {
+        "scripted".to_string()
+    } else {
+        args.model.clone().expect("validado em parse_eval_args")
+    };
+    let out_path = args
+        .out
+        .as_ref()
+        .map(PathBuf::from)
+        .unwrap_or_else(|| default_report_path(&suite_dir, &model_name));
+
+    let driver = if args.scripted {
+        EvalDriver::Scripted
+    } else {
+        let client = match ollama_client() {
+            Ok(client) => client,
+            Err(error) => {
+                eprintln!("{error}");
+                return ExitCode::from(1);
+            }
+        };
+        EvalDriver::Ollama {
+            client,
+            runtime: tokio::runtime::Handle::current(),
+            turn_timeout: Duration::from_millis(AgentLimits::default().model_turn_timeout_ms),
+        }
+    };
+
+    let cancel = CancelToken::default();
+    let task_cancel = cancel.clone();
+    let options = EvalOptions {
+        suite_dir,
+        out_path: Some(out_path.clone()),
+        task_filter: args.task.clone(),
+        model_name: model_name.clone(),
+        num_ctx: args.num_ctx,
+        driver,
+        cancel: task_cancel,
+    };
+
+    let mut join = tokio::task::spawn_blocking(move || run_suite(options, print_eval_event));
+
+    let finished = tokio::select! {
+        joined = &mut join => Some(joined),
+        _ = tokio::signal::ctrl_c() => None,
+    };
+
+    let Some(joined) = finished else {
+        cancel.cancel();
+        eprintln!("\ncancelando…");
+        let _ = join.await;
+        return ExitCode::from(130);
+    };
+
+    match joined {
+        Ok(Ok(report)) => {
+            eprintln!();
+            for row in &report.tasks {
+                let mark = if row.success { "ok" } else { "falhou" };
+                eprintln!(
+                    "  {:<12} {mark}  {} iterações  {} ms",
+                    row.id, row.iterations, row.duration_ms
+                );
+            }
+            let scored = report.passed + report.failed;
+            eprintln!(
+                "taxa de sucesso: {:.1}% ({}/{})",
+                report.success_rate * 100.0,
+                report.passed,
+                scored
+            );
+            eprintln!("resultado: {}", out_path.display());
+            if report.all_passed() {
+                ExitCode::SUCCESS
+            } else {
+                ExitCode::from(1)
+            }
+        }
+        Ok(Err(error)) => {
+            eprintln!("{error}");
+            ExitCode::from(1)
+        }
+        Err(error) => {
+            eprintln!("o eval parou de forma inesperada: {error}");
+            ExitCode::from(1)
+        }
+    }
+}
+
+fn print_eval_event(task: &EvalTask, message: &AgentEventMessage) {
+    match &message.event {
+        AgentEvent::ToolCallRequested { tool, input } => {
+            let brief = input
+                .get("argv")
+                .and_then(|value| value.as_array())
+                .map(|argv| {
+                    let argv: Vec<String> = argv
+                        .iter()
+                        .map(|item| match item.as_str() {
+                            Some(text) => text.to_string(),
+                            None => item.to_string(),
+                        })
+                        .collect();
+                    format_argv(&argv)
+                })
+                .or_else(|| {
+                    input
+                        .get("query")
+                        .and_then(|value| value.as_str())
+                        .map(|query| format!("\"{query}\""))
+                })
+                .or_else(|| {
+                    input
+                        .get("path")
+                        .and_then(|value| value.as_str())
+                        .map(str::to_string)
+                })
+                .unwrap_or_default();
+            if brief.is_empty() {
+                eprintln!("[{}] → {tool}", task.id);
+            } else {
+                eprintln!("[{}] → {tool} {brief}", task.id);
+            }
+        }
+        AgentEvent::ToolCallFinished {
+            tool, ok, detail, ..
+        } => {
+            let status = if *ok { "ok" } else { "erro" };
+            if detail.is_empty() {
+                eprintln!("[{}] → {tool} · {status}", task.id);
+            } else {
+                eprintln!("[{}] → {tool} · {status} {detail}", task.id);
+            }
+        }
+        AgentEvent::Retrying { attempt, reason } => {
+            eprintln!("[{}] tentativa {attempt}: {reason}", task.id);
+        }
+        AgentEvent::TaskFinished {
+            status,
+            stop_reason,
+            ..
+        } => {
+            eprintln!(
+                "[{}] {} · {}",
+                task.id,
+                status_label(*status),
+                reason_label(stop_reason)
+            );
+        }
+        _ => {}
+    }
 }
 
 fn parse_number(args: &mut impl Iterator<Item = String>, flag: &str) -> Result<u32, ExitCode> {
@@ -805,5 +1049,23 @@ mod tests {
             format_argv(&["bun".to_string(), "test".to_string()]),
             "[\"bun\", \"test\"]"
         );
+    }
+
+    #[test]
+    fn eval_requires_model_or_scripted_and_rejects_both() {
+        assert!(parse_eval_args(std::iter::empty()).is_err());
+        let args = ["--scripted"].map(String::from);
+        let parsed = parse_eval_args(args.into_iter()).expect("scripted válido");
+        assert!(parsed.scripted);
+        assert_eq!(parsed.suite, "evals");
+        assert_eq!(parsed.num_ctx, TASK_CTX);
+
+        let args = ["--model", "qwen3-coder:30b", "--task", "soma"].map(String::from);
+        let parsed = parse_eval_args(args.into_iter()).expect("model válido");
+        assert_eq!(parsed.model.as_deref(), Some("qwen3-coder:30b"));
+        assert_eq!(parsed.task.as_deref(), Some("soma"));
+
+        let args = ["--scripted", "--model", "qwen3"].map(String::from);
+        assert!(parse_eval_args(args.into_iter()).is_err());
     }
 }

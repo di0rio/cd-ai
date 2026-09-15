@@ -43,11 +43,19 @@ Escrita pelo lead em 2026-09-11 sobre o commit `040369a`. Ponto de partida: `doc
 
 | Plano | Título | Prioridade | Esforço | Depende de | Status |
 |------|--------|-----------|---------|------------|--------|
-| 015 | Fase 5 — loop de ponta a ponta (core, bridge, CLI e UI) | P1 | L | 014 | IN PROGRESS |
+| 015 | Fase 5 — loop de ponta a ponta (core, bridge, CLI e UI) | P1 | L | 014 | DONE |
 
 O plano 009 foi adicionado depois do benchmark de modelos (`docs/audit/benchmark-2026-09-11.md`). O modelo CODER escolhido escreve tool calls num formato que o Ollama 0.34 não converte.
 
-**Estado do 015 em 2026-09-12** (detalhe em `docs/fase-5-o-que-falta.md`): as Partes 0, A, B, C, D, E, F e G1 estão na árvore de trabalho, com `bun run verify` verde. Ainda faltam a Parte G2 (ligar a UI ao loop) e o aceite da Fase 5 (seção "Aceite da Fase 5" do plano), os dois em andamento. Nada foi commitado.
+**Estado do 015:** mergeado em `main` (PR #2). O aceite ao vivo da CLI em 2026-09-12 reprovou por timeout de aprovação; o registro está em `docs/audit/fase-5-aceite.md`. O loop determinístico (ScriptedModel) passa.
+
+### Geração 4
+
+Escrita em 2026-09-15 sobre o commit `024cc8e` (`main`, Fases 0–5).
+
+| Plano | Título | Prioridade | Esforço | Depende de | Status |
+|------|--------|-----------|---------|------------|--------|
+| 016 | Fase 6 — Eval baseline (suite, runner headless, número registrado) | P1 | M | 015 | DONE |
 
 Valores de status: TODO | IN PROGRESS | DONE | BLOCKED (com motivo de uma linha) | REJECTED (com justificativa de uma linha).
 
@@ -78,6 +86,10 @@ Valores de status: TODO | IN PROGRESS | DONE | BLOCKED (com motivo de uma linha)
   - `conversation.tsx`: G1, depois G2;
   - `ipc.ts` fica só com a E.
 - **Sem worktrees:** todos usam o mesmo working tree. Um gate vermelho causado por arquivo fora do escopo de quem roda espera o aviso do lead e roda de novo; ninguém reporta pronto com o gate vermelho.
+
+### Geração 4
+
+- **016 depois do 015.** O runner chama `run_task`; não reimplementa o loop. `--yes` no `task` continua proibido (D13 do 015); só o `eval` auto-aprova, e só na cópia da fixture.
 
 ## Achados considerados e descartados
 

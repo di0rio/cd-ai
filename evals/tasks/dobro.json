@@ -1,0 +1,32 @@
+{
+  "id": "dobro",
+  "fixture": "dobro",
+  "prompt": "O teste de dobro falha porque o módulo não existe. Crie src/dobro.ts e rode os testes.",
+  "timeoutMs": 600000,
+  "maxIterations": 15,
+  "check": {
+    "argv": ["bun", "test"],
+    "expectExit": 0,
+    "timeoutMs": 60000
+  },
+  "script": [
+    {
+      "calls": [{ "name": "read_file", "arguments": { "path": "src/dobro.test.ts" } }]
+    },
+    {
+      "calls": [
+        {
+          "name": "write_file",
+          "arguments": {
+            "path": "src/dobro.ts",
+            "content": "export function dobro(n: number): number {\n  return n * 2;\n}\n"
+          }
+        }
+      ]
+    },
+    {
+      "calls": [{ "name": "run_command", "arguments": { "argv": ["bun", "test"] } }]
+    },
+    { "text": "Criei src/dobro.ts; os testes passam." }
+  ]
+}

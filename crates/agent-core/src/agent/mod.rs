@@ -13,7 +13,7 @@ pub mod storage;
 pub mod tool_calls;
 
 pub use events::{AgentEvent, AgentEventMessage};
-pub use model::{ChatModel, ModelError, ModelReply, OllamaModel};
+pub use model::{ChatModel, ModelError, ModelReply, OllamaModel, ScriptedModel};
 pub use profile::{WorkspaceProfile, workspace_profile};
 pub use prompt::{estimate_tokens, system_prompt, trim_for_budget};
 pub use runner::{RESUME_NOTE, TaskContext, TaskStart, run_task, workspace_key};
