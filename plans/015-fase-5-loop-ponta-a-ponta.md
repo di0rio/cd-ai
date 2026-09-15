@@ -722,7 +722,7 @@ No Windows, se o `cargo` não for encontrado: `$env:PATH = "$env:USERPROFILE\.ca
 - [x] `grep -rn "runTool\|run_tool" apps/desktop/src src-tauri` não retorna nada (D4)
 - [x] `grep -rn "O agente ainda não está conectado" apps/desktop/src` não retorna nada
 - [x] As três listas de ACL (`generate_handler!`, `build.rs` e a capability) batem
-- [x] `bun run verify` — a rodar no fechamento (Linux); o Windows 11 da máquina de dev não está neste ambiente
+- [x] `bun run verify` sai com exit 0 nesta árvore (Linux, 2026-09-15). O Windows 11 da máquina de dev não está neste ambiente.
 - [x] O aceite está registrado em `docs/audit/fase-5-aceite.md` (CLI ao vivo 2026-09-12 reprovou; loop determinístico 2026-09-15 passou; CLI/UI ao vivo 2026-09-15 sem Ollama)
 - [x] A linha 015 em `plans/README.md` está atualizada, e o `docs/handoff.md` reflete a Fase 5 (incluindo a correção do "gate verde" da base)
 - [ ] **Nenhum commit, push ou reset feito por executor** — vale para as ondas originais; o fechamento de 2026-09-15 commitou a pedido do usuário (PR da Fase 5)
