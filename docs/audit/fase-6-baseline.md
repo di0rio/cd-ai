@@ -27,7 +27,7 @@ cargo run -q -p cd-ai-cli -- eval --scripted --out evals/results/scripted-baseli
 
 | Data | Commit | Modelo | Taxa | Passed / scored | Notas |
 |---|---|---|---|---|---|
-| 2026-09-15 | desta branch (ver JSON) | `scripted` | **100%** | 3/3 | Dry-run do harness. Cada tarefa: 4 iterações, check `bun test` exit 0. JSON em `evals/results/scripted-baseline.json`. |
+| 2026-09-15 | `6757a83` | `scripted` | **100%** | 3/3 | Dry-run do harness. Cada tarefa: 4 iterações, check `bun test` exit 0. JSON em `evals/results/scripted-baseline.json`. |
 
 O JSON correspondente, quando gerado, fica em `evals/results/scripted-baseline.json` (exceção do
 gitignore para `*-baseline.json`).
