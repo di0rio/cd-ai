@@ -102,7 +102,7 @@ Relatório (campos do SPEC §26): `successRate`, por tarefa `success`, `iteratio
 - [x] relatório traz as métricas do §26
 - [x] taxa baseline **scripted** registrada; taxa **ao vivo** registrada **ou** bloqueada com o comando exato (CODER da decisão 0002)
 - [x] `bun run verify` exit 0
-- [ ] PR aberto
+- [x] PR aberto
 
 ## STOP conditions
 
