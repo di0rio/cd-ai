@@ -245,6 +245,11 @@ impl NdjsonChatParser {
     }
 }
 
+/// Keep the loaded model in memory until another one needs the RAM (decision 0002 rule 1).
+/// Ollama's default is 5 minutes; a task parked on an approval then pays a ~20 GB reload
+/// (`docs/audit/fase-5-aceite.md`).
+const KEEP_ALIVE_RESIDENT: i64 = -1;
+
 /// Body for POST /api/chat. `tools` is sent only when the caller offers any: models
 /// behave differently once the key is present, even when it is an empty list.
 fn request_body(request: &ChatRequest) -> serde_json::Value {
@@ -252,6 +257,7 @@ fn request_body(request: &ChatRequest) -> serde_json::Value {
         "model": request.model,
         "messages": request.messages,
         "stream": true,
+        "keep_alive": KEEP_ALIVE_RESIDENT,
         "options": { "num_ctx": request.num_ctx },
     });
     if let Some(tools) = request.tools.as_ref().filter(|tools| !tools.is_empty()) {
@@ -635,6 +641,21 @@ mod tests {
                 content: "hmm".to_string(),
             }]
         );
+    }
+
+    #[test]
+    fn request_body_keeps_the_model_resident() {
+        let request = ChatRequest {
+            model: "m".to_string(),
+            messages: vec![ChatMessage {
+                role: "user".to_string(),
+                content: "oi".to_string(),
+                ..Default::default()
+            }],
+            num_ctx: 2048,
+            tools: None,
+        };
+        assert_eq!(request_body(&request)["keep_alive"], -1);
     }
 
     #[test]

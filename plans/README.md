@@ -43,11 +43,11 @@ Escrita pelo lead em 2026-09-11 sobre o commit `040369a`. Ponto de partida: `doc
 
 | Plano | Título | Prioridade | Esforço | Depende de | Status |
 |------|--------|-----------|---------|------------|--------|
-| 015 | Fase 5 — loop de ponta a ponta (core, bridge, CLI e UI) | P1 | L | 014 | IN PROGRESS |
+| 015 | Fase 5 — loop de ponta a ponta (core, bridge, CLI e UI) | P1 | L | 014 | DONE |
 
 O plano 009 foi adicionado depois do benchmark de modelos (`docs/audit/benchmark-2026-09-11.md`). O modelo CODER escolhido escreve tool calls num formato que o Ollama 0.34 não converte.
 
-**Estado do 015 em 2026-09-12** (detalhe em `docs/fase-5-o-que-falta.md`): as Partes 0, A, B, C, D, E, F e G1 estão na árvore de trabalho, com `bun run verify` verde. Ainda faltam a Parte G2 (ligar a UI ao loop) e o aceite da Fase 5 (seção "Aceite da Fase 5" do plano), os dois em andamento. Nada foi commitado.
+**Estado do 015 em 2026-09-15:** Partes 0 e A–G em `main`; fechamento com `keep_alive: -1`, teste determinístico no fixture `soma/` e documentação alinhada. O aceite ao vivo com Ollama+CODER **não** rodou neste ambiente (sem daemon); o loop no mesmo fixture, com `ScriptedModel`, passou. Detalhe em `docs/fase-5-o-que-falta.md` e `docs/audit/fase-5-aceite.md`.
 
 Valores de status: TODO | IN PROGRESS | DONE | BLOCKED (com motivo de uma linha) | REJECTED (com justificativa de uma linha).
 

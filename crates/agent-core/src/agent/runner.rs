@@ -838,6 +838,7 @@ mod tests {
     use crate::permissions::{ApprovalRequest, ApprovalResponse};
     use crate::tools::command::test_argv;
     use std::fs;
+    use std::path::PathBuf;
     use tempfile::{TempDir, tempdir};
 
     /// A store and a workspace, both in tempdirs: the real data directory is never touched.
@@ -1502,6 +1503,78 @@ mod tests {
             &message.event,
             AgentEvent::ToolCallFinished { output: Some(text), .. } if text.contains("oi")
         )));
+    }
+
+    /// SPEC §34 Phase 5 exit: the loop reads, edits and runs tests on the soma fixture.
+    /// The model is scripted — this environment has no Ollama — but the tools, permissions,
+    /// evidence and `completed_unvalidated` path are the real ones.
+    #[test]
+    fn soma_fixture_is_fixed_and_its_tests_run() {
+        let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../evals/fixtures/soma");
+        let package = fs::read_to_string(fixture.join("package.json")).unwrap();
+        let soma = fs::read_to_string(fixture.join("src/soma.ts")).unwrap();
+        let tests = fs::read_to_string(fixture.join("src/soma.test.ts")).unwrap();
+        assert!(
+            soma.contains("a - b"),
+            "o fixture de aceite ainda precisa do bug proposital"
+        );
+
+        let harness = harness(&[
+            ("package.json", &package),
+            ("src/soma.ts", &soma),
+            ("src/soma.test.ts", &tests),
+        ]);
+        let mut model = ScriptedModel::new(vec![
+            ScriptedModel::calls(&[("read_file", serde_json::json!({ "path": "src/soma.ts" }))]),
+            ScriptedModel::calls(&[(
+                "edit_file",
+                serde_json::json!({
+                    "path": "src/soma.ts",
+                    "old_text": "a - b",
+                    "new_text": "a + b",
+                }),
+            )]),
+            ScriptedModel::calls(&[(
+                "run_command",
+                serde_json::json!({ "argv": ["bun", "test"] }),
+            )]),
+            ScriptedModel::text(
+                "Corrigi `soma` para somar e rodei os testes. Não validado por um Verifier.",
+            ),
+        ]);
+        let (state, events) = run(
+            harness.context(),
+            &mut model,
+            start("O teste de soma falha. Corrija e rode os testes."),
+            &mut grant,
+        );
+
+        assert_eq!(state.status, TaskStatus::CompletedUnvalidated);
+        assert_eq!(state.stop_reason, Some(StopReason::Finished));
+        let content = fs::read_to_string(harness.workspace.root().join("src/soma.ts")).unwrap();
+        assert!(content.contains("a + b"), "{content}");
+        assert!(!content.contains("a - b"), "{content}");
+        assert_eq!(state.files_changed.len(), 1);
+        assert_eq!(state.files_changed[0].path, "src/soma.ts");
+        assert_eq!(state.commands.len(), 1);
+        assert_eq!(state.commands[0].argv, ["bun", "test"]);
+        assert_eq!(
+            state.commands[0].exit_code,
+            Some(0),
+            "bun test tem de passar depois da correção; stderr da tool: {:?}",
+            tool_messages(&model, 3).first().map(|m| &m.content)
+        );
+
+        let report = events
+            .iter()
+            .find_map(|message| match &message.event {
+                AgentEvent::TaskFinished { report, .. } => Some(report.clone()),
+                _ => None,
+            })
+            .expect("taskFinished");
+        assert!(!report.validated, "a fase 5 nunca valida (D11)");
+        assert_eq!(report.files_changed, vec!["src/soma.ts"]);
+        assert_eq!(report.evidence[0].exit_code, Some(0));
     }
 
     #[test]
