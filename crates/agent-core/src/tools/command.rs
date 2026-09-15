@@ -241,8 +241,12 @@ fn windows_new_process_group() -> u32 {
 
 /// Silent on purpose: a child that already exited on its own is not an error, and
 /// cancellation takes this path all the time.
+///
+/// Process-group kill is the real tree-kill. `Child::kill` is the fallback when the
+/// group signal is ignored (restricted containers, no `CAP_KILL` on the group) — without
+/// it, cancel waits for the command to finish because the pipe readers never see EOF.
 #[cfg(unix)]
-fn kill_process_tree(child: &Child) {
+fn kill_process_tree(child: &mut Child) {
     let pgid = child.id() as i64;
     let _ = Command::new("kill")
         .args(["-KILL", &format!("-{pgid}")])
@@ -250,18 +254,20 @@ fn kill_process_tree(child: &Child) {
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status();
+    let _ = child.kill();
 }
 
 /// Silent on purpose: `taskkill` prints "The process NNN not found." whenever the child
 /// is already gone, which the cancel path hits routinely.
 #[cfg(not(unix))]
-fn kill_process_tree(child: &Child) {
+fn kill_process_tree(child: &mut Child) {
     let _ = Command::new("taskkill")
         .args(["/T", "/F", "/PID", &child.id().to_string()])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status();
+    let _ = child.kill();
 }
 
 /// Per-platform argv for tests that spawn real processes (plan 015, D15): the gate

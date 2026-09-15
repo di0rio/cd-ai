@@ -13,6 +13,20 @@
 - **Categoria:** feature (SPEC §34, Fase 5)
 - **Planejado em:** commit `040369a` (`main` local), 2026-09-11
 - **Estado de partida:** `docs/handoff.md`
+- **Implementação das Partes 0–G:** em `main` a partir de `193d198` (core), `7f4fe0d` (bridge), `fa50221` (CLI) e `57c522b` (UI G1+G2)
+- **Fechamento:** 2026-09-15 — ver seção abaixo. Linha em `plans/README.md`: DONE (o aceite ao vivo com Ollama ficou registrado como não executável neste ambiente).
+
+## Fechamento (2026-09-15)
+
+A investigação sobre `main` em `024cc8e` mostrou que o plano foi executado: o `ToolEngine` tem um dono por tarefa, a UI chama `respondApproval` / `startTask` / `steerTask` / `cancelTask` / `resumeTask`, a CLI tem `cd-ai task`, e o loop cobre limites, timeout (sem contar a espera humana), cancelamento, detecção de loop e estado persistente.
+
+O que **não** estava fechado:
+
+1. **Documentação defasada.** `plans/README.md`, `docs/handoff.md` e `docs/fase-5-o-que-falta.md` ainda descreviam G2 como não começada e a árvore como não commitada — falso desde `57c522b` / `d14c5d4`.
+2. **Aceite ao vivo reprovado (2026-09-12).** O agente corrigiu `evals/fixtures/soma/`, mas morreu em `taskTimeout` porque a espera de aprovação contava no deadline. O relógio já foi corrigido no runner (`blocked_ms`); faltava um teste de ponta a ponta **determinístico** no mesmo fixture (sem depender do Ollama) e registrar o que este ambiente consegue e o que não consegue verificar.
+3. **`keep_alive` (decisão 0002, revisão).** O cliente Ollama mandava só `num_ctx`. Com o padrão de 5 minutos, uma tarefa parada na aprovação descarrega o CODER (~20 GB) e paga o reload. O fechamento manda `keep_alive: -1` em toda virada do `/api/chat` — um modelo grande residente, como a regra 1 da 0002.
+
+Fora de escopo, como o pedido original: evals (Fase 6), sandbox (Fase 7), Verifier (Fase 8), shadow git, context manager, skills, model router, empacotamento.
 
 ## Drift check feito ao escrever este plano
 
@@ -703,15 +717,15 @@ No Windows, se o `cargo` não for encontrado: `$env:PATH = "$env:USERPROFILE\.ca
 
 ## Critérios de pronto (plano inteiro)
 
-- [ ] Partes 0 e A a G com o gate verde, cada uma reportada ao lead
-- [ ] `grep -rn "\"root\"" src-tauri/src` não retorna nada (D4)
-- [ ] `grep -rn "runTool\|run_tool" apps/desktop/src src-tauri` não retorna nada (D4)
-- [ ] `grep -rn "O agente ainda não está conectado" apps/desktop/src` não retorna nada
-- [ ] As três listas de ACL (`generate_handler!`, `build.rs` e a capability) batem
-- [ ] `bun run verify` sai com exit 0 na árvore final, no Windows
-- [ ] O aceite está registrado em `docs/audit/fase-5-aceite.md`
-- [ ] A linha 015 em `plans/README.md` está atualizada, e o `docs/handoff.md` reflete a Fase 5 (incluindo a correção do "gate verde" da base)
-- [ ] **Nenhum commit, push ou reset feito por executor**
+- [x] Partes 0 e A a G com o gate verde (em `main`: `193d198` … `57c522b`)
+- [x] `grep -rn "\"root\"" src-tauri/src` não retorna nada (D4)
+- [x] `grep -rn "runTool\|run_tool" apps/desktop/src src-tauri` não retorna nada (D4)
+- [x] `grep -rn "O agente ainda não está conectado" apps/desktop/src` não retorna nada
+- [x] As três listas de ACL (`generate_handler!`, `build.rs` e a capability) batem
+- [x] `bun run verify` sai com exit 0 nesta árvore (Linux, 2026-09-15). O Windows 11 da máquina de dev não está neste ambiente.
+- [x] O aceite está registrado em `docs/audit/fase-5-aceite.md` (CLI ao vivo 2026-09-12 reprovou; loop determinístico 2026-09-15 passou; CLI/UI ao vivo 2026-09-15 sem Ollama)
+- [x] A linha 015 em `plans/README.md` está atualizada, e o `docs/handoff.md` reflete a Fase 5 (incluindo a correção do "gate verde" da base)
+- [ ] **Nenhum commit, push ou reset feito por executor** — vale para as ondas originais; o fechamento de 2026-09-15 commitou a pedido do usuário (PR da Fase 5)
 
 ## STOP conditions
 
