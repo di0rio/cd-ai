@@ -272,3 +272,84 @@ fn help_mentions_continue() {
     let output = run_cli(&["--help"]);
     assert!(stdout(&output).contains("--continue"));
 }
+
+#[test]
+fn help_mentions_eval() {
+    for flag in ["--help", "-h"] {
+        let text = stdout(&run_cli(&[flag]));
+        assert!(text.contains("cd-ai eval"), "{flag} não cita eval: {text}");
+        assert!(
+            text.contains("--scripted"),
+            "{flag} não cita --scripted: {text}"
+        );
+    }
+}
+
+#[test]
+fn eval_without_model_or_scripted_exits_2() {
+    let output = run_cli(&["eval"]);
+    assert_eq!(output.status.code(), Some(2));
+    let text = stderr(&output);
+    assert!(text.contains("faltou --model"), "{text}");
+}
+
+#[test]
+fn eval_scripted_and_model_together_exit_2() {
+    let output = run_cli(&["eval", "--scripted", "--model", "qwen3"]);
+    assert_eq!(output.status.code(), Some(2));
+    assert!(
+        stderr(&output).contains("--scripted não aceita --model"),
+        "{}",
+        stderr(&output)
+    );
+}
+
+#[test]
+fn eval_scripted_with_missing_suite_exits_1() {
+    let data = TempDir::new("eval-missing");
+    let output = run_cli_env(
+        &[
+            "eval",
+            "--scripted",
+            "--suite",
+            "pasta-de-eval-que-nao-existe-cd-ai",
+        ],
+        &[("CD_AI_DATA_DIR", data.as_str())],
+    );
+    assert_eq!(output.status.code(), Some(1));
+    let text = stderr(&output);
+    assert!(text.contains("pasta de tarefas não encontrada"), "{text}");
+}
+
+/// Runs the real `soma` fixture through the CLI harness. Needs `bun` on PATH (the verify gate
+/// already does). Does not talk to Ollama.
+#[test]
+fn eval_scripted_soma_exits_0() {
+    let suite = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../evals");
+    let suite = suite.canonicalize().expect("evals na raiz do repo");
+    let data = TempDir::new("eval-soma");
+    let out = data.path.join("soma.json");
+    let output = run_cli_env(
+        &[
+            "eval",
+            "--scripted",
+            "--suite",
+            suite.to_str().expect("utf-8"),
+            "--task",
+            "soma",
+            "--out",
+            out.to_str().expect("utf-8"),
+        ],
+        &[("CD_AI_DATA_DIR", data.as_str())],
+    );
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "stderr: {}\nstdout: {}",
+        stderr(&output),
+        stdout(&output)
+    );
+    let text = stderr(&output);
+    assert!(text.contains("taxa de sucesso"), "{text}");
+    assert!(out.is_file(), "relatório em {}", out.display());
+}

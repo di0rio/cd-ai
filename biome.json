@@ -32,6 +32,11 @@
           }
         }
       }
+    },
+    {
+      "includes": ["evals/results/**"],
+      "formatter": { "enabled": false },
+      "linter": { "enabled": false }
     }
   ],
   "assist": {

@@ -1,0 +1,86 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-09-15T20:07:37Z",
+  "gitHead": "6757a832c9403eb7db4c6905a1bb2ee68bd5d7ca",
+  "model": "scripted",
+  "suite": "evals",
+  "successRate": 1.0,
+  "passed": 3,
+  "failed": 0,
+  "skipped": 0,
+  "durationMs": 105,
+  "tasks": [
+    {
+      "id": "dobro",
+      "success": true,
+      "checkExitCode": 0,
+      "agentStatus": "completed_unvalidated",
+      "stopReason": {
+        "kind": "finished"
+      },
+      "iterations": 4,
+      "retries": 0,
+      "promptTokens": 0,
+      "genTokens": 16,
+      "durationMs": 40,
+      "modelMs": 0,
+      "toolMs": 19,
+      "toolCallFormatFailures": 0,
+      "nativeToolCallTurns": 3,
+      "textToolCallTurns": 0,
+      "rejectedEdits": 0,
+      "filesChanged": [
+        "src/dobro.ts"
+      ],
+      "error": null
+    },
+    {
+      "id": "greet",
+      "success": true,
+      "checkExitCode": 0,
+      "agentStatus": "completed_unvalidated",
+      "stopReason": {
+        "kind": "finished"
+      },
+      "iterations": 4,
+      "retries": 0,
+      "promptTokens": 0,
+      "genTokens": 16,
+      "durationMs": 32,
+      "modelMs": 0,
+      "toolMs": 12,
+      "toolCallFormatFailures": 0,
+      "nativeToolCallTurns": 3,
+      "textToolCallTurns": 0,
+      "rejectedEdits": 0,
+      "filesChanged": [
+        "src/greet.ts"
+      ],
+      "error": null
+    },
+    {
+      "id": "soma",
+      "success": true,
+      "checkExitCode": 0,
+      "agentStatus": "completed_unvalidated",
+      "stopReason": {
+        "kind": "finished"
+      },
+      "iterations": 4,
+      "retries": 0,
+      "promptTokens": 0,
+      "genTokens": 16,
+      "durationMs": 31,
+      "modelMs": 0,
+      "toolMs": 12,
+      "toolCallFormatFailures": 0,
+      "nativeToolCallTurns": 3,
+      "textToolCallTurns": 0,
+      "rejectedEdits": 0,
+      "filesChanged": [
+        "src/soma.ts"
+      ],
+      "error": null
+    }
+  ]
+}

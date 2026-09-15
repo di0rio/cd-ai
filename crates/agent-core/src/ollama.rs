@@ -266,6 +266,7 @@ fn request_body(request: &ChatRequest) -> serde_json::Value {
     body
 }
 
+#[derive(Clone)]
 pub struct OllamaClient {
     base_url: String,
     http: reqwest::Client,

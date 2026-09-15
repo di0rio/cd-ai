@@ -1,4 +1,5 @@
 pub mod agent;
+pub mod eval;
 pub mod events;
 pub mod ollama;
 pub mod permissions;

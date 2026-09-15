@@ -64,6 +64,16 @@ Cada escrita e cada comando que não seja leitura pedem aprovação no terminal 
 terminal interativo a ação é negada — não existe aprovação automática. Uma tarefa interrompida volta
 com `--resume <id>`, e o Ctrl+C cancela a tarefa e os processos filhos.
 
+A suíte de eval (Fase 6) é outro comando, headless, sobre cópias das fixtures:
+
+```bash
+cargo run -p cd-ai-cli -- eval --scripted
+cargo run -p cd-ai-cli -- eval --model <modelo>
+```
+
+`--scripted` não fala com o Ollama (usa o campo `script` de cada tarefa). O eval aprova sozinho
+porque só edita a cópia descartável. Detalhes em [evals/README.md](evals/README.md).
+
 ### Binário de release (sem instalador)
 
 ```bash
@@ -90,6 +100,7 @@ bun scripts/bench-models.ts <modelo> [modelo...]
 | `bun run --cwd apps/desktop typecheck` | Checagem de tipos do TypeScript |
 | `bun run --cwd apps/desktop test` | Testes do frontend |
 | `cargo test` | Testes do Rust |
+| `cargo run -p cd-ai-cli -- eval --scripted` | Roda a suíte de eval sem Ollama (Fase 6) |
 
 Os formatos de instalador ficam em `bundle.targets`, no [src-tauri/tauri.conf.json](src-tauri/tauri.conf.json). Hoje só `deb` e `appimage` (Linux) estão configurados. Pra gerar instalador no Windows, acrescente `msi` ou `nsis`.
 
@@ -100,6 +111,7 @@ apps/desktop/       interface (Next.js + Tailwind)
 apps/cli/           binário de linha de comando `cd-ai`
 crates/agent-core/  núcleo do agente em Rust
 src-tauri/          shell desktop Tauri
+evals/              suíte de eval (Fase 6): tasks, fixtures, results
 docs/decisions/     registros de decisão (ADRs)
 plans/              planos de implementação
 scripts/            scripts auxiliares (ex.: benchmark de modelos no Ollama)
