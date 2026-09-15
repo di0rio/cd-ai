@@ -1,0 +1,7 @@
+{
+  "name": "dobro-fixture",
+  "private": true,
+  "scripts": {
+    "test": "bun test"
+  }
+}
