@@ -47,11 +47,11 @@ Escrita pelo lead em 2026-09-11 sobre o commit `040369a`. Ponto de partida: `doc
 
 O plano 009 foi adicionado depois do benchmark de modelos (`docs/audit/benchmark-2026-09-11.md`). O modelo CODER escolhido escreve tool calls num formato que o Ollama 0.34 não converte.
 
-**Estado do 015:** mergeado em `main` (PR #2). O aceite ao vivo da CLI em 2026-09-12 reprovou por timeout de aprovação; o registro está em `docs/audit/fase-5-aceite.md`. O loop determinístico (ScriptedModel) passa.
+**Estado do 015 em 2026-09-15:** Partes 0 e A–G em `main` (PR #2); fechamento com `keep_alive: -1`, `Child::kill` se o kill do grupo falhar, teste determinístico no fixture `soma/` e documentação alinhada. O aceite ao vivo com Ollama+CODER **não** rodou neste ambiente (sem daemon); o loop no mesmo fixture, com `ScriptedModel`, passou. Detalhe em `docs/fase-5-o-que-falta.md` e `docs/audit/fase-5-aceite.md`.
 
 ### Geração 4
 
-Escrita em 2026-09-15 sobre o commit `024cc8e` (`main`, Fases 0–5).
+Escrita em 2026-09-15 sobre o `main` com as Fases 0–5 fechadas.
 
 | Plano | Título | Prioridade | Esforço | Depende de | Status |
 |------|--------|-----------|---------|------------|--------|

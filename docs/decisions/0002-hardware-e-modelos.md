@@ -83,11 +83,11 @@ Dos 63 s daquela chamada, 61,6 s foram prefill e 1,4 s foram geração. O `scrip
 
 O gargalo é a VRAM, não o modelo: com 20,4 GB de pesos e 6 GB de placa, 79% do CODER roda na CPU. Note que nem o `qwen3:4b` chega a 100% de GPU, porque o KV cache de 16k disputa a mesma memória.
 
-Decorre disso, e ainda **não** está implementado:
+Decorre disso:
 
-- O cliente não manda `keep_alive` (`crates/agent-core/src/ollama.rs`, que envia só `num_ctx` nas options). Com o padrão de 5 minutos do Ollama, uma tarefa parada num prompt de aprovação perde o modelo da memória e paga o recarregamento de 20 GB do disco ao retomar. Aconteceu no aceite registrado em `docs/audit/fase-5-aceite.md`.
-- Baixar o `num_ctx` do CODER de 16k para 8k libera VRAM do KV cache para mais camadas na GPU. A regra 3 fixou 16k por RAM livre; o critério de VRAM sugere revisitar o número.
-- `OLLAMA_KV_CACHE_TYPE=q8_0` corta o KV cache pela metade pelo mesmo motivo. Não foi medido.
+- **Feito (Fase 5, 2026-09-15):** o cliente manda `keep_alive: -1` em toda virada (`request_body` em `crates/agent-core/src/ollama.rs`). O modelo permanece residente durante uma aprovação, em vez de descarregar nos 5 minutos padrão do Ollama. A recarga de ~20 GB do aceite (`docs/audit/fase-5-aceite.md`) era exatamente esse buraco.
+- Ainda **não** implementado: baixar o `num_ctx` do CODER de 16k para 8k libera VRAM do KV cache para mais camadas na GPU. A regra 3 fixou 16k por RAM livre; o critério de VRAM sugere revisitar o número.
+- Ainda **não** medido: `OLLAMA_KV_CACHE_TYPE=q8_0` corta o KV cache pela metade pelo mesmo motivo.
 
 ### 3. `cd-ai-coder`
 
