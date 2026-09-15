@@ -1,0 +1,33 @@
+{
+  "id": "greet",
+  "fixture": "greet",
+  "prompt": "O teste de greet falha. Corrija a função para cumprimentar e rode os testes.",
+  "timeoutMs": 600000,
+  "maxIterations": 15,
+  "check": {
+    "argv": ["bun", "test"],
+    "expectExit": 0,
+    "timeoutMs": 60000
+  },
+  "script": [
+    {
+      "calls": [{ "name": "read_file", "arguments": { "path": "src/greet.ts" } }]
+    },
+    {
+      "calls": [
+        {
+          "name": "edit_file",
+          "arguments": {
+            "path": "src/greet.ts",
+            "old_text": "  return name;",
+            "new_text": "  return `Olá, ${name}`;"
+          }
+        }
+      ]
+    },
+    {
+      "calls": [{ "name": "run_command", "arguments": { "argv": ["bun", "test"] } }]
+    },
+    { "text": "Corrigido: greet agora devolve Olá, {nome}." }
+  ]
+}

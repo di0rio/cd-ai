@@ -47,7 +47,15 @@ Escrita pelo lead em 2026-09-11 sobre o commit `040369a`. Ponto de partida: `doc
 
 O plano 009 foi adicionado depois do benchmark de modelos (`docs/audit/benchmark-2026-09-11.md`). O modelo CODER escolhido escreve tool calls num formato que o Ollama 0.34 não converte.
 
-**Estado do 015 em 2026-09-15:** Partes 0 e A–G em `main`; fechamento com `keep_alive: -1`, teste determinístico no fixture `soma/` e documentação alinhada. O aceite ao vivo com Ollama+CODER **não** rodou neste ambiente (sem daemon); o loop no mesmo fixture, com `ScriptedModel`, passou. Detalhe em `docs/fase-5-o-que-falta.md` e `docs/audit/fase-5-aceite.md`.
+**Estado do 015 em 2026-09-15:** Partes 0 e A–G em `main` (PR #2); fechamento com `keep_alive: -1`, `Child::kill` se o kill do grupo falhar, teste determinístico no fixture `soma/` e documentação alinhada. O aceite ao vivo com Ollama+CODER **não** rodou neste ambiente (sem daemon); o loop no mesmo fixture, com `ScriptedModel`, passou. Detalhe em `docs/fase-5-o-que-falta.md` e `docs/audit/fase-5-aceite.md`.
+
+### Geração 4
+
+Escrita em 2026-09-15 sobre o `main` com as Fases 0–5 fechadas.
+
+| Plano | Título | Prioridade | Esforço | Depende de | Status |
+|------|--------|-----------|---------|------------|--------|
+| 016 | Fase 6 — Eval baseline (suite, runner headless, número registrado) | P1 | M | 015 | DONE |
 
 Valores de status: TODO | IN PROGRESS | DONE | BLOCKED (com motivo de uma linha) | REJECTED (com justificativa de uma linha).
 
@@ -78,6 +86,10 @@ Valores de status: TODO | IN PROGRESS | DONE | BLOCKED (com motivo de uma linha)
   - `conversation.tsx`: G1, depois G2;
   - `ipc.ts` fica só com a E.
 - **Sem worktrees:** todos usam o mesmo working tree. Um gate vermelho causado por arquivo fora do escopo de quem roda espera o aviso do lead e roda de novo; ninguém reporta pronto com o gate vermelho.
+
+### Geração 4
+
+- **016 depois do 015.** O runner chama `run_task`; não reimplementa o loop. `--yes` no `task` continua proibido (D13 do 015); só o `eval` auto-aprova, e só na cópia da fixture.
 
 ## Achados considerados e descartados
 

@@ -189,26 +189,36 @@ fn drain(
     }
 }
 
-/// A model with a script, for testing the loop without Ollama. Returns the programmed replies in
-/// order and repeats the last one afterwards, so a test can drive an endless loop with one entry.
-#[cfg(test)]
-pub(crate) struct ScriptedModel {
+/// A model with a script, for tests and for `cd-ai eval --scripted`. Returns the programmed
+/// replies in order. `new` repeats the last one afterwards (the runner tests drive loops that
+/// way); `once` stops with an empty text turn, so an eval script cannot loop on its last tool.
+pub struct ScriptedModel {
     replies: std::collections::VecDeque<Result<ModelReply, ModelError>>,
     last: Option<Result<ModelReply, ModelError>>,
+    /// When the script is exhausted, send `last` again. Eval scripts turn this off.
+    repeat_last: bool,
     /// Every batch of messages the loop sent, in order.
     pub seen: Vec<Vec<ChatMessage>>,
     /// The tools offered on the last turn.
     pub offered: Vec<String>,
 }
 
-#[cfg(test)]
 impl ScriptedModel {
     pub fn new(replies: Vec<Result<ModelReply, ModelError>>) -> Self {
         Self {
             replies: replies.into(),
             last: None,
+            repeat_last: true,
             seen: Vec::new(),
             offered: Vec::new(),
+        }
+    }
+
+    /// Like `new`, but a turn past the script is plain text with no tool calls (the loop stops).
+    pub fn once(replies: Vec<Result<ModelReply, ModelError>>) -> Self {
+        Self {
+            repeat_last: false,
+            ..Self::new(replies)
         }
     }
 
@@ -238,7 +248,6 @@ impl ScriptedModel {
     }
 }
 
-#[cfg(test)]
 impl ChatModel for ScriptedModel {
     fn turn(
         &mut self,
@@ -260,10 +269,12 @@ impl ChatModel for ScriptedModel {
                 self.last = Some(reply.clone());
                 reply
             }
-            None => self
+            None if self.repeat_last => self
                 .last
                 .clone()
                 .unwrap_or_else(|| Err(ModelError::Failed("script vazio".to_string()))),
+            // Eval scripts must not loop on the last tool call.
+            None => Self::text(""),
         };
         // A scripted turn still streams, so the loop's event forwarding is exercised.
         if let Ok(ok) = &reply {
@@ -305,6 +316,27 @@ mod tests {
         let third = model.turn(&[], &[], &mut sink, &cancel).unwrap();
         assert_eq!(third.content, "pronto");
         assert_eq!(model.seen.len(), 3);
+    }
+
+    #[test]
+    fn scripted_model_once_stops_with_empty_text() {
+        let mut model = ScriptedModel::once(vec![ScriptedModel::calls(&[(
+            "read_file",
+            serde_json::json!({ "path": "a.rs" }),
+        )])]);
+        let cancel = CancelToken::default();
+        let mut sink = |_: ChatEvent| {};
+        assert_eq!(
+            model
+                .turn(&[], &[], &mut sink, &cancel)
+                .unwrap()
+                .tool_calls
+                .len(),
+            1
+        );
+        let past = model.turn(&[], &[], &mut sink, &cancel).unwrap();
+        assert!(past.tool_calls.is_empty());
+        assert!(past.content.is_empty());
     }
 
     #[test]

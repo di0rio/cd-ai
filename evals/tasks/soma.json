@@ -1,0 +1,33 @@
+{
+  "id": "soma",
+  "fixture": "soma",
+  "prompt": "O teste de soma falha. Corrija e rode os testes.",
+  "timeoutMs": 600000,
+  "maxIterations": 15,
+  "check": {
+    "argv": ["bun", "test"],
+    "expectExit": 0,
+    "timeoutMs": 60000
+  },
+  "script": [
+    {
+      "calls": [{ "name": "read_file", "arguments": { "path": "src/soma.ts" } }]
+    },
+    {
+      "calls": [
+        {
+          "name": "edit_file",
+          "arguments": {
+            "path": "src/soma.ts",
+            "old_text": "a - b",
+            "new_text": "a + b"
+          }
+        }
+      ]
+    },
+    {
+      "calls": [{ "name": "run_command", "arguments": { "argv": ["bun", "test"] } }]
+    },
+    { "text": "Corrigido: soma agora devolve a + b e os testes passam." }
+  ]
+}
