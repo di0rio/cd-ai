@@ -1,6 +1,6 @@
 # Aceite da Fase 5 — registro
 
-> **O aceite foi tentado uma vez, pela CLI, em 2026-09-12, e REPROVOU.** O registro está na tabela abaixo, com a causa. O cenário pela UI ainda não foi executado.
+> **Duas tentativas.** A CLI ao vivo, em 2026-09-12, REPROVOU (`taskTimeout` na espera de aprovação). Em 2026-09-15 o loop foi reexecutado de forma determinística sobre o mesmo fixture (`ScriptedModel` + `bun test`) e PASSOU. CLI/UI com um modelo real **não** rodaram em 2026-09-15: este ambiente não tem Ollama.
 
 Pré-requisito: as Partes 0 a G do plano 015 com o gate (`bun run verify`) verde — ver `docs/fase-5-o-que-falta.md` para o estado atual.
 
@@ -23,7 +23,10 @@ Pré-requisito: as Partes 0 a G do plano 015 com o gate (`bun run verify`) verde
 | Cenário (CLI / UI) | Modelo usado | Tempo | Status final esperado | Resultado | Evidências |
 |---|---|---|---|---|---|
 | CLI | `qwen3-coder:30b` | 67 min | `completed_unvalidated` | **FALHOU** — terminou em `failed` com `stopReason: taskTimeout`. A correção do código estava certa (`src/soma.ts` passou a `return a + b`), mas a tarefa morreu antes de rodar os testes. | `task_1789209104359_14900`: 5 iterações, `commands: []`, `filesChanged: ["src/soma.ts"]`, `metrics.modelMs: 97_952`, `metrics.toolMs: 3_532_469`. Estado em `%APPDATA%\cd-ai\tasks\task_1789209104359_14900\`. |
-| UI | — | — | `completed_unvalidated` | _(não executado)_ | |
+| UI | — | — | `completed_unvalidated` | _(não executado — 2026-09-12 nem 2026-09-15)_ | |
+| Loop determinístico (sem Ollama) | `ScriptedModel` (não é um LLM) | < 1 s | `completed_unvalidated` | **PASSOU** (2026-09-15). O loop real leu o fixture, trocou `a - b` por `a + b`, rodou `bun test` (exit 0, classe `validate`) e terminou `completed_unvalidated` com `validated: false`. | `cargo test -p agent-core soma_fixture_is_fixed_and_its_tests_run`. Cópia do fixture montada em `tempdir`, nunca a pasta do repositório. |
+| CLI ao vivo (2026-09-15) | — | — | `completed_unvalidated` | **Não executado.** `curl http://127.0.0.1:11434/api/tags` falhou com conexão recusada. | Ambiente do agente em nuvem, sem daemon Ollama. |
+| UI ao vivo (2026-09-15) | — | — | `completed_unvalidated` | **Não executado** (mesmo motivo). | |
 
 - **Cenário:** `CLI` ou `UI`.
 - **Modelo usado:** nome exato como carregado no Ollama (ex.: `qwen3-coder:30b`).
@@ -45,4 +48,14 @@ Duas consequências, ambas corrigidas depois desta tentativa:
 
 Uma terceira observação, de desempenho e não de corretude: com o prompt parado por 59 minutos, o Ollama descarregou o modelo da memória (o `keep_alive` padrão é de 5 minutos e o cliente não manda um valor próprio), então a retomada depois da aprovação pagou o recarregamento do modelo do disco.
 
-Antes de repetir o aceite, confirme que o binário em uso já contém as correções desta data — em especial a aprovação automática para comandos das classes `read` e `validate` (SPEC §20.4), sem a qual o `bun test` do fixture também pararia para pedir aprovação.
+Antes de repetir o aceite **ao vivo**, confirme que o binário em uso já contém as correções desta data — em especial a aprovação automática para comandos das classes `read` e `validate` (SPEC §20.4), sem a qual o `bun test` do fixture também pararia para pedir aprovação — e o `keep_alive: -1` no cliente Ollama, senão o CODER descarrega nos 5 minutos padrão.
+
+## Fechamento de 2026-09-15
+
+O que este ambiente **pôde** verificar, com evidência:
+
+- O loop (`run_task`) resolve o fixture `evals/fixtures/soma/` de ponta a ponta quando as tool calls vêm certas: arquivo corrigido, `bun test` exit 0, status `completed_unvalidated`, relatório sem `validated`.
+- `keep_alive: -1` entra no corpo de `POST /api/chat` (`request_body_keeps_the_model_resident`).
+- A UI em `main` já chama `startTask` / `respondApproval` / `steerTask` / `cancelTask` / `resumeTask`; `run_tool` e `task_id: "root"` não existem.
+
+O que **não** pôde ser verificado aqui: um modelo local real (CODER) resolvendo o mesmo pedido pela CLI ou pela UI. Isso continua o último passo humano do aceite da Fase 5, numa máquina com Ollama.
