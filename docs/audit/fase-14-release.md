@@ -35,7 +35,7 @@ env -i HOME="$HOME" PATH="/usr/bin:/bin:$HOME/.bun/bin" \
 
 A primeira corrida da CI (commit `2153cc5`) morreu no passo `bun run verify`: *“The hosted runner lost communication with the server”* (CPU/RAM). `clippy --workspace --all-targets` compilava o crate Tauri/WebKit em **debug** no runner de 7 GiB.
 
-A segunda (`db45c1e`, só core+CLI) morreu no mesmo erro durante `clippy --all-targets` + `cargo test` (~46 min). O workflow agora: 8 GiB de swap, `CARGO_BUILD_JOBS=1`, clippy **sem** `--all-targets`, testes com 2 threads, WebKit só no `tauri build` em release. `bun run verify` local continua a incluir o desktop.
+A terceira (`e94b6d4`): clippy da lib passou; `cargo test -p agent-core -p cd-ai-cli` voltou a matar o agente (~46 min, *lost communication*). Compilar o harness de testes (ou os testes de netns/Landlock) não cabe neste runner. A CI de release **não** corre `cargo test`; o eval 3/3 usa a CLI empacotada. O gate completo continua a ser `bun run verify` local.
 
 SHA256 desta VM (`dist/linux/`, não commitado):
 

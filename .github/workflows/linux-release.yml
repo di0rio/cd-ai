@@ -60,8 +60,9 @@ jobs:
 
       - run: bun install --frozen-lockfile
 
-      # Local gate remains `bun run verify` (includes desktop). CI skips debug
-      # WebKit and clippy --all-targets: both exhausted the previous runners.
+      # Local gate remains `bun run verify` (includes desktop + cargo test).
+      # CI does not run `cargo test`: compiling the agent-core test harness
+      # (or the sandbox/netns tests) killed the hosted agent after ~46 min.
       - name: Verify frontend and release metadata
         run: |
           bun run check
@@ -73,16 +74,6 @@ jobs:
       - name: Clippy agent-core + CLI
         timeout-minutes: 20
         run: cargo clippy -p agent-core -p cd-ai-cli -- -D warnings
-
-      - name: Test agent-core + CLI
-        timeout-minutes: 20
-        env:
-          RUST_TEST_THREADS: "2"
-        run: cargo test -p agent-core -p cd-ai-cli
-
-      - name: Eval scripted
-        timeout-minutes: 10
-        run: cargo run -q -p cd-ai-cli -- eval --scripted --out evals/results/scripted-ci.json
 
       - name: Install Tauri Linux dependencies
         run: |
@@ -100,6 +91,12 @@ jobs:
       - name: Build .deb and AppImage
         timeout-minutes: 40
         run: bun scripts/build-linux-release.ts
+
+      - name: Eval scripted with packaged CLI
+        timeout-minutes: 10
+        run: |
+          chmod +x dist/linux/cd-ai
+          dist/linux/cd-ai eval --scripted --suite evals --out evals/results/scripted-ci.json
 
       - uses: actions/upload-artifact@v4
         with:
