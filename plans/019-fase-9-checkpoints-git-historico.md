@@ -89,9 +89,9 @@ exclude  = .git/ + node_modules/ target/ dist/ .next/ …
 - [x] Tools `git_status` / `git_diff` / `git_log` / `git_branch` existem e recusam workspace sem git
 - [x] `cd-ai history` lista tarefas do workspace; `cd-ai rollback <id>` reverte
 - [x] UI: reverter no relatório, com segundo gesto para conflitos
-- [ ] `cd-ai eval --scripted` 3/3
-- [ ] `bun run verify` exit 0
-- [ ] PR aberto
+- [x] `cd-ai eval --scripted` 3/3
+- [x] `bun run verify` exit 0
+- [x] PR aberto
 
 ## STOP conditions
 
