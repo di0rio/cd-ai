@@ -89,6 +89,14 @@ Escrita em 2026-09-16 sobre o `main` com as Fases 0–9 fechadas (PR #7).
 |------|--------|-----------|---------|------------|--------|
 | 020 | Fase 10 — Context Manager completo (repo map, orçamento, cache, higiene, Explorer) | P1 | L | 019 | DONE |
 
+### Geração 9
+
+Escrita em 2026-09-16 sobre o `main` com as Fases 0–10 fechadas (PR #10).
+
+| Plano | Título | Prioridade | Esforço | Depende de | Status |
+|------|--------|-----------|---------|------------|--------|
+| 021 | Fase 11 — Skills (registry, licenças, condensadas, Skill Router, deps/conflitos) | P1 | M | 020 | DONE |
+
 Valores de status: TODO | IN PROGRESS | DONE | BLOCKED (com motivo de uma linha) | REJECTED (com justificativa de uma linha).
 
 ## Notas de dependência
@@ -138,6 +146,10 @@ Valores de status: TODO | IN PROGRESS | DONE | BLOCKED (com motivo de uma linha)
 ### Geração 8
 
 - **020 depois do 019.** O Context Manager reusa o tree-sitter já no `edit.rs`/`verify.rs`. Explorer é o mesmo modelo com tools de leitura; a classificação determinística manda os fixtures de eval direto ao Coder. A suíte de eval não cresce.
+
+### Geração 9
+
+- **021 depois do 020.** Skills são conhecimento no prompt, não tools. Licença é gate do registry. O router é puro. A suíte de eval não cresce — a evidência da fase é 3/3 + `selectedSkills` + testes de condensação/deps.
 
 ## Achados considerados e descartados
 
