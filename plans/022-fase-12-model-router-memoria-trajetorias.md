@@ -108,14 +108,14 @@ trajectories = true            → JSONL local, redigido, sem output de tool
 
 ## Critérios de pronto
 
-- [ ] `plans/022-fase-12-model-router-memoria-trajetorias.md` existe; linha 022 em `plans/README.md` = DONE
-- [ ] Router determinístico: mesmas entradas → mesma categoria, nome, `num_ctx`, motivo (teste)
-- [ ] FAST não edita quando há CODER distinto (teste)
-- [ ] Preferência pelo carregado (teste)
-- [ ] Fallback se o configurado não está na listagem (teste)
-- [ ] Escalonamento após 2 falhas (teste no loop com `apply_route`)
-- [ ] Memória relevante no prompt, stale fora, secrets redigidos (teste)
-- [ ] Trajetórias off por padrão; on grava JSONL local redigido (teste)
+- [x] `plans/022-fase-12-model-router-memoria-trajetorias.md` existe; linha 022 em `plans/README.md` = DONE
+- [x] Router determinístico: mesmas entradas → mesma categoria, nome, `num_ctx`, motivo (teste)
+- [x] FAST não edita quando há CODER distinto (teste)
+- [x] Preferência pelo carregado (teste)
+- [x] Fallback se o configurado não está na listagem (teste)
+- [x] Escalonamento após 2 falhas (teste no loop com `apply_route`)
+- [x] Memória relevante no prompt, stale fora, secrets redigidos (teste)
+- [x] Trajetórias off por padrão; on grava JSONL local redigido (teste)
 - [ ] Eval scripted 3/3; JSON com rota; audit com evidência de custo/latência
 - [ ] `bun run verify` exit 0
 - [ ] PR aberto
