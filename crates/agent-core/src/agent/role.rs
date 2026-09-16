@@ -1,6 +1,7 @@
 //! Roles of the v1 agent (SPEC §12, plan 020): Explorer (read-only) and Coder.
 //!
-//! The Verifier is not a model role — it is deterministic code (plan 018). Skills are Fase 11.
+//! The Verifier is not a model role — it is deterministic code (plan 018). Skills are knowledge
+//! selected by `crate::skills` (plan 021), not extra roles.
 //! Classification is a pure function over the request and the size of the repo map.
 
 use serde::{Deserialize, Serialize};
@@ -130,9 +131,9 @@ pub fn role_addendum(role: AgentRole) -> &'static str {
 }
 
 pub fn coder_handoff_message() -> &'static str {
-    "Explorer phase is over. You are now the Coder: you may edit, write and run commands. \
-     Use the repo map and the files already in this conversation. Re-read a file before \
-     editing it. Do not repeat exploration unless a path is missing."
+    // Short on purpose: internal role handoff, not user-facing (plan 021 D8).
+    "Explorer done. You are Coder: edit/write/run allowed. Use the repo map and files already \
+     read. Re-read before edit. Do not re-explore unless a path is missing."
 }
 
 fn is_question(lower: &str) -> bool {

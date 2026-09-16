@@ -3,6 +3,7 @@ import type { AgentRole } from "./AgentRole";
 import type { Checkpoint } from "./Checkpoint";
 import type { CommandRecord } from "./CommandRecord";
 import type { FileChange } from "./FileChange";
+import type { SelectedSkill } from "./SelectedSkill";
 import type { StopReason } from "./StopReason";
 import type { TaskKind } from "./TaskKind";
 import type { TaskMetrics } from "./TaskMetrics";
@@ -39,6 +40,10 @@ role: AgentRole,
  * Orchestrator label (plan 020). Absent from older states → Normal.
  */
 taskKind: TaskKind, 
+/**
+ * Skills the router loaded (plan 021). Absent from older states → none.
+ */
+selectedSkills: Array<SelectedSkill>, 
 /**
  * Redacted before reaching disk (D8).
  */

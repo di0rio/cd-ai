@@ -210,6 +210,9 @@ pub struct TaskState {
     /// Orchestrator label (plan 020). Absent from older states → Normal.
     #[serde(default)]
     pub task_kind: crate::agent::role::TaskKind,
+    /// Skills the router loaded (plan 021). Absent from older states → none.
+    #[serde(default)]
+    pub selected_skills: Vec<crate::skills::SelectedSkill>,
     /// Redacted before reaching disk (D8).
     pub errors: Vec<String>,
     pub retries: u32,
@@ -244,6 +247,7 @@ impl TaskState {
             rolled_back: false,
             role: crate::agent::role::AgentRole::Coder,
             task_kind: crate::agent::role::TaskKind::Normal,
+            selected_skills: Vec::new(),
             errors: Vec::new(),
             retries: 0,
             metrics: TaskMetrics::default(),
@@ -435,6 +439,7 @@ mod tests {
         assert_eq!(state.summary().continues, None);
         assert!(state.checkpoints.is_empty());
         assert!(!state.rolled_back);
+        assert!(state.selected_skills.is_empty());
     }
 
     #[test]

@@ -444,8 +444,16 @@ async fn eval_cmd(args: impl Iterator<Item = String>) -> ExitCode {
             for row in &report.tasks {
                 let mark = if row.success { "ok" } else { "falhou" };
                 eprintln!(
-                    "  {:<12} {mark}  {} iterações  ~{} tok  {} ms",
-                    row.id, row.iterations, row.estimated_prompt_tokens, row.duration_ms
+                    "  {:<12} {mark}  {} iterações  ~{} tok  {} ms{}",
+                    row.id,
+                    row.iterations,
+                    row.estimated_prompt_tokens,
+                    row.duration_ms,
+                    if row.selected_skills.is_empty() {
+                        String::new()
+                    } else {
+                        format!("  [{}]", row.selected_skills.join(", "))
+                    }
                 );
             }
             let scored = report.passed + report.failed;
@@ -520,6 +528,9 @@ fn print_eval_event(task: &EvalTask, message: &AgentEventMessage) {
         }
         AgentEvent::Retrying { attempt, reason } => {
             eprintln!("[{}] tentativa {attempt}: {reason}", task.id);
+        }
+        AgentEvent::SkillsDetected { names } if !names.is_empty() => {
+            eprintln!("[{}] skills: {}", task.id, names.join(", "));
         }
         AgentEvent::TaskFinished {
             status,
@@ -959,6 +970,10 @@ impl Printer {
                     AgentRole::Coder => "Coder",
                 };
                 eprintln!("role: {label} ({reason})");
+            }
+            AgentEvent::SkillLoaded { name, reason } => {
+                self.close_lines();
+                eprintln!("skill: {name} ({reason})");
             }
             AgentEvent::TaskFinished {
                 status,

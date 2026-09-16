@@ -13,6 +13,7 @@ use crate::agent::repo_map::{RepoMap, cached_profile_render, load_repo_map, stor
 use crate::agent::role::{AgentRole, TaskKind, classify_task, role_addendum, starting_role};
 use crate::agent::state::{CommandRecord, FileChange};
 use crate::ollama::ChatMessage;
+use crate::skills::{self, RouteInput, SelectedSkill, SkillSkip};
 use crate::workspace::Workspace;
 
 /// Share of `num_ctx` reserved for the model's reply (SPEC §16.2).
@@ -20,6 +21,7 @@ pub const RESPONSE_PERCENT: u64 = 20;
 const ROLE_PERCENT: u64 = 12;
 const RULES_PERCENT: u64 = 8;
 const MAP_PERCENT: u64 = 15;
+const SKILLS_PERCENT: u64 = 10;
 const TRIM_THRESHOLD_PERCENT: u64 = 75;
 const EXHAUSTED_PERCENT: u64 = 90;
 const KEEP_RECENT_TOOL_RESULTS: usize = 2;
@@ -42,6 +44,9 @@ pub struct AssembledPrompt {
     pub kind: TaskKind,
     pub cuts: Vec<BudgetCut>,
     pub map: RepoMap,
+    pub skills: Vec<SelectedSkill>,
+    pub skipped: Vec<SkillSkip>,
+    pub detected: Vec<String>,
 }
 
 /// Result of preparing the conversation before a model turn.
@@ -53,8 +58,8 @@ pub struct PrepareResult {
     pub cuts: Vec<BudgetCut>,
 }
 
-/// Builds the system prompt: role + profile + repo map + optional inherited report, each
-/// clipped to its section budget.
+/// Builds the system prompt: role + profile + skills + repo map + optional inherited report,
+/// each clipped to its section budget.
 pub fn assemble(
     workspace: &Workspace,
     data_dir: Option<&std::path::Path>,
@@ -62,21 +67,41 @@ pub fn assemble(
     num_ctx: u32,
     inherited: Option<&str>,
     role: AgentRole,
+    selected: Option<&[SelectedSkill]>,
 ) -> AssembledPrompt {
     let map = load_repo_map(workspace, data_dir, request);
     let kind = classify_task(request, map.indexed);
     let budgets = SectionBudgets::from_num_ctx(num_ctx);
 
-    let profile = match cached_profile_render(workspace, data_dir) {
+    let profile = workspace_profile(workspace);
+    let profile_text = match cached_profile_render(workspace, data_dir) {
         Some(text) => text,
         None => {
-            let rendered = workspace_profile(workspace).render();
+            let rendered = profile.render();
             if let Some(dir) = data_dir {
                 store_profile_render(workspace, dir, &rendered);
             }
             rendered
         }
     };
+
+    let paths: Vec<String> = map.files.iter().map(|file| file.path.clone()).collect();
+    let skill_decision = match selected {
+        Some(already) => skills::RouteDecision {
+            detected: already.iter().map(|item| item.name.clone()).collect(),
+            loaded: already.to_vec(),
+            skipped: Vec::new(),
+        },
+        None => skills::route_builtin(&RouteInput {
+            request,
+            kind,
+            languages: &profile.languages,
+            frameworks: &profile.frameworks,
+            paths: &paths,
+            budget_chars: budgets.skills_chars,
+        }),
+    };
+    let skills_body = skills::render(&skill_decision.loaded, budgets.skills_chars);
 
     let mut cuts = Vec::new();
     let role_text = cut_section(
@@ -85,7 +110,8 @@ pub fn assemble(
         budgets.role_chars,
         &mut cuts,
     );
-    let rules = cut_section("rules", &profile, budgets.rules_chars, &mut cuts);
+    let rules = cut_section("rules", &profile_text, budgets.rules_chars, &mut cuts);
+    let skills_text = cut_section("skills", &skills_body, budgets.skills_chars, &mut cuts);
     let (map_text, map_cut) = map.render(budgets.map_chars);
     if map_cut {
         cuts.push(BudgetCut {
@@ -104,6 +130,11 @@ pub fn assemble(
         system.push_str("\n\nWorkspace profile:\n");
         system.push_str(&rules);
     }
+    if !skills_text.is_empty() {
+        system.push_str("\nSkills:\n");
+        system.push_str(&skills_text);
+        system.push('\n');
+    }
     if !map_text.is_empty() {
         system.push_str("\nRepo map:\n");
         system.push_str(&map_text);
@@ -120,6 +151,9 @@ pub fn assemble(
         kind,
         cuts,
         map,
+        skills: skill_decision.loaded,
+        skipped: skill_decision.skipped,
+        detected: skill_decision.detected,
     }
 }
 
@@ -134,7 +168,7 @@ pub fn assemble_new(
     let probe = load_repo_map(workspace, data_dir, request);
     let kind = classify_task(request, probe.indexed);
     let role = starting_role(kind);
-    let mut assembled = assemble(workspace, data_dir, request, num_ctx, inherited, role);
+    let mut assembled = assemble(workspace, data_dir, request, num_ctx, inherited, role, None);
     assembled.kind = kind;
     assembled.role = role;
     assembled
@@ -194,6 +228,7 @@ struct SectionBudgets {
     role_chars: usize,
     rules_chars: usize,
     map_chars: usize,
+    skills_chars: usize,
     inherited_chars: usize,
 }
 
@@ -204,6 +239,7 @@ impl SectionBudgets {
             role_chars: chars(ROLE_PERCENT).max(64),
             rules_chars: chars(RULES_PERCENT).max(32),
             map_chars: chars(MAP_PERCENT).max(32),
+            skills_chars: chars(SKILLS_PERCENT).max(32),
             inherited_chars: chars(RULES_PERCENT).max(32),
         }
     }
@@ -551,6 +587,34 @@ mod tests {
         assert!(assembled.system.contains("src/soma.ts"));
         assert!(assembled.system.contains("soma"));
         assert!(assembled.system.contains("Workspace profile:"));
+        assert!(assembled.system.contains("Skills:"));
+        assert!(assembled.system.contains("### typescript"));
+        assert!(assembled.skills.iter().any(|s| s.name == "typescript"));
+    }
+
+    #[test]
+    fn eval_style_request_selects_testing_typescript_debugging() {
+        let (_dir, workspace) = project(&[
+            ("package.json", r#"{ "scripts": { "test": "bun test" } }"#),
+            (
+                "src/soma.ts",
+                "export function soma(a: number, b: number): number { return a - b; }\n",
+            ),
+        ]);
+        let assembled = assemble_new(
+            &workspace,
+            None,
+            "O teste de soma falha. Corrija e rode os testes.",
+            16_384,
+            None,
+        );
+        let names: Vec<&str> = assembled.skills.iter().map(|s| s.name.as_str()).collect();
+        assert!(names.contains(&"typescript"), "{names:?}");
+        assert!(names.contains(&"testing"), "{names:?}");
+        assert!(names.contains(&"debugging"), "{names:?}");
+        assert!(!names.contains(&"security"));
+        assert!(assembled.system.contains("### testing"));
+        assert!(assembled.system.contains("reproduce the failing test"));
     }
 
     #[test]

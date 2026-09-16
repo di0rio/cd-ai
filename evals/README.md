@@ -46,5 +46,5 @@ A suíte é propositalmente pequena. 20–50 tarefas é o alvo do SPEC §26, nã
 ## Relatório
 
 Cada JSON traz taxa de sucesso, e por tarefa: iterações, tokens, tempo, retries, falhas de
-formato de tool call, edições rejeitadas, turnos nativos vs. texto. A taxa oficial da baseline
-está em [`docs/audit/fase-6-baseline.md`](../docs/audit/fase-6-baseline.md).
+formato de tool call, edições rejeitadas, turnos nativos vs. texto, **skills selecionadas**
+(Fase 11). A taxa oficial da baseline está em [`docs/audit/fase-6-baseline.md`](../docs/audit/fase-6-baseline.md).

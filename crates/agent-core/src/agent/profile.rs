@@ -24,6 +24,8 @@ const SCRIPT_NAMES: [&str; 6] = ["test", "typecheck", "lint", "check", "build", 
 pub struct WorkspaceProfile {
     pub languages: Vec<String>,
     pub package_manager: Option<String>,
+    /// Frameworks inferred from manifests and config files (plan 021). Empty when unknown.
+    pub frameworks: Vec<String>,
     pub validation_commands: Vec<String>,
     pub rules_excerpt: Option<String>,
     pub root_entries: Vec<String>,
@@ -76,6 +78,7 @@ pub fn workspace_profile(workspace: &Workspace) -> WorkspaceProfile {
     WorkspaceProfile {
         languages,
         package_manager,
+        frameworks: detect_frameworks(workspace),
         validation_commands,
         rules_excerpt: read_root_file(workspace, "AGENTS.md", MAX_RULES_BYTES)
             .or_else(|| read_root_file(workspace, "CLAUDE.md", MAX_RULES_BYTES)),
@@ -121,6 +124,9 @@ impl WorkspaceProfile {
         let mut out = String::new();
         if !self.languages.is_empty() {
             out.push_str(&format!("Languages: {}\n", self.languages.join(", ")));
+        }
+        if !self.frameworks.is_empty() {
+            out.push_str(&format!("Frameworks: {}\n", self.frameworks.join(", ")));
         }
         if let Some(manager) = &self.package_manager {
             out.push_str(&format!("Package manager: {manager}\n"));
@@ -219,6 +225,82 @@ fn package_scripts(workspace: &Workspace) -> Vec<String> {
         .collect()
 }
 
+/// Frameworks the Skill Router can match (plan 021). Marker files first, then package.json.
+fn detect_frameworks(workspace: &Workspace) -> Vec<String> {
+    let mut found = Vec::new();
+    let mut add = |name: &str| {
+        if !found.iter().any(|existing| existing == name) {
+            found.push(name.to_string());
+        }
+    };
+
+    const NEXT_CONFIGS: [&str; 4] = [
+        "next.config.ts",
+        "next.config.js",
+        "next.config.mjs",
+        "next.config.cjs",
+    ];
+    if NEXT_CONFIGS
+        .iter()
+        .any(|name| has_root_file(workspace, name))
+    {
+        add("nextjs");
+        add("react");
+    }
+
+    const TAILWIND_CONFIGS: [&str; 4] = [
+        "tailwind.config.ts",
+        "tailwind.config.js",
+        "tailwind.config.cjs",
+        "tailwind.config.mjs",
+    ];
+    if TAILWIND_CONFIGS
+        .iter()
+        .any(|name| has_root_file(workspace, name))
+    {
+        add("tailwind");
+    }
+
+    if let Some(text) = read_root_file(workspace, "package.json", MAX_MANIFEST_BYTES)
+        && let Ok(manifest) = serde_json::from_str::<serde_json::Value>(&text)
+    {
+        let mut keys: Vec<&str> = Vec::new();
+        for field in ["dependencies", "devDependencies", "peerDependencies"] {
+            if let Some(map) = manifest.get(field).and_then(|value| value.as_object()) {
+                keys.extend(map.keys().map(|key| key.as_str()));
+            }
+        }
+        if keys
+            .iter()
+            .any(|key| *key == "react" || *key == "react-dom")
+        {
+            add("react");
+        }
+        if keys.contains(&"next") {
+            add("nextjs");
+            add("react");
+        }
+        if keys.contains(&"tailwindcss") {
+            add("tailwind");
+        }
+        if let Some(scripts) = manifest.get("scripts").and_then(|value| value.as_object()) {
+            let uses_next = scripts
+                .values()
+                .filter_map(|value| value.as_str())
+                .any(|body| {
+                    let first = body.split_whitespace().next().unwrap_or("");
+                    first == "next" || first.ends_with("/next")
+                });
+            if uses_next {
+                add("nextjs");
+                add("react");
+            }
+        }
+    }
+
+    found
+}
+
 /// Sorted root names, directories marked with `/` like `list_directory` shows them.
 fn root_entries(workspace: &Workspace) -> Vec<String> {
     let Ok(entries) = fs::read_dir(workspace.root()) else {
@@ -283,6 +365,10 @@ mod tests {
         let profile = workspace_profile(&ws);
         assert_eq!(profile.languages, vec!["Rust", "JS/TS"]);
         assert_eq!(profile.package_manager.as_deref(), Some("bun"));
+        assert_eq!(
+            profile.frameworks,
+            vec!["nextjs".to_string(), "react".to_string()]
+        );
         assert_eq!(
             profile.validation_commands,
             vec![
@@ -380,6 +466,24 @@ mod tests {
         let profile = workspace_profile(&ws);
         assert_eq!(profile.languages, vec!["TS", "Python", "Go"]);
         assert!(profile.validation_commands.is_empty());
+        assert!(profile.frameworks.is_empty());
+    }
+
+    #[test]
+    fn detects_react_next_and_tailwind_from_manifests() {
+        let (_dir, ws) = workspace(&[
+            (
+                "package.json",
+                r#"{ "dependencies": { "react": "19", "next": "15" }, "devDependencies": { "tailwindcss": "4" } }"#,
+            ),
+            ("next.config.ts", "export default {};\n"),
+            ("tailwind.config.ts", "export default {};\n"),
+        ]);
+        let profile = workspace_profile(&ws);
+        assert!(profile.frameworks.contains(&"react".to_string()));
+        assert!(profile.frameworks.contains(&"nextjs".to_string()));
+        assert!(profile.frameworks.contains(&"tailwind".to_string()));
+        assert!(profile.render().contains("Frameworks:"));
     }
 
     #[test]
