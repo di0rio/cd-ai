@@ -11,3 +11,4 @@ src-tauri/gen/schemas/
 evals/results/*
 !evals/results/.gitkeep
 !evals/results/*-baseline.json
+dist/

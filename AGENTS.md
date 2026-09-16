@@ -12,6 +12,7 @@ Coding agent desktop local: Tauri 2 + Next.js (static export) + core em Rust + O
 - App em desenvolvimento: `bun run dev` (Tauri + Next na porta 1420)
 - Só a UI no navegador: `bun run --cwd apps/desktop dev`, depois abrir `http://localhost:1420/?demo` para ver os dados de demonstração
 - Binário release, sem instalador: `bun tauri build --no-bundle`
+- Pacotes Linux x86_64 (`.deb` + AppImage + CLI): `bun scripts/build-linux-release.ts` (saída em `dist/linux/`)
 - CLI: `cargo run -q -p cd-ai-cli -- --version`
 - Tarefa pela CLI (com o Ollama rodando): `cargo run -q -p cd-ai-cli -- task --model <modelo> [--workspace <pasta>] [--mode ask|auto|full-access] "<pedido>"` (as aprovações são pedidas no terminal; retome com `--resume <id>`)
 - Histórico do workspace: `cargo run -q -p cd-ai-cli -- history [--workspace <pasta>]`
@@ -27,7 +28,8 @@ Coding agent desktop local: Tauri 2 + Next.js (static export) + core em Rust + O
 - `src-tauri/`: só o adaptador desktop. Commands do Tauri que chamam o `agent-core`.
 - `apps/cli/`: binário `cd-ai`, que usa o mesmo core.
 - `apps/desktop/`: UI em Next.js com static export. Só apresentação.
-- `scripts/`: ferramentas de desenvolvimento.
+- `scripts/`: ferramentas de desenvolvimento (benchmark, metadados de release, bundle Linux).
+- `docs/release.md`: instalação `.deb`/AppImage e prova de eval numa máquina limpa.
 
 ## Regras
 

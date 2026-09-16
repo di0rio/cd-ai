@@ -14,7 +14,7 @@ check automático, não esse status.
 
 ## Como rodar
 
-Na raiz do repositório, com o binário da CLI:
+Na raiz do repositório, com o binário da CLI (desenvolvimento):
 
 ```bash
 # Dry-run determinístico (sem Ollama). Usa o campo `script` de cada tarefa.
@@ -28,7 +28,11 @@ cargo run -q -p cd-ai-cli -- eval --model qwen3-coder:30b
 ```
 
 `--suite` aponta para a pasta `evals/` (padrão: `evals` no cwd). `--out` escolhe o JSON;
-o padrão é `evals/results/<data>-<modelo>.json`.
+o padrão é `evals/results/<data>-<modelo>.json`. Com o app instalado pelo `.deb` (Fase 14):
+
+```bash
+cd-ai eval --scripted --suite /usr/share/cd-ai/evals --out /tmp/cd-ai-eval.json
+```
 
 O eval **aprova sozinho** as edições e os comandos, porque trabalha numa cópia descartável da
 fixture. `cd-ai task` continua pedindo aprovação no terminal — não existe `--yes` lá.
@@ -52,3 +56,4 @@ formato de tool call, edições rejeitadas, turnos nativos vs. texto, **skills s
 A taxa oficial da baseline está em [`docs/audit/fase-6-baseline.md`](../docs/audit/fase-6-baseline.md).
 A prova de latência trivial da Fase 12 está em [`docs/audit/fase-12-router.md`](../docs/audit/fase-12-router.md).
 A prova de otimização da Fase 13 está em [`docs/audit/fase-13-otimizacao.md`](../docs/audit/fase-13-otimizacao.md).
+A prova de empacotamento da Fase 14 está em [`docs/audit/fase-14-release.md`](../docs/audit/fase-14-release.md).
