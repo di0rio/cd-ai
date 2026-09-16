@@ -9,4 +9,12 @@ model: string | null,
 /**
  * ASK / AUTO / FULL ACCESS (SPEC §20.4). Default ASK.
  */
-permissionMode: PermissionMode, };
+permissionMode: PermissionMode, 
+/**
+ * Optional FAST / CODER / REASONER names (plan 022). Empty = use `model`.
+ */
+fast: string | null, coder: string | null, reasoner: string | null, 
+/**
+ * Opt-in local trajectories (SPEC §25). Off by default.
+ */
+trajectories: boolean, };

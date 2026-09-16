@@ -21,6 +21,7 @@
     "allow-task-events",
     "allow-get-settings",
     "allow-set-preferred-model",
+    "allow-set-router-settings",
     "allow-sandbox-status",
     "allow-set-permission-mode"
   ]

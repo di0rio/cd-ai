@@ -97,6 +97,14 @@ Escrita em 2026-09-16 sobre o `main` com as Fases 0–10 fechadas (PR #10).
 |------|--------|-----------|---------|------------|--------|
 | 021 | Fase 11 — Skills (registry, licenças, condensadas, Skill Router, deps/conflitos) | P1 | M | 020 | DONE |
 
+### Geração 10
+
+Escrita em 2026-09-16 sobre o `main` com as Fases 0–11 fechadas (PR #11).
+
+| Plano | Título | Prioridade | Esforço | Depende de | Status |
+|------|--------|-----------|---------|------------|--------|
+| 022 | Fase 12 — Model Router, memória e trajetórias (FAST/CODER/REASONER, memória estruturada, JSONL opt-in) | P1 | L | 021 | DONE |
+
 Valores de status: TODO | IN PROGRESS | DONE | BLOCKED (com motivo de uma linha) | REJECTED (com justificativa de uma linha).
 
 ## Notas de dependência
@@ -150,6 +158,10 @@ Valores de status: TODO | IN PROGRESS | DONE | BLOCKED (com motivo de uma linha)
 ### Geração 9
 
 - **021 depois do 020.** Skills são conhecimento no prompt, não tools. Licença é gate do registry. O router é puro. A suíte de eval não cresce — a evidência da fase é 3/3 + `selectedSkills` + testes de condensação/deps.
+
+### Geração 10
+
+- **022 depois do 021.** O router é puro e vive no Rust. FAST não edita se houver CODER distinto. Trajetórias nascem desligadas. A suíte de eval não cresce — a evidência é 3/3 + testes de rota/custo + JSON com categoria.
 
 ## Achados considerados e descartados
 

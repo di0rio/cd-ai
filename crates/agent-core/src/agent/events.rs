@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::agent::role::AgentRole;
+use crate::agent::router::ModelCategory;
 use crate::agent::state::{
     CheckpointKind, RollbackSkip, StopReason, TaskReport, TaskStatus, TaskSummary,
 };
@@ -106,6 +107,17 @@ pub enum AgentEvent {
     SkillSkipped {
         name: String,
         reason: String,
+    },
+    /// Why this model was chosen (plan 022 / SPEC §10 / §28).
+    ModelRouted {
+        category: ModelCategory,
+        model: String,
+        num_ctx: u32,
+        reason: String,
+    },
+    /// Memory entries that entered the prompt (plan 022 / SPEC §24.2).
+    MemoryLoaded {
+        ids: Vec<String>,
     },
     Retrying {
         attempt: u32,

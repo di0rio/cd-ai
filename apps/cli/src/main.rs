@@ -8,8 +8,10 @@ use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
 use agent_core::agent::{
-    AgentEvent, AgentEventMessage, AgentLimits, AgentRole, OllamaModel, StopReason, TaskContext,
-    TaskReport, TaskStart, TaskState, TaskStatus, TaskStore, run_task, workspace_key,
+    AgentEvent, AgentEventMessage, AgentLimits, AgentRole, MemoryKind, MemoryStore,
+    ModelAssignment, ModelInventory, OllamaModel, SettingsStore, StopReason, TaskContext,
+    TaskReport, TaskStart, TaskState, TaskStatus, TaskStore, mem_available_bytes, run_task,
+    workspace_key,
 };
 use agent_core::eval::{EvalDriver, EvalOptions, EvalTask, default_report_path, run_suite};
 use agent_core::ollama::{ChatEvent, ChatMessage, ChatRequest, OllamaClient};
@@ -23,10 +25,14 @@ use agent_core::{RollbackResult, rollback_task};
 
 const USAGE: &str = "uso: cd-ai [--version | --help]
      cd-ai chat --model <nome> [--ctx <n>] <prompt>
-     cd-ai task --model <nome> [--ctx <n>] [--workspace <pasta>] [--max-iterations <n>] [--mode ask|auto|full-access] [--continue] <pedido…>
-     cd-ai task --resume <id> --model <nome> [--ctx <n>] [--workspace <pasta>] [--mode ask|auto|full-access]
+     cd-ai task --model <nome> [--ctx <n>] [--workspace <pasta>] [--max-iterations <n>] [--mode ask|auto|full-access] [--continue] [--trajectories] <pedido…>
+     cd-ai task --resume <id> --model <nome> [--ctx <n>] [--workspace <pasta>] [--mode ask|auto|full-access] [--trajectories]
      cd-ai history [--workspace <pasta>]
      cd-ai rollback <id> [--workspace <pasta>] [--force]
+     cd-ai memory list [--workspace <pasta>]
+     cd-ai memory add --kind <rule|architecture|preference|constraint|learned> [--workspace <pasta>] <texto…>
+     cd-ai memory forget <id> [--workspace <pasta>]
+     cd-ai memory stale <id> [--workspace <pasta>]
      cd-ai eval --model <nome> [--suite <pasta>] [--task <id>] [--out <arquivo>] [--ctx <n>]
      cd-ai eval --scripted [--suite <pasta>] [--task <id>] [--out <arquivo>] [--ctx <n>]
 
@@ -34,9 +40,11 @@ const USAGE: &str = "uso: cd-ai [--version | --help]
 arquivos alterados, comandos e resumo), nunca a conversa inteira.
 --mode: ASK (padrão) pergunta; AUTO edita sozinho e, com sandbox, escreve sozinho; FULL ACCESS
 exige sandbox Linux completo. Rede, destrutivo e secrets sempre pedem aprovação.
+--trajectories: grava JSONL local da tarefa (desligado por padrão; também em settings.json).
 history: lista as tarefas do workspace, mais recentes primeiro.
 rollback: reverte só o que o agente escreveu; mudanças do usuário no mesmo arquivo são
 protegidas, a menos que --force. Não toca no git do projeto.
+memory: regras e fatos do workspace, locais, editáveis; só os relevantes entram no prompt.
 eval: corre a suíte em evals/ sobre cópias descartáveis e aprova sozinho. --scripted não fala com
 o Ollama.";
 
@@ -64,6 +72,7 @@ async fn main() -> ExitCode {
         Some("task") => task(args).await,
         Some("history") => history(args),
         Some("rollback") => rollback(args),
+        Some("memory") => memory_cmd(args),
         Some("eval") => eval_cmd(args).await,
         Some(other) => {
             eprintln!("argumento desconhecido: {other}\n{USAGE}");
@@ -203,6 +212,7 @@ struct TaskArgs {
     /// Whether this task continues the most recent one of the workspace.
     cont: bool,
     permission_mode: PermissionMode,
+    trajectories: bool,
     request: String,
 }
 
@@ -214,6 +224,7 @@ fn parse_task_args(args: impl Iterator<Item = String>) -> Result<TaskArgs, ExitC
     let mut resume = None;
     let mut cont = false;
     let mut permission_mode = PermissionMode::Ask;
+    let mut trajectories = false;
     let mut request = Vec::new();
     let mut args = args;
 
@@ -242,6 +253,7 @@ fn parse_task_args(args: impl Iterator<Item = String>) -> Result<TaskArgs, ExitC
                 resume = Some(value);
             }
             "--continue" => cont = true,
+            "--trajectories" => trajectories = true,
             "--mode" => {
                 let Some(value) = flag_value(&mut args, "--mode", "ask, auto ou full-access")
                 else {
@@ -296,6 +308,7 @@ fn parse_task_args(args: impl Iterator<Item = String>) -> Result<TaskArgs, ExitC
         resume,
         cont,
         permission_mode,
+        trajectories,
         request,
     })
 }
@@ -444,7 +457,7 @@ async fn eval_cmd(args: impl Iterator<Item = String>) -> ExitCode {
             for row in &report.tasks {
                 let mark = if row.success { "ok" } else { "falhou" };
                 eprintln!(
-                    "  {:<12} {mark}  {} iterações  ~{} tok  {} ms{}",
+                    "  {:<12} {mark}  {} iterações  ~{} tok  {} ms{}{}",
                     row.id,
                     row.iterations,
                     row.estimated_prompt_tokens,
@@ -453,6 +466,11 @@ async fn eval_cmd(args: impl Iterator<Item = String>) -> ExitCode {
                         String::new()
                     } else {
                         format!("  [{}]", row.selected_skills.join(", "))
+                    },
+                    if row.model_category.is_empty() {
+                        String::new()
+                    } else {
+                        format!("  {}/{}", row.model_category, row.routed_num_ctx)
                     }
                 );
             }
@@ -662,6 +680,138 @@ fn history(args: impl Iterator<Item = String>) -> ExitCode {
     ExitCode::SUCCESS
 }
 
+fn memory_cmd(args: impl Iterator<Item = String>) -> ExitCode {
+    let mut args = args;
+    let Some(action) = args.next() else {
+        eprintln!("faltou o subcomando de memory (list, add, forget, stale)\n{USAGE}");
+        return ExitCode::from(2);
+    };
+    let mut workspace = ".".to_string();
+    let mut kind_slug = None;
+    let mut rest = Vec::new();
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--workspace" => {
+                let Some(value) = flag_value(&mut args, "--workspace", "uma pasta") else {
+                    return ExitCode::from(2);
+                };
+                workspace = value;
+            }
+            "--kind" => {
+                let Some(value) = flag_value(&mut args, "--kind", "o tipo") else {
+                    return ExitCode::from(2);
+                };
+                kind_slug = Some(value);
+            }
+            "--" => {
+                rest.extend(args);
+                break;
+            }
+            other if other.starts_with('-') => {
+                eprintln!("flag desconhecida: {other}\n{USAGE}");
+                return ExitCode::from(2);
+            }
+            other => rest.push(other.to_string()),
+        }
+    }
+    let (_store, workspace) = match open_store_and_workspace(&workspace) {
+        Ok(pair) => pair,
+        Err(code) => return code,
+    };
+    let data_dir = match TaskStore::open_default() {
+        Ok(store) => store.data_dir().to_path_buf(),
+        Err(error) => {
+            eprintln!("{error}");
+            return ExitCode::from(1);
+        }
+    };
+    let memory = match MemoryStore::open(&data_dir, &workspace) {
+        Ok(store) => store,
+        Err(error) => {
+            eprintln!("{error}");
+            return ExitCode::from(1);
+        }
+    };
+    match action.as_str() {
+        "list" => {
+            if !rest.is_empty() {
+                eprintln!("memory list não aceita argumentos posicionais\n{USAGE}");
+                return ExitCode::from(2);
+            }
+            let entries = memory.load();
+            if entries.is_empty() {
+                println!("nenhuma memória neste workspace");
+                return ExitCode::SUCCESS;
+            }
+            for entry in entries {
+                let stale = if entry.stale { " [stale]" } else { "" };
+                println!(
+                    "{}  {}{stale}\n  {}",
+                    entry.id,
+                    entry.kind.as_str(),
+                    entry.text
+                );
+            }
+            ExitCode::SUCCESS
+        }
+        "add" => {
+            let Some(kind_slug) = kind_slug else {
+                eprintln!("faltou --kind\n{USAGE}");
+                return ExitCode::from(2);
+            };
+            let Some(kind) = MemoryKind::parse_slug(&kind_slug) else {
+                eprintln!("--kind deve ser rule, architecture, preference, constraint ou learned");
+                return ExitCode::from(2);
+            };
+            let text = rest.join(" ").trim().to_string();
+            if text.is_empty() {
+                eprintln!("faltou o texto da memória\n{USAGE}");
+                return ExitCode::from(2);
+            }
+            match memory.add(kind, text) {
+                Ok(entry) => {
+                    println!("{}  {}", entry.id, entry.kind.as_str());
+                    ExitCode::SUCCESS
+                }
+                Err(error) => {
+                    eprintln!("{error}");
+                    ExitCode::from(1)
+                }
+            }
+        }
+        "forget" | "stale" => {
+            let Some(id) = rest.first().cloned() else {
+                eprintln!("faltou o id da memória\n{USAGE}");
+                return ExitCode::from(2);
+            };
+            if rest.len() != 1 {
+                eprintln!("memory {action} aceita um único id\n{USAGE}");
+                return ExitCode::from(2);
+            }
+            let result = if action == "forget" {
+                memory.forget(&id)
+            } else {
+                memory.set_stale(&id, true)
+            };
+            match result {
+                Ok(true) => ExitCode::SUCCESS,
+                Ok(false) => {
+                    eprintln!("memória não encontrada: {id}");
+                    ExitCode::from(1)
+                }
+                Err(error) => {
+                    eprintln!("{error}");
+                    ExitCode::from(1)
+                }
+            }
+        }
+        other => {
+            eprintln!("subcomando desconhecido: memory {other}\n{USAGE}");
+            ExitCode::from(2)
+        }
+    }
+}
+
 fn rollback(args: impl Iterator<Item = String>) -> ExitCode {
     let mut workspace = ".".to_string();
     let mut force = false;
@@ -805,12 +955,25 @@ async fn task(args: impl Iterator<Item = String>) -> ExitCode {
     let model_name = args.model.clone();
     let num_ctx = args.num_ctx;
     let permission_mode = args.permission_mode;
+    let trajectories_flag = args.trajectories;
 
     let mut join = tokio::task::spawn_blocking(move || {
         let mut ctx = TaskContext::new(&store, workspace);
         ctx.limits = limits;
         ctx.cancel = task_cancel;
         ctx.permission_mode = permission_mode;
+        let settings = SettingsStore::open(store.data_dir())
+            .map(|settings| settings.load())
+            .unwrap_or_default();
+        ctx.assignment = ModelAssignment {
+            fast: settings.fast.clone(),
+            coder: settings.coder.clone(),
+            reasoner: settings.reasoner.clone(),
+        };
+        ctx.trajectories = trajectories_flag || settings.trajectories;
+        let status = handle.block_on(client.status());
+        ctx.inventory =
+            ModelInventory::from_ollama(&status.models, &status.loaded, mem_available_bytes());
         let mut model = OllamaModel::new(client, handle, model_name, num_ctx, turn_timeout);
 
         let printer = Rc::new(RefCell::new(Printer::default()));
@@ -974,6 +1137,22 @@ impl Printer {
             AgentEvent::SkillLoaded { name, reason } => {
                 self.close_lines();
                 eprintln!("skill: {name} ({reason})");
+            }
+            AgentEvent::ModelRouted {
+                category,
+                model,
+                num_ctx,
+                reason,
+            } => {
+                self.close_lines();
+                eprintln!(
+                    "modelo: {model} ({}) · janela {num_ctx} · {reason}",
+                    category.as_str()
+                );
+            }
+            AgentEvent::MemoryLoaded { ids } => {
+                self.close_lines();
+                eprintln!("memória: {}", ids.join(", "));
             }
             AgentEvent::TaskFinished {
                 status,
@@ -1210,6 +1389,10 @@ mod tests {
         assert_eq!(parsed.workspace, ".");
         assert!(parsed.resume.is_none());
         assert_eq!(parsed.permission_mode, PermissionMode::Ask);
+
+        let args = ["--model", "qwen3", "--trajectories", "arrume", "a", "soma"].map(String::from);
+        let parsed = parse_task_args(args.into_iter()).expect("argumentos válidos");
+        assert!(parsed.trajectories);
 
         let args = ["--model", "qwen3"].map(String::from);
         assert!(parse_task_args(args.into_iter()).is_err());

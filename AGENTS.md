@@ -16,6 +16,8 @@ Coding agent desktop local: Tauri 2 + Next.js (static export) + core em Rust + O
 - Tarefa pela CLI (com o Ollama rodando): `cargo run -q -p cd-ai-cli -- task --model <modelo> [--workspace <pasta>] [--mode ask|auto|full-access] "<pedido>"` (as aprovações são pedidas no terminal; retome com `--resume <id>`)
 - Histórico do workspace: `cargo run -q -p cd-ai-cli -- history [--workspace <pasta>]`
 - Rollback de uma tarefa: `cargo run -q -p cd-ai-cli -- rollback <id> [--workspace <pasta>] [--force]` (só o que o agente escreveu; `--force` sobrescreve conflitos do usuário)
+- Memória do workspace: `cargo run -q -p cd-ai-cli -- memory list|add|forget|stale [--workspace <pasta>]` (`add` pede `--kind rule|architecture|preference|constraint|learned`)
+- Tarefa com trajetória opt-in: acrescente `--trajectories` em `task` (JSONL local, desligado por padrão)
 - Eval da suíte (headless; `--scripted` não precisa do Ollama): `cargo run -q -p cd-ai-cli -- eval --scripted` ou `cargo run -q -p cd-ai-cli -- eval --model <modelo>`
 - Benchmark de modelos (com o Ollama rodando): `bun scripts/bench-models.ts <modelo> [modelo...]`
 

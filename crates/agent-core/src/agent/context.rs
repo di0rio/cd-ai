@@ -4,6 +4,7 @@
 //! Token estimates stay `chars / 4` (plan 015 D10). Cuts are explicit: a marker in the text
 //! and an event from the loop. The current user request is never trimmed.
 
+use crate::agent::memory::{self, MemoryStore};
 use crate::agent::profile::workspace_profile;
 use crate::agent::prompt::{
     OMITTED_RESULT, UNTRUSTED_TOOL_BEGIN, UNTRUSTED_TOOL_END, estimate_tokens, system_prompt,
@@ -22,6 +23,7 @@ const ROLE_PERCENT: u64 = 12;
 const RULES_PERCENT: u64 = 8;
 const MAP_PERCENT: u64 = 15;
 const SKILLS_PERCENT: u64 = 10;
+const MEMORY_PERCENT: u64 = 5;
 const TRIM_THRESHOLD_PERCENT: u64 = 75;
 const EXHAUSTED_PERCENT: u64 = 90;
 const KEEP_RECENT_TOOL_RESULTS: usize = 2;
@@ -47,6 +49,7 @@ pub struct AssembledPrompt {
     pub skills: Vec<SelectedSkill>,
     pub skipped: Vec<SkillSkip>,
     pub detected: Vec<String>,
+    pub memory_ids: Vec<String>,
 }
 
 /// Result of preparing the conversation before a model turn.
@@ -103,6 +106,14 @@ pub fn assemble(
     };
     let skills_body = skills::render(&skill_decision.loaded, budgets.skills_chars);
 
+    let memory_entries = data_dir
+        .and_then(|dir| MemoryStore::open(dir, workspace).ok())
+        .map(|store| store.load())
+        .unwrap_or_default();
+    let relevant = memory::select_relevant(&memory_entries, request, budgets.memory_chars);
+    let memory_ids: Vec<String> = relevant.iter().map(|entry| entry.id.clone()).collect();
+    let memory_body = memory::render(&relevant);
+
     let mut cuts = Vec::new();
     let role_text = cut_section(
         "role",
@@ -112,6 +123,7 @@ pub fn assemble(
     );
     let rules = cut_section("rules", &profile_text, budgets.rules_chars, &mut cuts);
     let skills_text = cut_section("skills", &skills_body, budgets.skills_chars, &mut cuts);
+    let memory_text = cut_section("memory", &memory_body, budgets.memory_chars, &mut cuts);
     let (map_text, map_cut) = map.render(budgets.map_chars);
     if map_cut {
         cuts.push(BudgetCut {
@@ -135,6 +147,11 @@ pub fn assemble(
         system.push_str(&skills_text);
         system.push('\n');
     }
+    if !memory_text.is_empty() {
+        system.push('\n');
+        system.push_str(&memory_text);
+        system.push('\n');
+    }
     if !map_text.is_empty() {
         system.push_str("\nRepo map:\n");
         system.push_str(&map_text);
@@ -154,6 +171,7 @@ pub fn assemble(
         skills: skill_decision.loaded,
         skipped: skill_decision.skipped,
         detected: skill_decision.detected,
+        memory_ids,
     }
 }
 
@@ -229,6 +247,7 @@ struct SectionBudgets {
     rules_chars: usize,
     map_chars: usize,
     skills_chars: usize,
+    memory_chars: usize,
     inherited_chars: usize,
 }
 
@@ -240,6 +259,7 @@ impl SectionBudgets {
             rules_chars: chars(RULES_PERCENT).max(32),
             map_chars: chars(MAP_PERCENT).max(32),
             skills_chars: chars(SKILLS_PERCENT).max(32),
+            memory_chars: chars(MEMORY_PERCENT).max(32),
             inherited_chars: chars(RULES_PERCENT).max(32),
         }
     }
@@ -723,5 +743,45 @@ mod tests {
                 .any(|m| m.content.contains("[context compacted]"))
         );
         assert!(estimate_tokens(&messages) < before);
+    }
+
+    #[test]
+    fn assemble_injects_relevant_memory_and_skips_stale() {
+        use crate::agent::memory::MemoryKind;
+        let dir = tempdir().unwrap();
+        let project = dir.path().join("proj");
+        fs::create_dir_all(project.join("src")).unwrap();
+        fs::write(
+            project.join("src/soma.ts"),
+            "export function soma(a: number, b: number): number { return a - b; }\n",
+        )
+        .unwrap();
+        let workspace = Workspace::open(&project).unwrap();
+        let data = dir.path().join("data");
+        fs::create_dir_all(&data).unwrap();
+        let store = MemoryStore::open(&data, &workspace).unwrap();
+        store
+            .add(MemoryKind::Rule, "testes deste projeto usam bun")
+            .unwrap();
+        let stale = store
+            .add(MemoryKind::Learned, "o staging cai sexta")
+            .unwrap();
+        store.set_stale(&stale.id, true).unwrap();
+
+        let assembled = assemble_new(
+            &workspace,
+            Some(&data),
+            "corrija a soma e rode os testes",
+            16_384,
+            None,
+        );
+        assert!(assembled.system.contains("Memory:"));
+        assert!(
+            assembled
+                .system
+                .contains("[rule] testes deste projeto usam bun")
+        );
+        assert!(!assembled.system.contains("staging"));
+        assert_eq!(assembled.memory_ids, vec!["mem_1".to_string()]);
     }
 }
