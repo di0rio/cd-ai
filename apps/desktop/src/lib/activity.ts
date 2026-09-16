@@ -105,7 +105,8 @@ export function applyAgentEvent(task: Task, message: AgentEventMessage): Task {
       return message.data.tool === "search" ? withPhase(task, "explore") : task;
 
     // taskStarted, modelTurnStarted, thinking, toolCallFinished, contextTrimmed,
-    // contextBudgetCut, contextCompacted, roleChanged and retrying carry no row of their own.
+    // contextBudgetCut, contextCompacted, roleChanged, skillsDetected, skillLoaded,
+    // skillSkipped and retrying carry no row of their own.
     default:
       return task;
   }
