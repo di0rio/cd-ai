@@ -289,6 +289,21 @@ fn help_mentions_history_and_rollback() {
 }
 
 #[test]
+fn help_mentions_memory_and_trajectories() {
+    let text = stdout(&run_cli(&["--help"]));
+    assert!(text.contains("cd-ai memory"), "{text}");
+    assert!(text.contains("memory list"), "{text}");
+    assert!(text.contains("--trajectories"), "{text}");
+}
+
+#[test]
+fn memory_without_subcommand_exits_2() {
+    let output = run_cli(&["memory"]);
+    assert_eq!(output.status.code(), Some(2));
+    assert!(stderr(&output).contains("faltou o subcomando de memory"));
+}
+
+#[test]
 fn history_unknown_flag_exits_2() {
     let output = run_cli(&["history", "--bogus"]);
     assert_eq!(output.status.code(), Some(2));

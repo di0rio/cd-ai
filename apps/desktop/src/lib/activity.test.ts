@@ -591,6 +591,11 @@ describe("applyAgentEvent", () => {
       { event: "skillsDetected", data: { names: ["typescript"] } },
       { event: "skillLoaded", data: { name: "typescript", reason: "language:ts" } },
       { event: "skillSkipped", data: { name: "security", reason: "score 0" } },
+      {
+        event: "modelRouted",
+        data: { category: "coder", model: "qwen3-coder:30b", numCtx: 8192, reason: "tarefa trivial" },
+      },
+      { event: "memoryLoaded", data: { ids: ["mem_1"] } },
       { event: "retrying", data: { attempt: 2, reason: "timeout" } },
       { event: "checkpointCreated", data: { commit: "abc123", kind: "baseline" } },
     ] as AgentEventBody[]) {

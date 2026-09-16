@@ -213,6 +213,15 @@ pub struct TaskState {
     /// Skills the router loaded (plan 021). Absent from older states → none.
     #[serde(default)]
     pub selected_skills: Vec<crate::skills::SelectedSkill>,
+    /// Category the Model Router picked (plan 022). Absent from older states → Coder.
+    #[serde(default)]
+    pub model_category: crate::agent::router::ModelCategory,
+    /// Human-readable routing reason (SPEC §28). Absent from older states → empty.
+    #[serde(default)]
+    pub route_reason: String,
+    /// Quality failures of the Coder in this task (plan 022 D6).
+    #[serde(default)]
+    pub coder_failures: u32,
     /// Redacted before reaching disk (D8).
     pub errors: Vec<String>,
     pub retries: u32,
@@ -248,6 +257,9 @@ impl TaskState {
             role: crate::agent::role::AgentRole::Coder,
             task_kind: crate::agent::role::TaskKind::Normal,
             selected_skills: Vec::new(),
+            model_category: crate::agent::router::ModelCategory::Coder,
+            route_reason: String::new(),
+            coder_failures: 0,
             errors: Vec::new(),
             retries: 0,
             metrics: TaskMetrics::default(),
@@ -440,6 +452,12 @@ mod tests {
         assert!(state.checkpoints.is_empty());
         assert!(!state.rolled_back);
         assert!(state.selected_skills.is_empty());
+        assert_eq!(
+            state.model_category,
+            crate::agent::router::ModelCategory::Coder
+        );
+        assert!(state.route_reason.is_empty());
+        assert_eq!(state.coder_failures, 0);
     }
 
     #[test]

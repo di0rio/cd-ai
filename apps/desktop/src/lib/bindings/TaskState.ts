@@ -3,6 +3,7 @@ import type { AgentRole } from "./AgentRole";
 import type { Checkpoint } from "./Checkpoint";
 import type { CommandRecord } from "./CommandRecord";
 import type { FileChange } from "./FileChange";
+import type { ModelCategory } from "./ModelCategory";
 import type { SelectedSkill } from "./SelectedSkill";
 import type { StopReason } from "./StopReason";
 import type { TaskKind } from "./TaskKind";
@@ -44,6 +45,18 @@ taskKind: TaskKind,
  * Skills the router loaded (plan 021). Absent from older states → none.
  */
 selectedSkills: Array<SelectedSkill>, 
+/**
+ * Category the Model Router picked (plan 022). Absent from older states → Coder.
+ */
+modelCategory: ModelCategory, 
+/**
+ * Human-readable routing reason (SPEC §28). Absent from older states → empty.
+ */
+routeReason: string, 
+/**
+ * Quality failures of the Coder in this task (plan 022 D6).
+ */
+coderFailures: number, 
 /**
  * Redacted before reaching disk (D8).
  */
