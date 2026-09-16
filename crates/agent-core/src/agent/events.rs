@@ -76,6 +76,16 @@ pub enum AgentEvent {
         #[ts(type = "number")]
         estimated_tokens: u64,
     },
+    /// Context Manager finished assembling the system prompt (plan 020).
+    ContextReady {
+        role: String,
+        classification: String,
+        repo_map_files: u32,
+        cache_hit: bool,
+        #[ts(type = "number")]
+        estimated_tokens: u64,
+        cuts: Vec<String>,
+    },
     Retrying {
         attempt: u32,
         reason: String,

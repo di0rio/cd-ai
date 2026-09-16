@@ -444,8 +444,8 @@ async fn eval_cmd(args: impl Iterator<Item = String>) -> ExitCode {
             for row in &report.tasks {
                 let mark = if row.success { "ok" } else { "falhou" };
                 eprintln!(
-                    "  {:<12} {mark}  {} iterações  {} ms",
-                    row.id, row.iterations, row.duration_ms
+                    "  {:<12} {mark}  {} iterações  {} ms  ~{} tok",
+                    row.id, row.iterations, row.duration_ms, row.estimated_tokens
                 );
             }
             let scored = report.passed + report.failed;
@@ -945,6 +945,20 @@ impl Printer {
             } => {
                 self.close_lines();
                 eprintln!("contexto cortado: {removed_messages} resultado(s) antigo(s) omitido(s)");
+            }
+            AgentEvent::ContextReady {
+                role,
+                classification,
+                repo_map_files,
+                cache_hit,
+                estimated_tokens,
+                ..
+            } => {
+                self.close_lines();
+                let cache = if *cache_hit { "hit" } else { "miss" };
+                eprintln!(
+                    "contexto: {role}/{classification}  mapa {repo_map_files} arquivo(s)  cache={cache}  ~{estimated_tokens} tok"
+                );
             }
             AgentEvent::TaskFinished {
                 status,

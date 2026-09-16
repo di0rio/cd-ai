@@ -13,4 +13,12 @@ toolMs: number,
  * Time the task sat blocked on an approval prompt. Absent from states written before this
  * field existed, hence the default.
  */
-approvalWaitMs: number, };
+approvalWaitMs: number, 
+/**
+ * Last `chars/4` estimate of the conversation sent to the model (plan 020).
+ */
+estimatedTokens: number, 
+/**
+ * Peak of that estimate across turns.
+ */
+peakEstimatedTokens: number, };

@@ -12,11 +12,12 @@ use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
+use crate::agent::context::{AgentRole, apply_hygiene, assemble, role_refusal};
 use crate::agent::events::{AgentEvent, AgentEventMessage};
 use crate::agent::model::{ChatModel, ModelError, ModelReply};
-use crate::agent::profile::workspace_profile;
 use crate::agent::prompt::{
-    inherited_context, is_exhausted, system_prompt, trim_for_budget, wrap_untrusted_tool_result,
+    compact_for_budget, estimate_tokens, inherited_context, is_exhausted, trim_for_budget,
+    wrap_untrusted_tool_result,
 };
 use crate::agent::state::{
     AgentLimits, CheckpointKind, CommandRecord, FileChange, StopReason, TaskReport, TaskState,
@@ -25,7 +26,7 @@ use crate::agent::state::{
 use crate::agent::storage::TaskStore;
 use crate::agent::tool_calls::{
     TOOL_NAMES, outcome_detail, outcome_output, redacted_input, render_outcome, signature,
-    to_request, to_request_from_text, tool_specs,
+    to_request, to_request_from_text, tool_specs_for,
 };
 use crate::agent::verify::{
     Review, Verdict, VerifyInput, command_failure_reason, correction_message,
@@ -118,7 +119,7 @@ pub fn run_task(
 ) -> TaskState {
     let key = workspace_key(&ctx.workspace);
 
-    let (mut state, mut messages, opening) = match start {
+    let (mut state, mut messages, opening, assembled) = match start {
         TaskStart::New {
             request,
             model: model_name,
@@ -129,23 +130,24 @@ pub fn run_task(
             let inherited = match &continues {
                 Some(previous_id) => match inherit(ctx.store, previous_id, &key) {
                     Ok(block) => Some(block),
-                    // Refusing is the honest answer: the only way to name a previous task is to
-                    // pick one of this workspace's own, so a failure here means the id is wrong —
-                    // and silently dropping the continuity would look exactly like the bug this
-                    // chaining exists to fix.
                     Err(problem) => return unstartable(&id, &key, problem),
                 },
                 None => None,
             };
             let mut state = TaskState::new(&id, &key, &request, &model_name, num_ctx);
             state.continues = continues;
-            let profile = workspace_profile(&ctx.workspace).render();
+            let assembled = assemble(
+                &ctx.workspace,
+                Some(ctx.store.data_dir()),
+                &request,
+                num_ctx,
+                inherited.as_deref(),
+            );
             let messages = vec![
-                message("system", &system_prompt(&profile, inherited.as_deref())),
+                message("system", &assembled.system_prompt),
                 message("user", &request),
             ];
-            // Both go to the transcript: a resume rebuilds the conversation from it.
-            (state, messages, 2)
+            (state, messages, 2, assembled)
         }
         TaskStart::Resume { task_id } => match ctx.store.load_state(&task_id) {
             Ok(mut state) => {
@@ -163,10 +165,16 @@ pub fn run_task(
                 state.stop_reason = None;
                 state.touch();
                 let transcript = ctx.store.load_transcript(&task_id).unwrap_or_default();
-                let mut messages = resume_messages(transcript, &ctx.workspace);
+                let assembled = assemble(
+                    &ctx.workspace,
+                    Some(ctx.store.data_dir()),
+                    &state.request,
+                    state.num_ctx,
+                    None,
+                );
+                let mut messages = resume_messages(transcript, &assembled.system_prompt);
                 messages.push(message("user", RESUME_NOTE));
-                // Only the note is new; the rest is already on disk.
-                (state, messages, 1)
+                (state, messages, 1, assembled)
             }
             Err(error) => return unstartable(&task_id, &key, error.to_string()),
         },
@@ -181,6 +189,15 @@ pub fn run_task(
     emitter.emit(AgentEvent::TaskStarted {
         summary: state.summary(),
     });
+    emitter.emit(AgentEvent::ContextReady {
+        role: assembled.role.as_str().to_string(),
+        classification: assembled.classification.as_str().to_string(),
+        repo_map_files: assembled.repo_map_files,
+        cache_hit: assembled.cache_hit,
+        estimated_tokens: assembled.estimated_tokens,
+        cuts: assembled.cuts.iter().map(|cut| cut.name.clone()).collect(),
+    });
+    note_estimate(&mut state, &messages);
     for new_message in &messages[messages.len() - opening..] {
         let _ = ctx.store.append_transcript(&state.id, new_message);
         if new_message.role == "user" {
@@ -202,6 +219,7 @@ pub fn run_task(
         &mut engine,
         model,
         responder,
+        assembled.role,
     );
 
     let status = status_for(&reason);
@@ -226,6 +244,7 @@ pub fn run_task(
 }
 
 /// The iteration loop. Returns why it stopped and the last text the model produced.
+#[allow(clippy::too_many_arguments)]
 fn run_loop(
     ctx: &TaskContext<'_>,
     state: &mut TaskState,
@@ -234,8 +253,9 @@ fn run_loop(
     engine: &mut ToolEngine,
     model: &mut dyn ChatModel,
     responder: Responder<'_>,
+    role: AgentRole,
 ) -> (StopReason, String) {
-    let specs = tool_specs();
+    let specs = tool_specs_for(role.tool_names());
     let started = Instant::now();
     let task_timeout = Duration::from_millis(ctx.limits.task_timeout_ms);
 
@@ -309,7 +329,8 @@ fn run_loop(
             });
         }
 
-        // 3. Context budget (D10).
+        // 3. Context budget (D10 / plan 020): hygiene, omit old results, compact, then the ceiling.
+        apply_hygiene(messages);
         if let Some((removed_messages, estimated_tokens)) = trim_for_budget(messages, state.num_ctx)
         {
             emitter.emit(AgentEvent::ContextTrimmed {
@@ -317,6 +338,15 @@ fn run_loop(
                 estimated_tokens,
             });
         }
+        if let Some((removed_messages, estimated_tokens)) =
+            compact_for_budget(messages, state.num_ctx, state)
+        {
+            emitter.emit(AgentEvent::ContextTrimmed {
+                removed_messages,
+                estimated_tokens,
+            });
+        }
+        note_estimate(state, messages);
         if is_exhausted(messages, state.num_ctx) {
             break StopReason::ContextExhausted;
         }
@@ -361,7 +391,7 @@ fn run_loop(
         state.metrics.model_ms += reply.prompt_ms + reply.gen_ms;
 
         // 6. Native tool calls first, the text format as fallback (D2).
-        let turn = read_turn(&reply);
+        let turn = read_turn(&reply, role);
 
         // Only the prose is a message: the `<function=…>` markup of the text format is machinery,
         // and showing it made the user read every call twice (once raw, once as the tool line).
@@ -631,7 +661,7 @@ fn normalize_content(content: &str) -> String {
 }
 
 /// Native `tool_calls` when there are any; otherwise the text format of the CODER model (D2).
-fn read_turn(reply: &ModelReply) -> ModelTurn {
+fn read_turn(reply: &ModelReply, role: AgentRole) -> ModelTurn {
     if !reply.tool_calls.is_empty() {
         return ModelTurn {
             calls: reply
@@ -640,7 +670,9 @@ fn read_turn(reply: &ModelReply) -> ModelTurn {
                 .map(|call| PendingCall {
                     name: call.function.name.clone(),
                     input: call.function.arguments.clone(),
-                    request: to_request(&call.function.name, &call.function.arguments),
+                    request: request_for_role(role, &call.function.name, |name| {
+                        to_request(name, &call.function.arguments)
+                    }),
                 })
                 .collect(),
             text: reply.content.clone(),
@@ -649,7 +681,8 @@ fn read_turn(reply: &ModelReply) -> ModelTurn {
     }
 
     // `parse_text_tool_calls` already drops any name that was not offered, and hands back the
-    // content without the blocks it consumed.
+    // content without the blocks it consumed. Unknown names still parse so Explorer can refuse
+    // edit_file with a clear error instead of treating the markup as a finished answer.
     let parsed = parse_text_tool_calls(&reply.content, &TOOL_NAMES);
     if parsed.calls.is_empty() {
         // Nothing was consumed, so nothing was stripped: the reply is plain prose.
@@ -678,7 +711,7 @@ fn read_turn(reply: &ModelReply) -> ModelTurn {
         calls.push(PendingCall {
             name: call.name.clone(),
             input,
-            request: to_request_from_text(call),
+            request: request_for_role(role, &call.name, |_| to_request_from_text(call)),
         });
     }
     ModelTurn {
@@ -686,6 +719,17 @@ fn read_turn(reply: &ModelReply) -> ModelTurn {
         text: parsed.prose,
         tool_calls,
     }
+}
+
+fn request_for_role(
+    role: AgentRole,
+    name: &str,
+    build: impl FnOnce(&str) -> Result<crate::tools::ToolRequest, String>,
+) -> Result<crate::tools::ToolRequest, String> {
+    if TOOL_NAMES.contains(&name) && !role.allows(name) {
+        return Err(role_refusal(role, name));
+    }
+    build(name)
 }
 
 /// Appends a tool result to the conversation and to the transcript.
@@ -858,8 +902,8 @@ fn last_assistant_text(store: &TaskStore, id: &str) -> String {
 ///
 /// The last assistant turn whose tool calls have no results is dropped: sending it again would
 /// leave the model waiting for answers that never came. A transcript without a system prompt
-/// (a task from before the prompt changed, or a truncated file) gets a fresh one.
-fn resume_messages(mut transcript: Vec<ChatMessage>, workspace: &Workspace) -> Vec<ChatMessage> {
+/// (a task from before the prompt changed, or a truncated file) gets a freshly assembled one.
+fn resume_messages(mut transcript: Vec<ChatMessage>, fallback_system: &str) -> Vec<ChatMessage> {
     if let Some(index) = transcript
         .iter()
         .rposition(|message| message.role == "assistant" && !message.tool_calls.is_empty())
@@ -874,12 +918,17 @@ fn resume_messages(mut transcript: Vec<ChatMessage>, workspace: &Workspace) -> V
         }
     }
     if transcript.first().map(|first| first.role.as_str()) != Some("system") {
-        // Only a truncated or pre-`system` transcript lands here, so the rebuilt prompt carries no
-        // inherited block: the real one is the first line of every transcript this loop writes.
-        let profile = workspace_profile(workspace).render();
-        transcript.insert(0, message("system", &system_prompt(&profile, None)));
+        transcript.insert(0, message("system", fallback_system));
     }
     transcript
+}
+
+fn note_estimate(state: &mut TaskState, messages: &[ChatMessage]) {
+    let estimate = estimate_tokens(messages);
+    state.metrics.estimated_tokens = estimate;
+    if estimate > state.metrics.peak_estimated_tokens {
+        state.metrics.peak_estimated_tokens = estimate;
+    }
 }
 
 /// A task that could not even be loaded, as a state the caller can show.
@@ -1322,6 +1371,50 @@ mod tests {
         assert!(model.seen[0][0].content.contains("You are cd-ai"));
         assert!(model.seen[0][0].content.contains("Cargo.toml"));
         assert_eq!(model.seen[0][1].content, "olhe o projeto");
+    }
+
+    #[test]
+    fn a_question_uses_the_explorer_role_and_refuses_edits() {
+        let harness = harness(&[("src/soma.ts", "export function soma() { return 1; }\n")]);
+        let mut model = ScriptedModel::new(vec![
+            ScriptedModel::calls(&[(
+                "edit_file",
+                serde_json::json!({
+                    "path": "src/soma.ts",
+                    "old_text": "1",
+                    "new_text": "2"
+                }),
+            )]),
+            ScriptedModel::text("a soma está em src/soma.ts"),
+        ]);
+        let (state, events) = run(
+            harness.context(),
+            &mut model,
+            start("Onde está a função soma?"),
+            &mut grant,
+        );
+
+        assert_eq!(state.status, TaskStatus::CompletedUnvalidated);
+        assert_eq!(
+            model.offered,
+            crate::agent::tool_calls::EXPLORER_TOOL_NAMES.to_vec()
+        );
+        let results = tool_messages(&model, 1);
+        assert!(
+            results[0].content.contains("somente leitura"),
+            "{}",
+            results[0].content
+        );
+        assert!(events.iter().any(|message| matches!(
+            &message.event,
+            AgentEvent::ContextReady {
+                role,
+                classification,
+                ..
+            } if role == "explorer" && classification == "question"
+        )));
+        let content = fs::read_to_string(harness.workspace.root().join("src/soma.ts")).unwrap();
+        assert!(content.contains("return 1"));
     }
 
     // 2 ────────────────────────────────────────────────────────────────────────────────────────

@@ -104,8 +104,8 @@ export function applyAgentEvent(task: Task, message: AgentEventMessage): Task {
     case "toolCallRequested":
       return message.data.tool === "search" ? withPhase(task, "explore") : task;
 
-    // taskStarted, modelTurnStarted, thinking, toolCallFinished, contextTrimmed and retrying
-    // carry no row of their own, like the tool lifecycle events above.
+    // taskStarted, modelTurnStarted, thinking, toolCallFinished, contextTrimmed, contextReady
+    // and retrying carry no row of their own, like the tool lifecycle events above.
     default:
       return task;
   }

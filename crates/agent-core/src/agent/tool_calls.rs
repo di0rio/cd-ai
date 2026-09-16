@@ -37,6 +37,17 @@ pub const TOOL_NAMES: [&str; 10] = [
     "git_branch",
 ];
 
+/// Tools the Explorer role may call (plan 020 D8). Read-only.
+pub const EXPLORER_TOOL_NAMES: [&str; 7] = [
+    "read_file",
+    "list_directory",
+    "search",
+    "git_status",
+    "git_diff",
+    "git_log",
+    "git_branch",
+];
+
 /// Args that are not strings in the native shape, so the text fallback knows what to parse.
 const INTEGER_ARGS: [&str; 5] = [
     "start_line",
@@ -182,6 +193,14 @@ pub fn tool_specs() -> Vec<ToolSpec> {
             }),
         ),
     ]
+}
+
+/// Specs offered for a role. Explorer does not see write/run tools (plan 020 D8).
+pub fn tool_specs_for(names: &[&str]) -> Vec<ToolSpec> {
+    tool_specs()
+        .into_iter()
+        .filter(|spec| names.contains(&spec.function.name.as_str()))
+        .collect()
 }
 
 /// Maps one native tool call into a request. The error text goes back to the model as the tool

@@ -1,6 +1,6 @@
-# 0008 — Continuidade sem limite financeiro ou quota artificial de tokens (proposta)
+# 0008 — Continuidade sem limite financeiro ou quota artificial de tokens
 
-Status: **proposta** (2026-09-11, a validar antes da Fase 10).
+Status: **aceita** (2026-09-16, Fase 10).
 
 ## Contexto
 
@@ -18,18 +18,19 @@ O Context Manager (SPEC §16) e o sistema de checkpoints (SPEC §21) devem supor
 2. **Estado no disco, não na memória do modelo.** O progresso real da tarefa vive nos arquivos, no git e nos checkpoints. O que precisa ficar no contexto é o resumo e referências. Detalhes são re-lidos via tools (`read_file`, `search`) sob demanda.
 3. **Só a segurança pausa.** O agente não para por custo ou quota de tokens. Interrupção só por approval gate (decisão 0001) ou cancellation explícita do usuário.
 
-Essa escolha já é contemplada pelo roadmap (Fase 10 — Context Manager) e pelos checkpoints (Fase 8). Esta decisão formaliza a intenção de que a compactação deve funcionar **automaticamente**, sem intervenção do usuário.
+Na Fase 10 isso virou: higiene (leituras obsoletas, logs colapsados) → omitir resultados de tool antigos (75%) → compactação **determinística** do miolo da conversa (sem round-trip extra de LLM) → `ContextExhausted` só acima de 90% quando não há mais o que cortar com honestidade. A compactação por LLM (um resumo gerado) fica para se o eval ao vivo mostrar que o recado determinístico não basta.
 
 ## Conexões
 
 - SPEC §16.3 — higiene de contexto
 - SPEC §21 — checkpoints e rollback
 - SPEC §11.1 — orquestrador com persistência de estado
+- `plans/020-fase-10-context-manager.md` — implementação
 - `plans/012-design-fase4-tool-engine.md` — design da Fase 4, que define o que o Tool Engine entrega antes do orquestrador da Fase 5
 - `docs/design/daemon-modo-continuo.md` — modo contínuo (validação automática e tarefas)
 
 ## Revisitar quando
 
-- A Fase 10 (Context Manager) estiver em implementação;
 - O eval medir qualidade de compaction/continuação (deve mostrar sem regressão);
+- A compactação determinística perder sinal demais e um resumo por LLM se justificar com métrica;
 - O hardware mudar (mais RAM/VRAM ou modelos com janela maior que 32k).

@@ -166,6 +166,14 @@ pub struct TaskMetrics {
     #[serde(default)]
     #[ts(type = "number")]
     pub approval_wait_ms: u64,
+    /// Last `chars/4` estimate of the conversation sent to the model (plan 020).
+    #[serde(default)]
+    #[ts(type = "number")]
+    pub estimated_tokens: u64,
+    /// Peak of that estimate across turns.
+    #[serde(default)]
+    #[ts(type = "number")]
+    pub peak_estimated_tokens: u64,
 }
 
 /// Everything about a task that survives a restart. Written to `tasks/<id>/state.json`.
@@ -404,6 +412,8 @@ mod tests {
         .unwrap();
         assert_eq!(metrics.tool_ms, 3_532_469);
         assert_eq!(metrics.approval_wait_ms, 0);
+        assert_eq!(metrics.estimated_tokens, 0);
+        assert_eq!(metrics.peak_estimated_tokens, 0);
     }
 
     #[test]
