@@ -101,9 +101,9 @@ invalidação  = mtime+len por path; sem watcher
 - [x] Higiene omite leitura obsoleta e logs enormes (teste)
 - [x] Compactação continua a tarefa no lugar de `ContextExhausted`, salvo pedido que sozinho não cabe (teste)
 - [x] Explorer é role read-only; escrita não executa (teste)
-- [ ] Eval scripted 3/3; `estimated_prompt_tokens` no JSON
-- [ ] `bun run verify` exit 0
-- [ ] PR aberto
+- [x] Eval scripted 3/3; `estimated_prompt_tokens` no JSON
+- [x] `bun run verify` exit 0
+- [x] PR aberto
 
 ## STOP conditions
 
