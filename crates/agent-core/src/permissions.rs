@@ -255,9 +255,18 @@ pub fn classify(argv: &[String]) -> CommandClass {
         return most_dangerous(argv);
     }
 
-    match basename.as_str() {
-        "ls" | "cat" | "head" | "tail" | "less" | "grep" | "rg" | "find" | "wc" | "file"
-        | "stat" | "which" | "echo" => CommandClass::Read,
+    let class = match basename.as_str() {
+        "ls" | "cat" | "head" | "tail" | "less" | "grep" | "wc" | "file" | "stat" | "which"
+        | "echo" => CommandClass::Read,
+        "find" => classify_find(argv),
+        // `--pre` runs an arbitrary program on every file searched.
+        "rg" if argv
+            .iter()
+            .any(|token| token == "--pre" || token.starts_with("--pre=")) =>
+        {
+            CommandClass::Unknown
+        }
+        "rg" => CommandClass::Read,
         "git" => classify_git(argv),
         "npm" | "yarn" | "pnpm" | "bun" => classify_package_tagged(argv, flags),
         "cargo" => classify_cargo(argv, flags),
@@ -276,6 +285,26 @@ pub fn classify(argv: &[String]) -> CommandClass {
                 CommandClass::Unknown
             }
         }
+    };
+    // The automatic classes trust the program's name, so it has to be looked up on PATH: `./ls`
+    // or `target/debug/cargo` could be anything the agent built or dropped there.
+    let qualified = program.contains(['/', '\\']);
+    if qualified && matches!(class, CommandClass::Read | CommandClass::Validate) {
+        return CommandClass::Unknown;
+    }
+    class
+}
+
+fn classify_find(argv: &[String]) -> CommandClass {
+    let has = |names: &[&str]| argv.iter().any(|token| names.contains(&token.as_str()));
+    if has(&["-delete"]) {
+        CommandClass::Destructive
+    } else if has(&["-exec", "-execdir", "-ok", "-okdir"]) {
+        CommandClass::Unknown
+    } else if has(&["-fprint", "-fprint0", "-fprintf", "-fls"]) {
+        CommandClass::Write
+    } else {
+        CommandClass::Read
     }
 }
 
@@ -327,18 +356,88 @@ fn classify_git(argv: &[String]) -> CommandClass {
                 && token.chars().skip(1).any(|c| chars.contains(c))
         })
     };
+    let writes_output = argv
+        .iter()
+        .any(|token| token == "--output" || token.starts_with("--output="));
     match subcommand {
-        "status" | "diff" | "log" | "branch" | "show" | "blame" | "remote" => CommandClass::Read,
+        "diff" | "log" | "show" if writes_output => CommandClass::Write,
+        "status" | "diff" | "log" | "show" | "blame" => CommandClass::Read,
+        "branch" => classify_git_branch(&argv[2..]),
+        "remote" => classify_git_remote(&argv[2..]),
         "add" | "commit" | "mv" | "restore" => CommandClass::Write,
+        "checkout" if has_flag("--force") || has_short_flag("f") => CommandClass::Destructive,
         "checkout" if has_flag("--") => CommandClass::Destructive,
         "checkout" if has_flag("-b") => CommandClass::Write,
         "checkout" => CommandClass::Write,
         "reset" if has_flag("--hard") => CommandClass::Destructive,
         "reset" => CommandClass::Write,
-        "clean" if has_short_flag("f") => CommandClass::Destructive,
+        "clean" if has_flag("--force") || has_short_flag("f") => CommandClass::Destructive,
         "clean" => CommandClass::Write,
         "fetch" | "pull" | "push" | "clone" => CommandClass::Network,
         _ => CommandClass::Unknown,
+    }
+}
+
+/// `git branch` only reads when it lists: any rename, copy, upstream change, deletion or new
+/// branch name makes it a write.
+fn classify_git_branch(rest: &[String]) -> CommandClass {
+    let mut delete = false;
+    let mut force = false;
+    let mut write = false;
+    let mut listing = false;
+    let mut positional = false;
+    for token in rest {
+        match token.as_str() {
+            "-D" => {
+                delete = true;
+                force = true;
+            }
+            "--delete" => delete = true,
+            "--force" => force = true,
+            "--list" | "-l" => listing = true,
+            "--move" | "--copy" | "--track" | "--no-track" | "--unset-upstream"
+            | "--edit-description" | "--create-reflog" => write = true,
+            long if long.starts_with("--set-upstream-to") => write = true,
+            long if long.starts_with("--") => {}
+            short if short.starts_with('-') => {
+                for flag in short.chars().skip(1) {
+                    match flag {
+                        'D' => {
+                            delete = true;
+                            force = true;
+                        }
+                        'd' => delete = true,
+                        'f' => force = true,
+                        'l' => listing = true,
+                        'm' | 'M' | 'c' | 'C' | 'u' | 't' => write = true,
+                        _ => {}
+                    }
+                }
+            }
+            _ => positional = true,
+        }
+    }
+    if delete && force {
+        CommandClass::Destructive
+    } else if delete || write || (force && positional) || (positional && !listing) {
+        CommandClass::Write
+    } else {
+        CommandClass::Read
+    }
+}
+
+fn classify_git_remote(rest: &[String]) -> CommandClass {
+    match rest
+        .iter()
+        .find(|token| !token.starts_with('-'))
+        .map(String::as_str)
+    {
+        None | Some("get-url") => CommandClass::Read,
+        Some("show" | "update" | "prune") => CommandClass::Network,
+        Some("add" | "rename" | "remove" | "rm" | "set-head" | "set-branches" | "set-url") => {
+            CommandClass::Write
+        }
+        Some(_) => CommandClass::Unknown,
     }
 }
 
@@ -368,7 +467,11 @@ fn classify_package_tagged<'a>(
 fn classify_cargo<'a>(argv: &[String], flags: impl Iterator<Item = &'a str>) -> CommandClass {
     let subcommand = argv.get(1).map(String::as_str).unwrap_or("");
     let _ = flags;
+    let has_flag = |flag: &str| argv.iter().any(|token| token == flag);
     match subcommand {
+        // Both rewrite sources unless told only to report.
+        "fmt" if !has_flag("--check") => CommandClass::Write,
+        "clippy" if has_flag("--fix") => CommandClass::Write,
         "test" | "check" | "build" | "clippy" | "fmt" | "doc" => CommandClass::Validate,
         "add" | "install" | "publish" | "login" => CommandClass::Network,
         "clean" | "update" => CommandClass::Network,
@@ -378,44 +481,43 @@ fn classify_cargo<'a>(argv: &[String], flags: impl Iterator<Item = &'a str>) -> 
 }
 
 fn classify_biome<'a>(argv: &[String], mut flags: impl Iterator<Item = &'a str>) -> CommandClass {
-    if argv
+    // `check`/`lint` validate only while they leave the files alone.
+    if flags.any(|flag| matches!(flag, "--write" | "--fix" | "--apply" | "--apply-unsafe")) {
+        CommandClass::Write
+    } else if argv
         .iter()
         .skip(1)
         .take_while(|token| !token.starts_with('-'))
         .any(|token| token == "check" || token == "lint")
     {
         CommandClass::Validate
-    } else if flags.any(|f| f == "--write") {
-        CommandClass::Write
     } else {
         CommandClass::Unknown
     }
 }
 
+/// Only the test runners validate: a script whose name merely mentions "test", or any other
+/// `manage.py` command (`flush`, `shell`), runs arbitrary code.
 fn classify_python<'a>(argv: &[String], flags: impl Iterator<Item = &'a str>) -> CommandClass {
     let _ = flags;
-    if argv.get(1).is_some_and(|script| {
-        script.ends_with("test") || script.contains("pytest") || script.contains("manage.py")
-    }) {
-        return CommandClass::Validate;
+    match (
+        argv.get(1).map(String::as_str),
+        argv.get(2).map(String::as_str),
+    ) {
+        (Some("-m"), Some("pytest" | "unittest")) => CommandClass::Validate,
+        (Some("-m"), Some(module)) if module.starts_with("pip") => CommandClass::Network,
+        (Some("manage.py"), Some("test")) => CommandClass::Validate,
+        _ => CommandClass::Unknown,
     }
-    if argv.get(1).map(String::as_str) == Some("-m") {
-        let module = argv.get(2).map(String::as_str).unwrap_or("");
-        return if module.starts_with("pip") {
-            CommandClass::Network
-        } else {
-            CommandClass::Unknown
-        };
-    }
-    CommandClass::Unknown
 }
 
 fn classify_rm<'a>(mut flags: impl Iterator<Item = &'a str>) -> CommandClass {
     // `rm` sem recursão é um arquivo único → write; `rm -r*` → destructive (design §4).
     let recursive = flags.any(|flag| {
-        !flag.starts_with("--")
-            && flag.starts_with('-')
-            && flag.chars().skip(1).any(|c| c == 'r' || c == 'R')
+        flag == "--recursive"
+            || (!flag.starts_with("--")
+                && flag.starts_with('-')
+                && flag.chars().skip(1).any(|c| c == 'r' || c == 'R'))
     });
     if recursive {
         CommandClass::Destructive
@@ -630,6 +732,160 @@ mod tests {
         assert_eq!(classify(&cv(&["cargo", "run"])), CommandClass::Unknown);
         assert_eq!(classify(&cv(&["make", "install"])), CommandClass::Unknown);
         assert_eq!(classify(&cv(&[])), CommandClass::Unknown);
+    }
+
+    #[test]
+    fn read_tools_with_side_effect_flags_are_not_reads() {
+        // Each of these runs without approval if it stays `read`.
+        assert_eq!(
+            classify(&cv(&["find", ".", "-delete"])),
+            CommandClass::Destructive
+        );
+        for argv in [
+            cv(&["find", ".", "-exec", "rm", "-rf", "{}", "+"]),
+            cv(&["find", ".", "-execdir", "sh", "x", "{}", "+"]),
+            cv(&["find", ".", "-ok", "rm", "{}", "+"]),
+            cv(&["rg", "--pre", "sh", "x", "."]),
+            cv(&["rg", "--pre=sh", "x", "."]),
+        ] {
+            assert_eq!(classify(&argv), CommandClass::Unknown, "{argv:?}");
+        }
+        assert_eq!(
+            classify(&cv(&["find", ".", "-fprint", "out.txt"])),
+            CommandClass::Write
+        );
+        assert_eq!(
+            classify(&cv(&["find", ".", "-name", "*.rs"])),
+            CommandClass::Read
+        );
+        assert_eq!(classify(&cv(&["rg", "-n", "TODO"])), CommandClass::Read);
+    }
+
+    #[test]
+    fn git_read_subcommands_that_mutate_are_not_reads() {
+        assert_eq!(
+            classify(&cv(&["git", "branch", "-D", "main"])),
+            CommandClass::Destructive
+        );
+        assert_eq!(
+            classify(&cv(&["git", "branch", "--delete", "--force", "x"])),
+            CommandClass::Destructive
+        );
+        assert_eq!(
+            classify(&cv(&["git", "branch", "-m", "a", "b"])),
+            CommandClass::Write
+        );
+        assert_eq!(
+            classify(&cv(&["git", "branch", "nova"])),
+            CommandClass::Write
+        );
+        for argv in [
+            cv(&["git", "branch"]),
+            cv(&["git", "branch", "-a"]),
+            cv(&["git", "branch", "--list", "-v"]),
+            cv(&["git", "remote"]),
+            cv(&["git", "remote", "-v"]),
+            cv(&["git", "remote", "get-url", "origin"]),
+        ] {
+            assert_eq!(classify(&argv), CommandClass::Read, "{argv:?}");
+        }
+        assert_eq!(
+            classify(&cv(&["git", "remote", "add", "o", "https://x"])),
+            CommandClass::Write
+        );
+        assert_eq!(
+            classify(&cv(&["git", "remote", "update"])),
+            CommandClass::Network
+        );
+        assert_eq!(
+            classify(&cv(&["git", "remote", "show", "origin"])),
+            CommandClass::Network
+        );
+        assert_eq!(
+            classify(&cv(&["git", "diff", "--output=/tmp/x"])),
+            CommandClass::Write
+        );
+        assert_eq!(
+            classify(&cv(&["git", "log", "--output", "x"])),
+            CommandClass::Write
+        );
+    }
+
+    #[test]
+    fn long_destructive_flags_count() {
+        assert_eq!(
+            classify(&cv(&["rm", "--recursive", "src"])),
+            CommandClass::Destructive
+        );
+        assert_eq!(
+            classify(&cv(&["git", "clean", "--force", "-d"])),
+            CommandClass::Destructive
+        );
+        assert_eq!(
+            classify(&cv(&["git", "checkout", "--force", "main"])),
+            CommandClass::Destructive
+        );
+        assert_eq!(
+            classify(&cv(&["git", "checkout", "-f", "main"])),
+            CommandClass::Destructive
+        );
+    }
+
+    #[test]
+    fn validators_that_rewrite_files_are_writes() {
+        assert_eq!(classify(&cv(&["cargo", "fmt"])), CommandClass::Write);
+        assert_eq!(
+            classify(&cv(&["cargo", "fmt", "--check"])),
+            CommandClass::Validate
+        );
+        assert_eq!(
+            classify(&cv(&["cargo", "clippy", "--fix"])),
+            CommandClass::Write
+        );
+        assert_eq!(
+            classify(&cv(&["biome", "check", "--write", "."])),
+            CommandClass::Write
+        );
+        assert_eq!(
+            classify(&cv(&["biome", "lint", "--fix"])),
+            CommandClass::Write
+        );
+    }
+
+    #[test]
+    fn python_validates_only_through_test_runners() {
+        for argv in [
+            cv(&["python", "-m", "pytest"]),
+            cv(&["python3", "-m", "unittest", "-v"]),
+            cv(&["python", "manage.py", "test"]),
+        ] {
+            assert_eq!(classify(&argv), CommandClass::Validate, "{argv:?}");
+        }
+        for argv in [
+            cv(&["python", "manage.py", "flush"]),
+            cv(&["python", "manage.py", "shell"]),
+            cv(&["python", "/tmp/x/evil_test"]),
+            cv(&["python", "pytest_exploit.py"]),
+        ] {
+            assert_eq!(classify(&argv), CommandClass::Unknown, "{argv:?}");
+        }
+    }
+
+    #[test]
+    fn automatic_classes_need_a_bare_program_name() {
+        // A binary the agent built or dropped somewhere must not pass for the system `ls`.
+        for argv in [
+            cv(&["./ls"]),
+            cv(&["target/debug/cat", "x"]),
+            cv(&["/tmp/x/cargo", "test"]),
+            cv(&["bin\\git", "status"]),
+        ] {
+            assert_eq!(classify(&argv), CommandClass::Unknown, "{argv:?}");
+        }
+        assert_eq!(
+            classify(&cv(&["/bin/rm", "-rf", "x"])),
+            CommandClass::Destructive
+        );
     }
 
     #[test]

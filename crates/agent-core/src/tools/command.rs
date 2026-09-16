@@ -14,6 +14,9 @@ use crate::tools::{
     RunCommandArgs, ToolEngine, ToolError,
 };
 
+/// The model picks the timeout; this bounds it (and keeps `Instant + timeout` from overflowing).
+const MAX_COMMAND_TIMEOUT_MS: u64 = 30 * 60 * 1000;
+
 /// run_command: argv only, never a shell (design D2). Commands classified `read`/`validate` run
 /// automatically (§20.4); every other class asks the user with the exact argv, never a model
 /// summary, and the class is part of the approval (design D5/D8).
@@ -51,7 +54,7 @@ pub fn run_command(
     // §20.4: `read`/`validate` is `auto` in all three permission modes. Write commands become
     // auto only in AUTO/FULL ACCESS when a filesystem sandbox is actually on (D6). Network,
     // destructive and unknown always ask. The decision never comes from a model claim (§20.5).
-    let class = classify(argv);
+    let class = escalate_for_paths(classify(argv), argv, &engine.workspace);
     let decision = engine.authorize(
         events,
         responder,
@@ -84,7 +87,11 @@ pub fn run_command(
         },
     );
 
-    let timeout = Duration::from_millis(args.timeout_ms.unwrap_or(DEFAULT_COMMAND_TIMEOUT_MS));
+    let timeout = Duration::from_millis(
+        args.timeout_ms
+            .unwrap_or(DEFAULT_COMMAND_TIMEOUT_MS)
+            .min(MAX_COMMAND_TIMEOUT_MS),
+    );
     let started = Instant::now();
     let mut command = Command::new(&argv[0]);
     command
@@ -143,6 +150,45 @@ pub fn run_command(
             timed_out,
         },
     ))
+}
+
+/// The sandbox leaves reads open everywhere, so an automatic command reads whatever its arguments
+/// name. An argument that points outside the workspace or at a secret file drops the command to
+/// `unknown`: the user sees the exact argv instead of the command running on its own.
+fn escalate_for_paths(
+    class: CommandClass,
+    argv: &[String],
+    workspace: &crate::workspace::Workspace,
+) -> CommandClass {
+    if !matches!(
+        class,
+        CommandClass::Read | CommandClass::Validate | CommandClass::Write
+    ) {
+        return class;
+    }
+    let reaches_out = argv.iter().skip(1).any(|token| {
+        let value = if token.starts_with('-') {
+            match token.split_once('=') {
+                Some((_, value)) => value,
+                None => return false,
+            }
+        } else {
+            token.as_str()
+        };
+        // `HEAD:.env` names the file after the colon.
+        let named = value.rsplit_once(':').map_or(value, |(_, path)| path);
+        let secret = |path: &str| {
+            workspace.resolve(path).map_or(true, |canonical| {
+                redactor::detect_path_secret(&canonical).is_some()
+            })
+        };
+        workspace.resolve(value).is_err() || secret(value) || secret(named)
+    });
+    if reaches_out {
+        CommandClass::Unknown
+    } else {
+        class
+    }
 }
 
 struct RunStatus {
@@ -214,19 +260,19 @@ fn wait_with_timeout(
     }
 }
 
-fn drain_capped(pipe: impl Read, cap: usize) -> Vec<u8> {
-    let mut reader = std::io::BufReader::new(pipe);
+/// Keeps reading after the cap and drops the excess: a reader that stops leaves the pipe full,
+/// and the child then blocks on write until the timeout kills it.
+fn drain_capped(mut pipe: impl Read, cap: usize) -> Vec<u8> {
     let mut buf = Vec::new();
     let mut chunk = [0u8; 4096];
     loop {
-        match reader.read(&mut chunk) {
+        match pipe.read(&mut chunk) {
             Ok(0) => break,
             Ok(n) => {
-                buf.extend_from_slice(&chunk[..n]);
-                if buf.len() >= cap {
-                    break;
-                }
+                let room = cap.saturating_sub(buf.len());
+                buf.extend_from_slice(&chunk[..n.min(room)]);
             }
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
             Err(_) => break,
         }
     }
@@ -403,7 +449,7 @@ mod tests {
         let (decision, result) = run_command(
             &mut engine,
             RunCommandArgs {
-                argv: cv(&["cargo", "fmt", "--version"]),
+                argv: cv(&["cargo", "fmt", "--check", "--version"]),
                 cwd: None,
                 timeout_ms: Some(30_000),
             },
@@ -526,6 +572,113 @@ mod tests {
         .unwrap();
         assert!(result.timed_out);
         assert!(result.exit_code.is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn chatty_command_finishes_instead_of_timing_out() {
+        let dir = tempdir().unwrap();
+        let mut engine = boot(dir.path());
+        let mut sink = |_: crate::events::ToolEventMessage| {};
+
+        // ~1.3 MB of output: far past the cap and the pipe buffer. The child must still run to
+        // completion, so the readers have to keep draining after the cap is hit.
+        let (_, result) = run_command(
+            &mut engine,
+            RunCommandArgs {
+                argv: cv(&["seq", "1", "200000"]),
+                cwd: None,
+                timeout_ms: Some(10_000),
+            },
+            &mut sink,
+            &mut approve,
+        )
+        .unwrap();
+        assert!(!result.timed_out, "a chatty command must not time out");
+        assert_eq!(result.exit_code, Some(0));
+        assert!(result.truncated);
+        assert!(result.output.len() <= 2 * MAX_OUTPUT_BYTES + 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn automatic_commands_ask_when_an_argument_reaches_outside_or_a_secret() {
+        let dir = tempdir().unwrap();
+        let outside = tempdir().unwrap();
+        std::fs::write(dir.path().join(".env"), "TOKEN=abc\n").unwrap();
+        std::fs::write(dir.path().join("notas.txt"), "oi\n").unwrap();
+        std::fs::write(outside.path().join("fora.txt"), "segredo\n").unwrap();
+        let fora = outside
+            .path()
+            .join("fora.txt")
+            .to_string_lossy()
+            .into_owned();
+
+        for argv in [
+            cv(&["cat", &fora]),
+            cv(&["cat", "../fora.txt"]),
+            cv(&["cat", ".env"]),
+            cv(&["grep", &format!("--file={fora}"), "x"]),
+            cv(&["git", "show", "HEAD:.env"]),
+            cv(&["cargo", "test", &format!("--manifest-path={fora}")]),
+        ] {
+            let mut engine = boot(dir.path());
+            let mut sink = |_: crate::events::ToolEventMessage| {};
+            let mut asked = 0usize;
+            let mut refuse = |_: crate::permissions::ApprovalRequest| {
+                asked += 1;
+                crate::permissions::ApprovalResponse::Denied { reason: None }
+            };
+            let err = run_command(
+                &mut engine,
+                RunCommandArgs {
+                    argv: argv.clone(),
+                    cwd: None,
+                    timeout_ms: None,
+                },
+                &mut sink,
+                &mut refuse,
+            )
+            .unwrap_err();
+            assert_eq!(asked, 1, "{argv:?} ran without approval");
+            assert!(matches!(err, ToolError::PermissionDenied { .. }));
+        }
+
+        let mut engine = boot(dir.path());
+        let mut sink = |_: crate::events::ToolEventMessage| {};
+        let (decision, result) = run_command(
+            &mut engine,
+            RunCommandArgs {
+                argv: cv(&["cat", "notas.txt"]),
+                cwd: None,
+                timeout_ms: None,
+            },
+            &mut sink,
+            &mut never_asked,
+        )
+        .unwrap();
+        assert_eq!(decision, PermissionDecision::Auto);
+        assert!(result.output.contains("oi"));
+    }
+
+    #[test]
+    fn huge_timeout_from_the_model_does_not_panic() {
+        let dir = tempdir().unwrap();
+        let mut engine = boot(dir.path());
+        let mut sink = |_: crate::events::ToolEventMessage| {};
+
+        let (_, result) = run_command(
+            &mut engine,
+            RunCommandArgs {
+                argv: test_argv::echo("ok"),
+                cwd: None,
+                timeout_ms: Some(u64::MAX),
+            },
+            &mut sink,
+            &mut approve,
+        )
+        .unwrap();
+        assert_eq!(result.exit_code, Some(0));
     }
 
     #[test]

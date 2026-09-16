@@ -4,9 +4,10 @@ use std::path::Path;
 use similar::{ChangeTag, TextDiff};
 
 use crate::permissions::{ApprovalAction, PermissionDecision, PermissionKind};
+use crate::redactor;
 use crate::tools::{
     EditFileArgs, EditFileResult, EventSink, IfExists, Responder, ToolEngine, ToolError,
-    WriteFileArgs, WriteFileResult, display_path, read_utf8_lossy, sha256_hex,
+    WriteFileArgs, WriteFileResult, display_path, read_bytes, read_utf8_lossy, sha256_hex,
 };
 
 /// Where and what to replace: `(start, end, old_block, new_block, fuzzy)`.
@@ -21,7 +22,14 @@ pub fn edit_file(
     responder: Responder,
 ) -> Result<(PermissionDecision, EditFileResult), ToolError> {
     let canonical = engine.workspace.resolve(&args.path)?;
-    let original = read_utf8_lossy(&canonical)?;
+    // The approval diff would disclose the secret, and EditNotFound-vs-success is an oracle for it.
+    if redactor::detect_path_secret(&canonical).is_some() {
+        return Err(ToolError::SecretDenied);
+    }
+    // Lossy decoding would write U+FFFD over every invalid byte of the untouched rest of the file.
+    let original = String::from_utf8(read_bytes(&canonical)?).map_err(|_| {
+        ToolError::Io("o arquivo não é UTF-8 válido; edit_file não o altera".to_string())
+    })?;
     let hash_before = sha256_hex(original.as_bytes());
 
     let apply = apply_edit(&original, &args.old_text, &args.new_text)?;
@@ -102,15 +110,13 @@ pub fn write_file(
     let exists = fs_meta(&canonical)
         .map(|meta| meta.is_file())
         .unwrap_or(false);
+    // Creating a secret file is fine (the model wrote its content); replacing one would put the
+    // user's secret into the event diff.
+    if exists && redactor::detect_path_secret(&canonical).is_some() {
+        return Err(ToolError::SecretDenied);
+    }
     if exists && args.if_exists == IfExists::Error {
         return Err(ToolError::AlreadyExists);
-    }
-    if let Some(parent) = canonical
-        .parent()
-        .filter(|parent| !canonical.exists() && !parent.exists())
-    {
-        std::fs::create_dir_all(parent)
-            .map_err(|error| ToolError::Io(format!("{parent:?}: {error}")))?;
     }
 
     parse_check(&canonical, &args.content)?;
@@ -140,6 +146,11 @@ pub fn write_file(
     };
     let hash_before = sha256_hex(original.as_bytes());
     let hash_after = sha256_hex(args.content.as_bytes());
+    // Only after approval: a denied write leaves no trace, not even empty folders.
+    if let Some(parent) = canonical.parent().filter(|parent| !parent.exists()) {
+        std::fs::create_dir_all(parent)
+            .map_err(|error| ToolError::Io(format!("{parent:?}: {error}")))?;
+    }
     atomic_write(&canonical, args.content.as_bytes())?;
 
     // Same pair, in the same order, as `edit_file`: a write is a file change like any other, and
@@ -392,19 +403,33 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), ToolError> {
         .file_name()
         .and_then(|name| name.to_str())
         .unwrap_or("file");
+    // The replacement inherits the old file's mode, so an edited script stays executable.
+    let permissions = std::fs::metadata(path).ok().map(|meta| meta.permissions());
     for attempt in 1..=64 {
         let tmp = parent.join(format!(".{file_name}.{}.{attempt}.tmp", std::process::id()));
-        let mut file = match std::fs::File::create(&tmp) {
+        // `create_new` is O_EXCL: a name planted in advance (a symlink out of the workspace,
+        // say) is skipped instead of followed and truncated.
+        let mut file = match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp)
+        {
             Ok(file) => file,
             Err(_) => continue,
         };
-        file.write_all(bytes)
+        let written = file
+            .write_all(bytes)
+            .and_then(|_| match &permissions {
+                Some(permissions) => file.set_permissions(permissions.clone()),
+                None => Ok(()),
+            })
             .and_then(|_| file.sync_all())
-            .map_err(|error| {
-                let _ = std::fs::remove_file(&tmp);
-                ToolError::Io(error.to_string())
-            })?;
-        return std::fs::rename(&tmp, path).map_err(|error| ToolError::Io(error.to_string()));
+            .and_then(|_| std::fs::rename(&tmp, path));
+        if let Err(error) = written {
+            let _ = std::fs::remove_file(&tmp);
+            return Err(ToolError::Io(error.to_string()));
+        }
+        return Ok(());
     }
     Err(ToolError::Io(
         "não foi possível escrever o arquivo".to_string(),
@@ -855,5 +880,159 @@ mod tests {
             "dois\n"
         );
         assert!(result.added >= 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn atomic_write_never_follows_a_planted_temp_symlink() {
+        use std::os::unix::fs::symlink;
+        let dir = tempdir().unwrap();
+        let outside = tempdir().unwrap();
+        let victim = outside.path().join("victim.txt");
+        std::fs::write(&victim, "intacto").unwrap();
+        let target = dir.path().join("x.txt");
+        std::fs::write(&target, "velho").unwrap();
+        // The first temp name atomic_write would try, pointing outside the workspace.
+        let planted = dir
+            .path()
+            .join(format!(".x.txt.{}.1.tmp", std::process::id()));
+        symlink(&victim, &planted).unwrap();
+
+        atomic_write(&target, b"novo").unwrap();
+
+        assert_eq!(std::fs::read_to_string(&victim).unwrap(), "intacto");
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "novo");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn edit_keeps_the_file_mode() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempdir().unwrap();
+        let script = dir.path().join("run.sh");
+        std::fs::write(&script, "echo um\n").unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let mut engine = boot(dir.path());
+        let mut sink = |_: crate::events::ToolEventMessage| {};
+
+        edit_file(
+            &mut engine,
+            EditFileArgs {
+                path: "run.sh".into(),
+                old_text: "um".into(),
+                new_text: "dois".into(),
+            },
+            &mut sink,
+            &mut approve,
+        )
+        .unwrap();
+
+        let mode = std::fs::metadata(&script).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o755);
+    }
+
+    #[test]
+    fn edit_refuses_a_file_that_is_not_utf8() {
+        let dir = tempdir().unwrap();
+        let bytes = b"abc \xff\xfe def\n".to_vec();
+        std::fs::write(dir.path().join("x.txt"), &bytes).unwrap();
+        let mut engine = boot(dir.path());
+        let mut sink = |_: crate::events::ToolEventMessage| {};
+
+        let err = edit_file(
+            &mut engine,
+            EditFileArgs {
+                path: "x.txt".into(),
+                old_text: "abc".into(),
+                new_text: "ABC".into(),
+            },
+            &mut sink,
+            &mut never_asked,
+        )
+        .unwrap_err();
+        assert!(matches!(err, ToolError::Io(_)), "{err:?}");
+        assert_eq!(std::fs::read(dir.path().join("x.txt")).unwrap(), bytes);
+    }
+
+    #[test]
+    fn denied_write_creates_no_directories() {
+        let dir = tempdir().unwrap();
+        let mut engine = boot(dir.path());
+        let mut sink = |_: crate::events::ToolEventMessage| {};
+
+        let _ = write_file(
+            &mut engine,
+            WriteFileArgs {
+                path: "novo/fundo/a.txt".into(),
+                content: "x".into(),
+                if_exists: IfExists::Error,
+            },
+            &mut sink,
+            &mut deny,
+        )
+        .unwrap_err();
+        assert!(!dir.path().join("novo").exists());
+    }
+
+    #[test]
+    fn edit_of_a_secret_file_is_refused_without_asking() {
+        let dir = tempdir().unwrap();
+        std::fs::write(dir.path().join(".env"), "TOKEN=abc123\n").unwrap();
+        let mut engine = boot(dir.path());
+        let mut seen = Vec::new();
+        let mut sink = |message: crate::events::ToolEventMessage| seen.push(message);
+
+        // An edit would disclose the secret through the approval diff and act as an oracle
+        // for its content (EditNotFound vs success).
+        let err = edit_file(
+            &mut engine,
+            EditFileArgs {
+                path: ".env".into(),
+                old_text: "TOKEN=abc".into(),
+                new_text: "TOKEN=abc".into(),
+            },
+            &mut sink,
+            &mut never_asked,
+        )
+        .unwrap_err();
+        assert_eq!(err, ToolError::SecretDenied);
+        assert!(seen.is_empty());
+    }
+
+    #[test]
+    fn overwrite_of_a_secret_file_is_refused_but_creating_one_is_not() {
+        let dir = tempdir().unwrap();
+        std::fs::write(dir.path().join(".env"), "TOKEN=abc123\n").unwrap();
+        let mut engine = boot(dir.path());
+        let mut sink = |_: crate::events::ToolEventMessage| {};
+
+        let err = write_file(
+            &mut engine,
+            WriteFileArgs {
+                path: ".env".into(),
+                content: "TOKEN=x\n".into(),
+                if_exists: IfExists::Overwrite,
+            },
+            &mut sink,
+            &mut never_asked,
+        )
+        .unwrap_err();
+        assert_eq!(err, ToolError::SecretDenied);
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join(".env")).unwrap(),
+            "TOKEN=abc123\n"
+        );
+
+        write_file(
+            &mut engine,
+            WriteFileArgs {
+                path: ".env.example".into(),
+                content: "TOKEN=\n".into(),
+                if_exists: IfExists::Error,
+            },
+            &mut sink,
+            &mut approve,
+        )
+        .unwrap();
     }
 }
