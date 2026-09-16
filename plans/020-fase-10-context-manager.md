@@ -89,9 +89,9 @@ Coder: as 10 tools atuais. Uma chamada de escrita no Explorer volta como erro ao
 - [x] Orçamento por seção com corte explícito
 - [x] Higiene: obsoleto / log enorme / duplicata
 - [x] Explorer como role (prompt + tools) nas perguntas; briefing nas tarefas de código
-- [ ] Eval scripted 3/3 sem regressão; tokens documentados (teste de redução no Core)
-- [ ] `bun run verify` exit 0
-- [ ] PR aberto
+- [x] Eval scripted 3/3 sem regressão; tokens documentados (teste de redução no Core)
+- [x] `bun run verify` exit 0
+- [x] PR aberto
 
 ## STOP conditions
 

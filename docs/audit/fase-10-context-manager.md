@@ -23,11 +23,22 @@ O frontend **não** monta contexto. Marcadores de tool result não confiável (S
 cargo run -q -p cd-ai-cli -- eval --scripted
 ```
 
-A suíte não cresceu (planos 016 D3 / 018 D10 / 019 D10 / 020 D8). Taxa scripted: **100% (3/3)** — sem regressão. `promptTokens` deixa de ser 0: o loop estima `chars/4` quando o `ScriptedModel` não reporta contagem do Ollama.
+A suíte não cresceu (planos 016 D3 / 018 D10 / 019 D10 / 020 D8). Taxa scripted medida em 2026-09-16: **100% (3/3)** — sem regressão. As três tarefas terminam `completed` / `verified` (o Verifier da Fase 8 continua a valer). Iterações: **4** em cada uma (o Explorer não consome um turno extra; D7).
 
-Tokens estimados por tarefa (scripted, soma dos turnos, 2026-09-16): ver o JSON gravado em `evals/results/` nesta PR. A redução face a um dump da árvore está no teste `managed_context_uses_fewer_tokens_than_dumping_the_tree` — as fixtures da suíte são demasiado pequenas para o mapa ser mais barato que o perfil antigo sozinho.
+`promptTokens` deixa de ser 0: o loop estima `chars/4` quando o `ScriptedModel` não reporta a contagem do Ollama.
 
-Nas três tarefas o Explorer **não** consome um turno extra (D7): o briefing é determinístico e o Coder corre o script de 4 turnos.
+| Tarefa | promptTokens (estimado) | genTokens | iterações |
+|---|---|---|---|
+| dobro | 2470 | 20 | 4 |
+| greet | 2402 | 20 | 4 |
+| soma | 2369 | 20 | 4 |
+| **total** | **7241** | **60** | |
+
+A baseline scripted da Fase 6 gravava `promptTokens: 0` porque o modelo scripted não estimava. Estes números não são comparáveis com essa coluna a zero — são a primeira medição honesta no dry-run.
+
+A prova de **menos tokens por tarefa** vs mandar a árvore inteira está no teste `managed_context_uses_fewer_tokens_than_dumping_the_tree` (30 módulos gordos + `soma.ts`: o mapa ranqueado cabe no orçamento; o dump dos corpos não). Nas fixtures minúsculas da suíte o mapa e o perfil antigo têm tamanho parecido; o ganho aparece em workspace real.
+
+`bun run verify` exit 0 nesta branch (2026-09-16).
 
 ## Como testar à mão
 
