@@ -8,8 +8,10 @@ import type { ChatEvent } from "./bindings/ChatEvent";
 import type { ChatRequest } from "./bindings/ChatRequest";
 import type { OllamaStatus } from "./bindings/OllamaStatus";
 import type { PermissionMode } from "./bindings/PermissionMode";
+import type { RollbackResult } from "./bindings/RollbackResult";
 import type { SandboxStatus } from "./bindings/SandboxStatus";
 import type { Settings } from "./bindings/Settings";
+import type { TaskHistoryEntry } from "./bindings/TaskHistoryEntry";
 import type { TaskSummary } from "./bindings/TaskSummary";
 import type { WorkspaceInfo } from "./bindings/WorkspaceInfo";
 
@@ -21,6 +23,8 @@ export type { ApprovalRequest } from "./bindings/ApprovalRequest";
 export type { ChatEvent } from "./bindings/ChatEvent";
 export type { ChatMessage } from "./bindings/ChatMessage";
 export type { ChatRequest } from "./bindings/ChatRequest";
+export type { Checkpoint } from "./bindings/Checkpoint";
+export type { CheckpointKind } from "./bindings/CheckpointKind";
 export type { CommandClass } from "./bindings/CommandClass";
 export type { CommandRecord } from "./bindings/CommandRecord";
 export type { CommandResult } from "./bindings/CommandResult";
@@ -38,6 +42,8 @@ export type { PermissionDecision } from "./bindings/PermissionDecision";
 export type { PermissionMode } from "./bindings/PermissionMode";
 export type { ReadFileArgs } from "./bindings/ReadFileArgs";
 export type { ReadFileResult } from "./bindings/ReadFileResult";
+export type { RollbackResult } from "./bindings/RollbackResult";
+export type { RollbackSkip } from "./bindings/RollbackSkip";
 export type { RunCommandArgs } from "./bindings/RunCommandArgs";
 export type { SandboxStatus } from "./bindings/SandboxStatus";
 export type { SearchArgs } from "./bindings/SearchArgs";
@@ -47,6 +53,7 @@ export type { SecretFileView } from "./bindings/SecretFileView";
 export type { SecretKind } from "./bindings/SecretKind";
 export type { Settings } from "./bindings/Settings";
 export type { StopReason } from "./bindings/StopReason";
+export type { TaskHistoryEntry } from "./bindings/TaskHistoryEntry";
 export type { TaskReport } from "./bindings/TaskReport";
 export type { TaskStatus } from "./bindings/TaskStatus";
 export type { TaskSummary } from "./bindings/TaskSummary";
@@ -123,6 +130,16 @@ export function steerTask(taskId: string, text: string): Promise<boolean> {
 
 export function listTasks(): Promise<TaskSummary[]> {
   return invoke<TaskSummary[]>("list_tasks");
+}
+
+/** Tasks of the open workspace, with files, commands and the baseline checkpoint. */
+export function workspaceHistory(): Promise<TaskHistoryEntry[]> {
+  return invoke<TaskHistoryEntry[]>("workspace_history");
+}
+
+/** Restores this task's agent writes. `force` overwrites files the user changed after the agent. */
+export function rollbackTask(taskId: string, force = false): Promise<RollbackResult> {
+  return invoke<RollbackResult>("rollback_task", { taskId, force });
 }
 
 /** Every event a task recorded, for replaying a conversation from disk. */

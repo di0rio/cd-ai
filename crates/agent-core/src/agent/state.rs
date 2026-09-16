@@ -94,6 +94,46 @@ pub struct FileChange {
     pub hash_after: String,
 }
 
+/// One file the safe rollback refused to touch, with the diff the user needs to decide.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "camelCase")]
+pub struct RollbackSkip {
+    pub path: String,
+    pub reason: String,
+    pub diff: String,
+}
+
+/// What a rollback did. Paths not listed here were never candidates (the agent did not write them).
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "camelCase")]
+pub struct RollbackResult {
+    pub restored: Vec<String>,
+    pub skipped: Vec<RollbackSkip>,
+    pub already_clean: Vec<String>,
+}
+
+/// Why a shadow-repo commit was taken (plan 019, SPEC §21).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "camelCase")]
+pub enum CheckpointKind {
+    Baseline,
+    AfterWrite,
+    BeforeDestructive,
+}
+
+/// One commit in the shadow repo, hanging off the task that produced it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "camelCase")]
+pub struct Checkpoint {
+    pub commit: String,
+    pub kind: CheckpointKind,
+    pub created_at: String,
+}
+
 /// One command the task ran. Evidence for the report (SPEC §2).
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
 #[ts(export)]
@@ -153,6 +193,12 @@ pub struct TaskState {
     pub files_read: Vec<String>,
     pub files_changed: Vec<FileChange>,
     pub commands: Vec<CommandRecord>,
+    /// Shadow-repo commits of this task (plan 019). Absent from states written before Fase 9.
+    #[serde(default)]
+    pub checkpoints: Vec<Checkpoint>,
+    /// Set when the user rolled this task back (plan 019). Absent from older states.
+    #[serde(default)]
+    pub rolled_back: bool,
     /// Redacted before reaching disk (D8).
     pub errors: Vec<String>,
     pub retries: u32,
@@ -183,6 +229,8 @@ impl TaskState {
             files_read: Vec::new(),
             files_changed: Vec::new(),
             commands: Vec::new(),
+            checkpoints: Vec::new(),
+            rolled_back: false,
             errors: Vec::new(),
             retries: 0,
             metrics: TaskMetrics::default(),
@@ -210,6 +258,26 @@ impl TaskState {
             continues: self.continues.clone(),
         }
     }
+
+    pub fn history_entry(&self) -> TaskHistoryEntry {
+        TaskHistoryEntry {
+            summary: self.summary(),
+            files_changed: self
+                .files_changed
+                .iter()
+                .map(|change| change.path.clone())
+                .collect(),
+            command_count: self.commands.len() as u32,
+            checkpoint: self
+                .checkpoints
+                .iter()
+                .find(|checkpoint| checkpoint.kind == CheckpointKind::Baseline)
+                .map(|checkpoint| checkpoint.commit.clone()),
+            rolled_back: self.rolled_back,
+            created_at: self.created_at.clone(),
+            metrics: self.metrics,
+        }
+    }
 }
 
 /// A task as listed in the sidebar and by the CLI.
@@ -224,6 +292,21 @@ pub struct TaskSummary {
     pub model: String,
     /// Id of the task this one continues, so a list can show a chain instead of loose fragments.
     pub continues: Option<String>,
+}
+
+/// A task as listed in the workspace history (plan 019, SPEC §24.1).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskHistoryEntry {
+    pub summary: TaskSummary,
+    pub files_changed: Vec<String>,
+    #[ts(type = "number")]
+    pub command_count: u32,
+    pub checkpoint: Option<String>,
+    pub rolled_back: bool,
+    pub created_at: String,
+    pub metrics: TaskMetrics,
 }
 
 /// What the task delivered. `validated` is true only when the Verifier had evidence (plan 018).
@@ -337,6 +420,8 @@ mod tests {
         .unwrap();
         assert_eq!(state.continues, None);
         assert_eq!(state.summary().continues, None);
+        assert!(state.checkpoints.is_empty());
+        assert!(!state.rolled_back);
     }
 
     #[test]

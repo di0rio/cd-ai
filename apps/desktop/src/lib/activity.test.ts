@@ -376,6 +376,25 @@ describe("applyAgentEvent", () => {
     });
   });
 
+  test("rollbackCompleted marks the task and records what was restored", () => {
+    const next = applyAgentEvent(
+      task({ events: [{ kind: "report", validated: true, summary: "ok", checks: [] }] }),
+      agentMessage({
+        event: "rollbackCompleted",
+        data: {
+          restored: ["src/soma.ts"],
+          skipped: [{ path: "README.md", reason: "alterado pelo usuário depois da escrita do agente", diff: "+user" }],
+        },
+      }),
+    );
+    expect(next.rolledBack).toBe(true);
+    expect(next.events.at(-1)).toEqual({
+      kind: "rollback",
+      restored: ["src/soma.ts"],
+      skipped: [{ path: "README.md", reason: "alterado pelo usuário depois da escrita do agente", diff: "+user" }],
+    });
+  });
+
   test("taskFinished closes the task with an unvalidated report and its evidence", () => {
     const next = applyAgentEvent(
       task({ events: [{ kind: "user", text: "corrija a soma" }] }),
@@ -567,6 +586,7 @@ describe("applyAgentEvent", () => {
       { event: "toolCallFinished", data: { tool: "read_file", ok: true, detail: "3 linhas", output: null } },
       { event: "contextTrimmed", data: { removedMessages: 2, estimatedTokens: 900 } },
       { event: "retrying", data: { attempt: 2, reason: "timeout" } },
+      { event: "checkpointCreated", data: { commit: "abc123", kind: "baseline" } },
     ] as AgentEventBody[]) {
       expect(applyAgentEvent(before, agentMessage(body))).toBe(before);
     }

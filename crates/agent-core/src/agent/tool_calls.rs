@@ -14,8 +14,9 @@ use crate::ollama::ToolSpec;
 use crate::redactor;
 use crate::tool_call::ParsedToolCall;
 use crate::tools::{
-    DEFAULT_COMMAND_TIMEOUT_MS, EditFileArgs, IfExists, ListDirectoryArgs, ReadFileArgs,
-    RunCommandArgs, SearchArgs, ToolError, ToolOutcome, ToolOutput, ToolRequest, WriteFileArgs,
+    DEFAULT_COMMAND_TIMEOUT_MS, EditFileArgs, GitBranchArgs, GitDiffArgs, GitLogArgs,
+    GitStatusArgs, IfExists, ListDirectoryArgs, ReadFileArgs, RunCommandArgs, SearchArgs,
+    ToolError, ToolOutcome, ToolOutput, ToolRequest, WriteFileArgs,
 };
 
 /// A tool result longer than this is cut before it goes back to the model (plan 015).
@@ -23,17 +24,27 @@ pub const MAX_TOOL_RESULT_CHARS: usize = 12_000;
 
 /// The names offered to the model, in the order of the plan's table. The text fallback accepts
 /// exactly these and nothing else.
-pub const TOOL_NAMES: [&str; 6] = [
+pub const TOOL_NAMES: [&str; 10] = [
     "read_file",
     "list_directory",
     "search",
     "edit_file",
     "write_file",
     "run_command",
+    "git_status",
+    "git_diff",
+    "git_log",
+    "git_branch",
 ];
 
 /// Args that are not strings in the native shape, so the text fallback knows what to parse.
-const INTEGER_ARGS: [&str; 4] = ["start_line", "end_line", "max_results", "timeout_ms"];
+const INTEGER_ARGS: [&str; 5] = [
+    "start_line",
+    "end_line",
+    "max_results",
+    "timeout_ms",
+    "max_count",
+];
 const BOOLEAN_ARGS: [&str; 1] = ["regex"];
 const ARRAY_ARGS: [&str; 1] = ["argv"];
 
@@ -129,6 +140,47 @@ pub fn tool_specs() -> Vec<ToolSpec> {
                 "required": ["argv"],
             }),
         ),
+        ToolSpec::function(
+            "git_status",
+            "Show the user's git status (porcelain). Read-only. Errors if the workspace is not a \
+             git repository. Prefer this over run_command git status.",
+            serde_json::json!({
+                "type": "object",
+                "properties": {},
+                "required": [],
+            }),
+        ),
+        ToolSpec::function(
+            "git_diff",
+            "Show the user's unstaged git diff. Read-only. Optional path relative to the workspace.",
+            serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string", "description": "File or directory to diff. Default: the whole workspace." },
+                },
+                "required": [],
+            }),
+        ),
+        ToolSpec::function(
+            "git_log",
+            "Show recent commits in the user's repository. Read-only.",
+            serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "max_count": { "type": "integer", "description": "How many commits to list. Default 20, maximum 100." },
+                },
+                "required": [],
+            }),
+        ),
+        ToolSpec::function(
+            "git_branch",
+            "List local branches in the user's repository. Read-only.",
+            serde_json::json!({
+                "type": "object",
+                "properties": {},
+                "required": [],
+            }),
+        ),
     ]
 }
 
@@ -185,6 +237,14 @@ pub fn to_request(name: &str, args: &Value) -> Result<ToolRequest, String> {
                 optional_u64(args, "timeout_ms")?.unwrap_or(DEFAULT_COMMAND_TIMEOUT_MS),
             ),
         })),
+        "git_status" => Ok(ToolRequest::GitStatus(GitStatusArgs {})),
+        "git_diff" => Ok(ToolRequest::GitDiff(GitDiffArgs {
+            path: optional_string(args, "path")?,
+        })),
+        "git_log" => Ok(ToolRequest::GitLog(GitLogArgs {
+            max_count: optional_u64(args, "max_count")?,
+        })),
+        "git_branch" => Ok(ToolRequest::GitBranch(GitBranchArgs {})),
         // `TOOL_NAMES` is checked above, so this is unreachable in practice.
         other => Err(format!("tool desconhecida: {other}")),
     }
@@ -312,6 +372,46 @@ pub fn render_outcome(outcome: &ToolOutcome) -> String {
                 format!("{head}\n{}", result.output)
             }
         }
+        ToolOutput::GitStatus(result) => {
+            if result.output.is_empty() {
+                "(limpo)".to_string()
+            } else {
+                result.output.clone()
+            }
+        }
+        ToolOutput::GitDiff(result) => {
+            if result.diff.is_empty() {
+                "(sem diff)".to_string()
+            } else {
+                result.diff.clone()
+            }
+        }
+        ToolOutput::GitLog(result) => {
+            if result.entries.is_empty() {
+                "(sem commits)".to_string()
+            } else {
+                result
+                    .entries
+                    .iter()
+                    .map(|entry| {
+                        format!(
+                            "{} {} {}",
+                            &entry.hash[..entry.hash.len().min(8)],
+                            entry.subject,
+                            entry.at
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            }
+        }
+        ToolOutput::GitBranch(result) => {
+            if result.output.is_empty() {
+                "(sem branches)".to_string()
+            } else {
+                result.output.clone()
+            }
+        }
     };
 
     if let Some(truncation) = &outcome.truncated {
@@ -352,6 +452,10 @@ pub fn outcome_detail(outcome: &ToolOutcome) -> String {
                 }
             }
         }
+        Some(ToolOutput::GitStatus(_)) => "git status".to_string(),
+        Some(ToolOutput::GitDiff(_)) => "git diff".to_string(),
+        Some(ToolOutput::GitLog(result)) => format!("{} commits", result.entries.len()),
+        Some(ToolOutput::GitBranch(_)) => "git branch".to_string(),
         None => "sem resultado".to_string(),
     }
 }
@@ -487,8 +591,8 @@ pub fn render_error(error: &ToolError) -> String {
 mod tests {
     use super::*;
     use crate::tools::{
-        CommandResult, DirEntry, EditFileResult, ListDirectoryResult, ReadFileResult, SearchMatch,
-        SearchResult, Truncation, WriteFileResult,
+        CommandResult, DirEntry, EditFileResult, GitDiffArgs, GitStatusArgs, ListDirectoryResult,
+        ReadFileResult, SearchMatch, SearchResult, Truncation, WriteFileResult,
     };
     use std::collections::BTreeMap;
 
@@ -503,7 +607,7 @@ mod tests {
     }
 
     #[test]
-    fn specs_cover_the_six_tools_with_required_fields() {
+    fn specs_cover_the_offered_tools_with_required_fields() {
         let specs = tool_specs();
         let names: Vec<&str> = specs
             .iter()
@@ -516,7 +620,10 @@ mod tests {
             assert!(spec.function.parameters["required"].is_array());
             assert!(!spec.function.description.is_empty());
         }
-        let run = specs.last().unwrap();
+        let run = specs
+            .iter()
+            .find(|spec| spec.function.name == "run_command")
+            .unwrap();
         assert_eq!(
             run.function.parameters["properties"]["argv"]["type"],
             "array"
@@ -601,6 +708,16 @@ mod tests {
                 argv: vec!["cargo".to_string(), "test".to_string()],
                 cwd: Some("crates".to_string()),
                 timeout_ms: Some(DEFAULT_COMMAND_TIMEOUT_MS),
+            })
+        );
+
+        let request = to_request("git_status", &serde_json::json!({})).unwrap();
+        assert_eq!(request, ToolRequest::GitStatus(GitStatusArgs {}));
+        let request = to_request("git_diff", &serde_json::json!({ "path": "src/a.rs" })).unwrap();
+        assert_eq!(
+            request,
+            ToolRequest::GitDiff(GitDiffArgs {
+                path: Some("src/a.rs".to_string())
             })
         );
     }
