@@ -166,6 +166,11 @@ pub struct TaskMetrics {
     #[serde(default)]
     #[ts(type = "number")]
     pub approval_wait_ms: u64,
+    /// Sum of `chars/4` estimates at each model turn (plan 020). The provider's own
+    /// `prompt_tokens` stays in `prompt_tokens`; ScriptedModel leaves that at 0.
+    #[serde(default)]
+    #[ts(type = "number")]
+    pub estimated_prompt_tokens: u64,
 }
 
 /// Everything about a task that survives a restart. Written to `tasks/<id>/state.json`.
@@ -199,6 +204,12 @@ pub struct TaskState {
     /// Set when the user rolled this task back (plan 019). Absent from older states.
     #[serde(default)]
     pub rolled_back: bool,
+    /// Role the model is running as (plan 020). Absent from older states → Coder.
+    #[serde(default)]
+    pub role: crate::agent::role::AgentRole,
+    /// Orchestrator label (plan 020). Absent from older states → Normal.
+    #[serde(default)]
+    pub task_kind: crate::agent::role::TaskKind,
     /// Redacted before reaching disk (D8).
     pub errors: Vec<String>,
     pub retries: u32,
@@ -231,6 +242,8 @@ impl TaskState {
             commands: Vec::new(),
             checkpoints: Vec::new(),
             rolled_back: false,
+            role: crate::agent::role::AgentRole::Coder,
+            task_kind: crate::agent::role::TaskKind::Normal,
             errors: Vec::new(),
             retries: 0,
             metrics: TaskMetrics::default(),

@@ -4,6 +4,7 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
+use crate::agent::role::AgentRole;
 use crate::agent::state::{
     CheckpointKind, RollbackSkip, StopReason, TaskReport, TaskStatus, TaskSummary,
 };
@@ -75,6 +76,24 @@ pub enum AgentEvent {
         removed_messages: u32,
         #[ts(type = "number")]
         estimated_tokens: u64,
+    },
+    /// A prompt section was clipped to its budget (plan 020).
+    ContextBudgetCut {
+        section: String,
+        #[ts(type = "number")]
+        tokens_before: u64,
+        #[ts(type = "number")]
+        tokens_after: u64,
+    },
+    /// History was compacted into an engine-written summary (plan 020 / decision 0008).
+    ContextCompacted {
+        #[ts(type = "number")]
+        estimated_tokens: u64,
+        reason: String,
+    },
+    RoleChanged {
+        role: AgentRole,
+        reason: String,
     },
     Retrying {
         attempt: u32,

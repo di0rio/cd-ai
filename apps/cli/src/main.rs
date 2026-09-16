@@ -8,8 +8,8 @@ use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
 use agent_core::agent::{
-    AgentEvent, AgentEventMessage, AgentLimits, OllamaModel, StopReason, TaskContext, TaskReport,
-    TaskStart, TaskState, TaskStatus, TaskStore, run_task, workspace_key,
+    AgentEvent, AgentEventMessage, AgentLimits, AgentRole, OllamaModel, StopReason, TaskContext,
+    TaskReport, TaskStart, TaskState, TaskStatus, TaskStore, run_task, workspace_key,
 };
 use agent_core::eval::{EvalDriver, EvalOptions, EvalTask, default_report_path, run_suite};
 use agent_core::ollama::{ChatEvent, ChatMessage, ChatRequest, OllamaClient};
@@ -444,8 +444,8 @@ async fn eval_cmd(args: impl Iterator<Item = String>) -> ExitCode {
             for row in &report.tasks {
                 let mark = if row.success { "ok" } else { "falhou" };
                 eprintln!(
-                    "  {:<12} {mark}  {} iterações  {} ms",
-                    row.id, row.iterations, row.duration_ms
+                    "  {:<12} {mark}  {} iterações  ~{} tok  {} ms",
+                    row.id, row.iterations, row.estimated_prompt_tokens, row.duration_ms
                 );
             }
             let scored = report.passed + report.failed;
@@ -945,6 +945,20 @@ impl Printer {
             } => {
                 self.close_lines();
                 eprintln!("contexto cortado: {removed_messages} resultado(s) antigo(s) omitido(s)");
+            }
+            AgentEvent::ContextCompacted {
+                estimated_tokens, ..
+            } => {
+                self.close_lines();
+                eprintln!("contexto compactado (~{estimated_tokens} tok)");
+            }
+            AgentEvent::RoleChanged { role, reason } => {
+                self.close_lines();
+                let label = match role {
+                    AgentRole::Explorer => "Explorer",
+                    AgentRole::Coder => "Coder",
+                };
+                eprintln!("role: {label} ({reason})");
             }
             AgentEvent::TaskFinished {
                 status,
