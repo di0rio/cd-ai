@@ -81,6 +81,14 @@ Escrita em 2026-09-16 sobre o `main` com as Fases 0–8 fechadas (PR #5).
 |------|--------|-----------|---------|------------|--------|
 | 019 | Fase 9 — Checkpoints, Git e histórico (shadow repo, rollback seguro, tools de git, histórico por workspace) | P1 | L | 018 | DONE |
 
+### Geração 8
+
+Escrita em 2026-09-16 sobre o `main` com as Fases 0–9 fechadas (PR #7).
+
+| Plano | Título | Prioridade | Esforço | Depende de | Status |
+|------|--------|-----------|---------|------------|--------|
+| 020 | Fase 10 — Context Manager completo (repo map, orçamento por seção, cache, higiene, Explorer) | P1 | L | 019 | IN PROGRESS |
+
 Valores de status: TODO | IN PROGRESS | DONE | BLOCKED (com motivo de uma linha) | REJECTED (com justificativa de uma linha).
 
 ## Notas de dependência
@@ -126,6 +134,10 @@ Valores de status: TODO | IN PROGRESS | DONE | BLOCKED (com motivo de uma linha)
 ### Geração 7
 
 - **019 depois do 018.** O shadow git vive no diretório de dados do app, não no workspace. Rollback compara `hash_after` com o disco e restaura do baseline; não usa o `.git` do utilizador. A suíte de eval não cresce.
+
+### Geração 8
+
+- **020 depois do 019.** O Context Manager vive no `agent-core`. Explorer nas tarefas de código é briefing determinístico (mapa + notas), não um turno extra de LLM — senão o eval scripted quebra. A suíte não cresce.
 
 ## Achados considerados e descartados
 
