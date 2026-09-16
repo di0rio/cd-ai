@@ -3,8 +3,11 @@ use std::process::{Child, Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crate::permissions::{ApprovalAction, CommandClass, PermissionDecision, classify};
+use crate::permissions::{
+    ApprovalAction, CommandClass, PermissionDecision, PermissionKind, classify,
+};
 use crate::redactor;
+use crate::sandbox::{SandboxExec, constrain};
 use crate::tools::cancel::CancelToken;
 use crate::tools::{
     CommandResult, DEFAULT_COMMAND_TIMEOUT_MS, EventSink, MAX_OUTPUT_BYTES, Responder,
@@ -45,23 +48,22 @@ pub fn run_command(
         None => engine.workspace.root().to_path_buf(),
     };
 
-    // §20.4: `read`/`validate` is `auto` in all three permission modes, so it never opens an
-    // approval. The decision comes only from this deterministic classification of the argv, never
-    // from a model claim (§20.5); compound argv was already refused above, so a mixed command
-    // cannot reach the automatic path.
+    // §20.4: `read`/`validate` is `auto` in all three permission modes. Write commands become
+    // auto only in AUTO/FULL ACCESS when a filesystem sandbox is actually on (D6). Network,
+    // destructive and unknown always ask. The decision never comes from a model claim (§20.5).
     let class = classify(argv);
-    let decision = match class {
-        CommandClass::Read | CommandClass::Validate => PermissionDecision::Auto,
-        _ => engine.ask_approval(
-            events,
-            responder,
-            ApprovalAction::RunCommand {
-                argv: argv.clone(),
-                class: class.clone(),
-                cwd: crate::tools::display_path(&engine.workspace, &cwd),
-            },
-        ),
-    };
+    let decision = engine.authorize(
+        events,
+        responder,
+        PermissionKind::RunCommand {
+            class: class.clone(),
+        },
+        ApprovalAction::RunCommand {
+            argv: argv.clone(),
+            class: class.clone(),
+            cwd: crate::tools::display_path(&engine.workspace, &cwd),
+        },
+    );
     if decision == PermissionDecision::Denied {
         return Err(ToolError::PermissionDenied {
             reason: "comando negado".to_string(),
@@ -70,6 +72,9 @@ pub fn run_command(
 
     let id = engine.command_next_id;
     engine.command_next_id += 1;
+    // Network is released only for an approved `network` command (D3). Every other class,
+    // including a granted `unknown`, is born without a route.
+    let allow_network = class == CommandClass::Network && decision == PermissionDecision::Granted;
     engine.emit(
         events,
         crate::events::ToolEvent::CommandStarted {
@@ -89,6 +94,13 @@ pub fn run_command(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     platform_spawn_setup(&mut command);
+    constrain(
+        &mut command,
+        SandboxExec {
+            workspace: engine.workspace.root().to_path_buf(),
+            allow_network,
+        },
+    );
     let mut child = command
         .spawn()
         .map_err(|error| ToolError::Io(format!("não foi possível executar: {error}")))?;
@@ -649,5 +661,102 @@ mod tests {
         .unwrap();
         assert_eq!(result.exit_code, Some(0));
         assert!(result.output.contains("marcador.txt"));
+    }
+
+    #[test]
+    fn auto_mode_write_command_runs_without_approval_when_fs_sandbox_is_on() {
+        let dir = tempdir().unwrap();
+        let ws = crate::workspace::Workspace::open(dir.path()).unwrap();
+        let mut engine =
+            ToolEngine::with_mode(ws, "task_cmd", crate::permissions::PermissionMode::Auto);
+        engine.set_sandbox_caps(crate::sandbox::SandboxCapabilities {
+            filesystem: true,
+            network_block: true,
+        });
+        let mut asked = 0usize;
+        let mut count = |_: crate::permissions::ApprovalRequest| {
+            asked += 1;
+            crate::permissions::ApprovalResponse::Granted
+        };
+        let mut sink = |_: crate::events::ToolEventMessage| {};
+
+        let (decision, _) = run_command(
+            &mut engine,
+            RunCommandArgs {
+                argv: cv(&["git", "add", "-A"]),
+                cwd: None,
+                timeout_ms: Some(30_000),
+            },
+            &mut sink,
+            &mut count,
+        )
+        .unwrap();
+
+        assert_eq!(asked, 0);
+        assert_eq!(decision, PermissionDecision::Auto);
+    }
+
+    #[test]
+    fn auto_mode_write_command_asks_without_a_filesystem_sandbox() {
+        let dir = tempdir().unwrap();
+        let ws = crate::workspace::Workspace::open(dir.path()).unwrap();
+        let mut engine =
+            ToolEngine::with_mode(ws, "task_cmd", crate::permissions::PermissionMode::Auto);
+        engine.set_sandbox_caps(crate::sandbox::SandboxCapabilities {
+            filesystem: false,
+            network_block: false,
+        });
+        let mut asked = 0usize;
+        let mut count = |_: crate::permissions::ApprovalRequest| {
+            asked += 1;
+            crate::permissions::ApprovalResponse::Granted
+        };
+        let mut sink = |_: crate::events::ToolEventMessage| {};
+
+        let _ = run_command(
+            &mut engine,
+            RunCommandArgs {
+                argv: cv(&["git", "add", "-A"]),
+                cwd: None,
+                timeout_ms: Some(30_000),
+            },
+            &mut sink,
+            &mut count,
+        );
+
+        assert_eq!(asked, 1);
+    }
+
+    #[test]
+    fn auto_mode_still_asks_for_network_commands() {
+        let dir = tempdir().unwrap();
+        let ws = crate::workspace::Workspace::open(dir.path()).unwrap();
+        let mut engine =
+            ToolEngine::with_mode(ws, "task_cmd", crate::permissions::PermissionMode::Auto);
+        engine.set_sandbox_caps(crate::sandbox::SandboxCapabilities {
+            filesystem: true,
+            network_block: true,
+        });
+        let mut asked = 0usize;
+        let mut count = |_: crate::permissions::ApprovalRequest| {
+            asked += 1;
+            crate::permissions::ApprovalResponse::Denied { reason: None }
+        };
+        let mut sink = |_: crate::events::ToolEventMessage| {};
+
+        let err = run_command(
+            &mut engine,
+            RunCommandArgs {
+                argv: cv(&["curl", "-s", "http://127.0.0.1"]),
+                cwd: None,
+                timeout_ms: Some(2_000),
+            },
+            &mut sink,
+            &mut count,
+        )
+        .unwrap_err();
+
+        assert_eq!(asked, 1);
+        assert!(matches!(err, ToolError::PermissionDenied { .. }));
     }
 }

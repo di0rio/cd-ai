@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::Path;
 
-use crate::permissions::{ApprovalAction, PermissionDecision};
+use crate::permissions::{ApprovalAction, PermissionDecision, PermissionKind};
 use crate::redactor;
 use crate::tools::{
     DirEntry, EventSink, ListDirectoryArgs, ListDirectoryResult, MAX_LIST_ENTRIES, MAX_READ_BYTES,
@@ -19,16 +19,16 @@ pub fn read_file(
     let canonical = engine.workspace.resolve(&args.path)?;
     let secret_kind = redactor::detect_path_secret(&canonical);
 
-    let decision = match &secret_kind {
-        Some(_) => engine.ask_approval(
-            events,
-            responder,
-            ApprovalAction::ReadFile {
-                path: display_path(&engine.workspace, &canonical),
-            },
-        ),
-        None => PermissionDecision::Auto,
-    };
+    let decision = engine.authorize(
+        events,
+        responder,
+        PermissionKind::ReadFile {
+            secret: secret_kind.is_some(),
+        },
+        ApprovalAction::ReadFile {
+            path: display_path(&engine.workspace, &canonical),
+        },
+    );
     if decision == PermissionDecision::Denied {
         return Err(ToolError::PermissionDenied {
             reason: "leitura de arquivo de secret negada".to_string(),
