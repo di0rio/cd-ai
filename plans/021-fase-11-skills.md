@@ -107,7 +107,7 @@ escrita continua recusada no loop
 - [x] Eventos `skillsDetected` / `skillLoaded` / `skillSkipped` com motivo
 - [x] Eval scripted 3/3; `selectedSkills` no JSON; audit com evidência de ganho ou neutralidade
 - [x] `bun run verify` exit 0
-- [ ] PR aberto
+- [x] PR aberto
 
 ## STOP conditions
 
