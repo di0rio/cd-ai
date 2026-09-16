@@ -42,7 +42,10 @@ pub fn search(engine: &mut ToolEngine, args: SearchArgs) -> Result<SearchResult,
     }
     .map_err(|error| ToolError::Io(format!("regex inválida: {error}")))?;
 
-    let max_results = args.max_results.unwrap_or(MAX_SEARCH_RESULTS);
+    let max_results = args
+        .max_results
+        .unwrap_or(MAX_SEARCH_RESULTS)
+        .min(MAX_SEARCH_RESULTS);
     let mut collector = Collector {
         current_path: String::new(),
         stored: Vec::new(),
@@ -63,11 +66,8 @@ pub fn search(engine: &mut ToolEngine, args: SearchArgs) -> Result<SearchResult,
     let walker = builder.build();
 
     let mut searcher = SearcherBuilder::new().line_number(true).build();
-    for entry in walker {
-        let entry = match entry {
-            Ok(entry) => entry,
-            Err(error) => return Err(ToolError::Io(error.to_string())),
-        };
+    // An entry that cannot be walked or read is skipped: one locked file must not hide the rest.
+    for entry in walker.flatten() {
         let is_file = entry
             .file_type()
             .is_some_and(|file_type| file_type.is_file());
@@ -75,10 +75,17 @@ pub fn search(engine: &mut ToolEngine, args: SearchArgs) -> Result<SearchResult,
             continue;
         }
         let path = entry.path();
+        // Same rule as read_file: a match count over a secret file is a way to read it.
+        if redactor::detect_path_secret(path).is_some() {
+            continue;
+        }
         collector.current_path = display_path(&engine.workspace, path);
-        searcher
+        if searcher
             .search_path(&matcher, path, &mut collector)
-            .map_err(|error| ToolError::Io(error.to_string()))?;
+            .is_err()
+        {
+            continue;
+        }
         if collector.stopped {
             break;
         }
@@ -336,5 +343,77 @@ mod tests {
         )
         .unwrap_err();
         assert!(matches!(err, ToolError::NotADirectory));
+    }
+
+    #[test]
+    fn skips_secret_files() {
+        let dir = tempdir().unwrap();
+        // Not hidden and not ignored: only the secret-path rule keeps these out.
+        std::fs::write(dir.path().join("credentials.json"), "senha-do-banco\n").unwrap();
+        std::fs::write(dir.path().join("server.key"), "senha-do-banco\n").unwrap();
+        std::fs::write(dir.path().join("notas.txt"), "senha-do-banco\n").unwrap();
+        let mut engine = boot(dir.path());
+
+        let result = search(
+            &mut engine,
+            SearchArgs {
+                query: "senha-do-banco".into(),
+                regex: false,
+                path: None,
+                max_results: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(result.total, 1);
+        assert_eq!(result.matches[0].path, "notas.txt");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_unreadable_file_does_not_abort_the_search() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempdir().unwrap();
+        let locked = dir.path().join("a-trancado.txt");
+        std::fs::write(&locked, "alvo\n").unwrap();
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+        if std::fs::read(&locked).is_ok() {
+            return; // running as root: nothing is unreadable
+        }
+        std::fs::write(dir.path().join("b.txt"), "alvo\n").unwrap();
+        let mut engine = boot(dir.path());
+
+        let result = search(
+            &mut engine,
+            SearchArgs {
+                query: "alvo".into(),
+                regex: false,
+                path: None,
+                max_results: None,
+            },
+        )
+        .unwrap();
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert_eq!(result.total, 1);
+        assert_eq!(result.matches[0].path, "b.txt");
+    }
+
+    #[test]
+    fn max_results_is_capped() {
+        let dir = tempdir().unwrap();
+        let body: String = (0..(MAX_SEARCH_RESULTS + 50)).map(|_| "x\n").collect();
+        std::fs::write(dir.path().join("a.txt"), body).unwrap();
+        let mut engine = boot(dir.path());
+
+        let result = search(
+            &mut engine,
+            SearchArgs {
+                query: "x".into(),
+                regex: false,
+                path: None,
+                max_results: Some(usize::MAX),
+            },
+        )
+        .unwrap();
+        assert_eq!(result.matches.len(), MAX_SEARCH_RESULTS);
     }
 }

@@ -254,12 +254,12 @@ fn drain(mut pipe: impl std::io::Read, cap: usize) -> String {
         match pipe.read(&mut chunk) {
             Ok(0) => break,
             Ok(n) => {
+                // Keep draining past the cap: stopping leaves git blocked on a full pipe
+                // (or killed by SIGPIPE), and a large diff then fails instead of being cut.
                 let room = cap.saturating_sub(buf.len());
                 buf.extend_from_slice(&chunk[..n.min(room)]);
-                if buf.len() >= cap {
-                    break;
-                }
             }
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
             Err(_) => break,
         }
     }
@@ -404,5 +404,50 @@ mod tests {
             &mut grant,
         );
         assert!(outcome.ok);
+    }
+
+    #[test]
+    fn large_diff_is_capped_instead_of_timing_out() {
+        if !git_works() {
+            return;
+        }
+        let repo = tempdir().unwrap();
+        let body: String = (0..40_000).map(|n| format!("linha {n}\n")).collect();
+        fs::write(repo.path().join("big.txt"), &body).unwrap();
+        run_ok(repo.path(), &["init"]);
+        run_ok(repo.path(), &["add", "big.txt"]);
+        run_ok(
+            repo.path(),
+            &[
+                "-c",
+                "user.name=dev",
+                "-c",
+                "user.email=dev@local",
+                "-c",
+                "commit.gpgsign=false",
+                "commit",
+                "-m",
+                "init",
+            ],
+        );
+        fs::write(repo.path().join("big.txt"), body.replace("linha", "LINHA")).unwrap();
+
+        let ws = Workspace::open(repo.path()).unwrap();
+        let mut engine =
+            ToolEngine::with_mode(ws, "task_git", crate::permissions::PermissionMode::Auto);
+        let mut sink = |_: ToolEventMessage| {};
+        let mut grant = |_: ApprovalRequest| ApprovalResponse::Granted;
+        let started = Instant::now();
+        let outcome = engine.run_tool(
+            ToolRequest::GitDiff(GitDiffArgs { path: None }),
+            &mut sink,
+            &mut grant,
+        );
+        assert!(outcome.ok, "{outcome:?}");
+        assert!(started.elapsed() < GIT_TIMEOUT);
+        let crate::tools::ToolOutput::GitDiff(result) = outcome.data.unwrap() else {
+            panic!("git_diff");
+        };
+        assert!(result.diff.len() <= MAX_OUTPUT_BYTES);
     }
 }
