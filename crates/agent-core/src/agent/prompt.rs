@@ -1,9 +1,9 @@
-//! The basic context of a task (plan 015, D10): a short system prompt in English, the
-//! deterministic workspace profile, and an explicit way to cut the window when it fills up.
+//! The basic context of a task: a short system prompt in English, the deterministic
+//! workspace profile, and the explicit cuts used when the window fills up.
 //!
-//! There is no automatic compaction here. Trimming is visible (the loop emits `ContextTrimmed`)
-//! and, past the hard ceiling, the task stops instead of silently losing the beginning of the
-//! conversation — summarising is phase 10 (decision 0008).
+//! Hygiene, section budgets, the repo map and automatic compaction live in `context`
+//! (plan 020 / decision 0008). This module keeps the prompt text, the untrusted-result
+//! markers, and the oldest-tool-result trim.
 
 use crate::agent::state::{TaskState, TaskStatus};
 use crate::ollama::ChatMessage;

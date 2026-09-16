@@ -6,6 +6,7 @@ pub mod ollama;
 pub mod permissions;
 pub mod redactor;
 pub mod sandbox;
+pub mod syntax;
 pub mod tool_call;
 pub mod tools;
 pub mod workspace;

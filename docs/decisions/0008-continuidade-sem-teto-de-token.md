@@ -1,6 +1,6 @@
-# 0008 — Continuidade sem limite financeiro ou quota artificial de tokens (proposta)
+# 0008 — Continuidade sem limite financeiro ou quota artificial de tokens
 
-Status: **proposta** (2026-09-11, a validar antes da Fase 10).
+Status: **aceita** (2026-09-16, Fase 10).
 
 ## Contexto
 
@@ -18,7 +18,9 @@ O Context Manager (SPEC §16) e o sistema de checkpoints (SPEC §21) devem supor
 2. **Estado no disco, não na memória do modelo.** O progresso real da tarefa vive nos arquivos, no git e nos checkpoints. O que precisa ficar no contexto é o resumo e referências. Detalhes são re-lidos via tools (`read_file`, `search`) sob demanda.
 3. **Só a segurança pausa.** O agente não para por custo ou quota de tokens. Interrupção só por approval gate (decisão 0001) ou cancellation explícita do usuário.
 
-Essa escolha já é contemplada pelo roadmap (Fase 10 — Context Manager) e pelos checkpoints (Fase 8). Esta decisão formaliza a intenção de que a compactação deve funcionar **automaticamente**, sem intervenção do usuário.
+Essa escolha já é contemplada pelo roadmap (Fase 10 — Context Manager) e pelos checkpoints (Fase 9). Esta decisão formaliza a intenção de que a compactação deve funcionar **automaticamente**, sem intervenção do usuário.
+
+Implementado no plano 020: higiene → omitir tools antigas → condensar o meio da conversa num resumo só com fatos do engine (`files_changed`, `commands`). `ContextExhausted` permanece só quando o pedido do usuário sozinho não cabe na janela (o pedido nunca é cortado).
 
 ## Conexões
 
@@ -30,6 +32,5 @@ Essa escolha já é contemplada pelo roadmap (Fase 10 — Context Manager) e pel
 
 ## Revisitar quando
 
-- A Fase 10 (Context Manager) estiver em implementação;
-- O eval medir qualidade de compaction/continuação (deve mostrar sem regressão);
+- O eval ao vivo medir qualidade de compaction/continuação (deve mostrar sem regressão e, se possível, menos `promptTokens` por tarefa);
 - O hardware mudar (mais RAM/VRAM ou modelos com janela maior que 32k).
