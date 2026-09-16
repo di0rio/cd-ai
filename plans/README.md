@@ -65,6 +65,14 @@ Escrita em 2026-09-16 sobre o `main` com as Fases 0–6 fechadas (PR #3).
 |------|--------|-----------|---------|------------|--------|
 | 017 | Fase 7 — Permissões e sandbox (modos ASK/AUTO/FULL ACCESS, Landlock+netns, conteúdo não confiável) | P1 | L | 016 | DONE |
 
+### Geração 6
+
+Escrita em 2026-09-16 sobre o `main` com as Fases 0–7 fechadas (PR #4).
+
+| Plano | Título | Prioridade | Esforço | Depende de | Status |
+|------|--------|-----------|---------|------------|--------|
+| 018 | Fase 8 — Verifier e ciclo de correção (checks determinísticos, review LLM opcional, `completed`) | P1 | M | 017 | DONE |
+
 Valores de status: TODO | IN PROGRESS | DONE | BLOCKED (com motivo de uma linha) | REJECTED (com justificativa de uma linha).
 
 ## Notas de dependência
@@ -102,6 +110,10 @@ Valores de status: TODO | IN PROGRESS | DONE | BLOCKED (com motivo de uma linha)
 ### Geração 5
 
 - **017 depois do 016.** O sandbox envolve `run_command`; a policy é função pura. FULL ACCESS exige sandbox Linux completo. Allowlist por workspace (§30) fica de fora. O eval scripted não cresce — só não pode regressar.
+
+### Geração 6
+
+- **018 depois do 017.** O Verifier chama `run_command` já classificado e sandboxed. Não liga shell. `completed` só com evidência (validate exit 0 após a última edição). A suíte de eval não cresce.
 
 ## Achados considerados e descartados
 

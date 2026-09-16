@@ -11,6 +11,7 @@ pub mod settings;
 pub mod state;
 pub mod storage;
 pub mod tool_calls;
+pub mod verify;
 
 pub use events::{AgentEvent, AgentEventMessage};
 pub use model::{ChatModel, ModelError, ModelReply, OllamaModel, ScriptedModel};
@@ -24,3 +25,4 @@ pub use state::{
 };
 pub use storage::{DATA_DIR_ENV, StorageError, TaskStore, data_dir};
 pub use tool_calls::{MAX_TOOL_RESULT_CHARS, TOOL_NAMES, render_outcome, tool_specs};
+pub use verify::{Review, Verdict};

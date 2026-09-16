@@ -8,14 +8,15 @@ use crate::events::timestamp;
 /// First characters of the request used as a task title.
 const TITLE_CHARS: usize = 60;
 
-/// Status of a task (SPEC §23). There is no `completed` in phase 5: without the Verifier every
-/// task that finishes is `completed_unvalidated` (plan 015, D11).
+/// Status of a task (SPEC §23). `completed` is only emitted when the Verifier has evidence
+/// (plan 018); a finish without that evidence is `completed_unvalidated`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export)]
 #[serde(rename_all = "snake_case")]
 pub enum TaskStatus {
     Running,
     WaitingApproval,
+    Completed,
     CompletedUnvalidated,
     Failed,
     Cancelled,
@@ -30,8 +31,10 @@ pub enum TaskStatus {
     rename_all_fields = "camelCase"
 )]
 pub enum StopReason {
-    /// The model answered without tool calls.
+    /// The model answered without tool calls, and nothing was validated.
     Finished,
+    /// Deterministic checks passed after the last edit (plan 018).
+    Verified,
     MaxIterations,
     TaskTimeout,
     LoopDetected {
@@ -57,6 +60,10 @@ pub struct AgentLimits {
     pub max_model_retries: u32,
     /// Consecutive invalid tool calls tolerated before the task fails.
     pub max_invalid_tool_calls: u32,
+    /// How many times a failed verification may send the model back to fix (plan 018, D7).
+    pub max_correction_retries: u32,
+    /// Isolated LLM review after a deterministic pass (SPEC §13.2). Empty/unparseable = skip.
+    pub llm_review: bool,
     #[ts(type = "number")]
     pub model_turn_timeout_ms: u64,
     #[ts(type = "number")]
@@ -69,6 +76,8 @@ impl Default for AgentLimits {
             max_iterations: 30,
             max_model_retries: 2,
             max_invalid_tool_calls: 3,
+            max_correction_retries: 3,
+            llm_review: true,
             // 300 s covers a 16k prefill at ~100 tok/s plus generation at ~20 tok/s (bench 2026-09-11).
             model_turn_timeout_ms: 300_000,
             task_timeout_ms: 45 * 60 * 1_000,
@@ -217,7 +226,7 @@ pub struct TaskSummary {
     pub continues: Option<String>,
 }
 
-/// What the task delivered. `validated` is always false in phase 5 (D11): the Verifier is phase 8.
+/// What the task delivered. `validated` is true only when the Verifier had evidence (plan 018).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export)]
 #[serde(rename_all = "camelCase")]
@@ -250,6 +259,8 @@ mod tests {
         assert_eq!(limits.max_iterations, 30);
         assert_eq!(limits.max_model_retries, 2);
         assert_eq!(limits.max_invalid_tool_calls, 3);
+        assert_eq!(limits.max_correction_retries, 3);
+        assert!(limits.llm_review);
         assert_eq!(limits.model_turn_timeout_ms, 300_000);
         assert_eq!(limits.task_timeout_ms, 2_700_000);
     }
@@ -258,6 +269,8 @@ mod tests {
     fn status_serializes_in_snake_case() {
         let value = serde_json::to_value(TaskStatus::CompletedUnvalidated).unwrap();
         assert_eq!(value, "completed_unvalidated");
+        let value = serde_json::to_value(TaskStatus::Completed).unwrap();
+        assert_eq!(value, "completed");
         let value = serde_json::to_value(TaskStatus::WaitingApproval).unwrap();
         assert_eq!(value, "waiting_approval");
     }
@@ -272,6 +285,8 @@ mod tests {
         assert_eq!(value["detail"], "read_file src/a.rs");
         let value = serde_json::to_value(StopReason::Finished).unwrap();
         assert_eq!(value["kind"], "finished");
+        let value = serde_json::to_value(StopReason::Verified).unwrap();
+        assert_eq!(value["kind"], "verified");
     }
 
     #[test]

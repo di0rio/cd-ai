@@ -473,6 +473,7 @@ fn status_slug(status: TaskStatus) -> String {
         TaskStatus::Running => "running".to_string(),
         TaskStatus::WaitingApproval => "waiting_approval".to_string(),
         TaskStatus::CompletedUnvalidated => "completed_unvalidated".to_string(),
+        TaskStatus::Completed => "completed".to_string(),
         TaskStatus::Failed => "failed".to_string(),
         TaskStatus::Cancelled => "cancelled".to_string(),
     }
@@ -760,6 +761,7 @@ mod tests {
         let soma = &report.tasks[0];
         assert!(soma.success);
         assert_eq!(soma.check_exit_code, Some(0));
+        assert_eq!(soma.agent_status, "completed");
         assert!(
             soma.files_changed
                 .iter()

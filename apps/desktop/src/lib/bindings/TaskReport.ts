@@ -2,7 +2,7 @@
 import type { CommandRecord } from "./CommandRecord";
 
 /**
- * What the task delivered. `validated` is always false in phase 5 (D11): the Verifier is phase 8.
+ * What the task delivered. `validated` is true only when the Verifier had evidence (plan 018).
  */
 export type TaskReport = { 
 /**
