@@ -15,6 +15,8 @@ fn main() {
             "steer_task",
             "respond_approval",
             "list_tasks",
+            "workspace_history",
+            "rollback_task",
             "task_events",
             "get_settings",
             "set_preferred_model",

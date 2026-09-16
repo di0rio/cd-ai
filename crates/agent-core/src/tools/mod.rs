@@ -1,6 +1,7 @@
 pub mod cancel;
 pub mod command;
 pub mod edit;
+pub mod git;
 pub mod read;
 pub mod search;
 
@@ -46,6 +47,10 @@ pub enum ToolRequest {
     WriteFile(WriteFileArgs),
     ListDirectory(ListDirectoryArgs),
     RunCommand(RunCommandArgs),
+    GitStatus(GitStatusArgs),
+    GitDiff(GitDiffArgs),
+    GitLog(GitLogArgs),
+    GitBranch(GitBranchArgs),
 }
 
 impl ToolRequest {
@@ -57,6 +62,10 @@ impl ToolRequest {
             Self::WriteFile(_) => "writeFile",
             Self::ListDirectory(_) => "listDirectory",
             Self::RunCommand(_) => "runCommand",
+            Self::GitStatus(_) => "gitStatus",
+            Self::GitDiff(_) => "gitDiff",
+            Self::GitLog(_) => "gitLog",
+            Self::GitBranch(_) => "gitBranch",
         }
     }
 }
@@ -135,6 +144,33 @@ pub struct RunCommandArgs {
     pub timeout_ms: Option<u64>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "camelCase")]
+pub struct GitStatusArgs {}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "camelCase")]
+pub struct GitDiffArgs {
+    #[serde(default)]
+    pub path: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "camelCase")]
+pub struct GitLogArgs {
+    #[serde(default)]
+    #[ts(type = "number")]
+    pub max_count: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "camelCase")]
+pub struct GitBranchArgs {}
+
 /// Everything a tool produced, tagged by tool (design §2).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
 #[ts(export)]
@@ -150,6 +186,10 @@ pub enum ToolOutput {
     WriteFile(WriteFileResult),
     ListDirectory(ListDirectoryResult),
     RunCommand(CommandResult),
+    GitStatus(GitStatusResult),
+    GitDiff(GitDiffResult),
+    GitLog(GitLogResult),
+    GitBranch(GitBranchResult),
 }
 
 /// The uniform envelope for every tool run (design §2 `ToolResult`). Output-only:
@@ -355,10 +395,47 @@ pub struct CommandResult {
     pub timed_out: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "camelCase")]
+pub struct GitStatusResult {
+    pub output: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "camelCase")]
+pub struct GitDiffResult {
+    pub diff: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "camelCase")]
+pub struct GitLogEntry {
+    pub hash: String,
+    pub subject: String,
+    pub at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "camelCase")]
+pub struct GitLogResult {
+    pub entries: Vec<GitLogEntry>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "camelCase")]
+pub struct GitBranchResult {
+    pub output: String,
+}
+
 pub type EventSink<'e> = &'e mut dyn FnMut(ToolEventMessage);
 pub type Responder<'r> = &'r mut dyn FnMut(ApprovalRequest) -> ApprovalResponse;
 
-/// Orchestrates the six tools: resolve → permission → redact → events (design §7).
+/// Orchestrates the tools: resolve → permission → redact → events (design §7).
 pub struct ToolEngine {
     pub workspace: Workspace,
     task_id: String,
@@ -631,6 +708,22 @@ impl ToolEngine {
                     how_to_get_more: "reexecute com escopo menor".to_string(),
                 });
                 Ok((decision, ToolOutput::RunCommand(result), truncated))
+            }
+            ToolRequest::GitStatus(args) => {
+                let (decision, result) = git::git_status(self, args, events, responder)?;
+                Ok((decision, ToolOutput::GitStatus(result), None))
+            }
+            ToolRequest::GitDiff(args) => {
+                let (decision, result) = git::git_diff(self, args, events, responder)?;
+                Ok((decision, ToolOutput::GitDiff(result), None))
+            }
+            ToolRequest::GitLog(args) => {
+                let (decision, result) = git::git_log(self, args, events, responder)?;
+                Ok((decision, ToolOutput::GitLog(result), None))
+            }
+            ToolRequest::GitBranch(args) => {
+                let (decision, result) = git::git_branch(self, args, events, responder)?;
+                Ok((decision, ToolOutput::GitBranch(result), None))
             }
         }
     }

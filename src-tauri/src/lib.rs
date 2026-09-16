@@ -4,10 +4,11 @@ use std::sync::mpsc;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
+use agent_core::RollbackResult;
 use agent_core::agent::{
     AgentEvent, AgentEventMessage, AgentLimits, OllamaModel, Settings, SettingsStore, StopReason,
-    TaskContext, TaskReport, TaskStart, TaskStatus, TaskStore, TaskSummary, run_task,
-    workspace_key,
+    TaskContext, TaskHistoryEntry, TaskReport, TaskStart, TaskStatus, TaskStore, TaskSummary,
+    run_task, workspace_key,
 };
 use agent_core::ollama::{ChatEvent, ChatRequest, OllamaClient};
 use agent_core::permissions::{ApprovalRequest, ApprovalResponse, PermissionMode};
@@ -470,6 +471,36 @@ async fn list_tasks(state: tauri::State<'_, AppState>) -> Result<Vec<TaskSummary
 }
 
 #[tauri::command]
+async fn workspace_history(
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<TaskHistoryEntry>, String> {
+    let key = workspace_key(&open_workspace_of(&state)?);
+    let store = state.store.clone()?;
+    tauri::async_runtime::spawn_blocking(move || {
+        store.history(&key).map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn rollback_task(
+    task_id: String,
+    force: bool,
+    state: tauri::State<'_, AppState>,
+) -> Result<RollbackResult, String> {
+    let workspace = open_workspace_of(&state)?;
+    task_of_workspace(&state, &task_id, "revertê-la")?;
+    let store = state.store.clone()?;
+    tauri::async_runtime::spawn_blocking(move || {
+        agent_core::rollback_task(&store, &workspace, &task_id, force)
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
 async fn task_events(
     task_id: String,
     state: tauri::State<'_, AppState>,
@@ -683,6 +714,8 @@ pub fn run() {
             steer_task,
             respond_approval,
             list_tasks,
+            workspace_history,
+            rollback_task,
             task_events,
             get_settings,
             set_preferred_model,

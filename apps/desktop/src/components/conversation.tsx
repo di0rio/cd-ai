@@ -24,10 +24,13 @@ type ConversationProps = {
   onApprovalDecision?: (granted: boolean, reason?: string) => void;
   // Absent while another task holds the single slot of this workspace, so the offer is never a lie.
   onResume?: () => void;
+  // Restores this task's agent writes. Absent while the task is still running.
+  onRollback?: (force: boolean) => void;
+  rollingBack?: boolean;
 };
 
 // Mounted per task (keyed by id), so it opens scrolled to the latest activity.
-export function Conversation({ task, onApprovalDecision, onResume }: ConversationProps) {
+export function Conversation({ task, onApprovalDecision, onResume, onRollback, rollingBack }: ConversationProps) {
   const scroller = useRef<HTMLDivElement>(null);
   // Following the live text is the default; a user who scrolls up is reading, and is not yanked back.
   const following = useRef(true);
@@ -55,8 +58,14 @@ export function Conversation({ task, onApprovalDecision, onResume }: Conversatio
       {/* 46rem of column plus the 24px of breathing room on each side, so the rows line up with the composer. */}
       <div className="mx-auto flex max-w-[49rem] flex-col gap-4 px-6 pt-18 pb-10">
         {groupActivity(task.events).map((block, index) => (
-          // biome-ignore lint/suspicious/noArrayIndexKey: the activity log is append-only, so positions are stable
-          <Block key={index} block={block} />
+          <Block
+            // biome-ignore lint/suspicious/noArrayIndexKey: the activity log is append-only, so positions are stable
+            key={index}
+            block={block}
+            onRollback={onRollback}
+            rollingBack={rollingBack}
+            rolledBack={task.rolledBack}
+          />
         ))}
         {task.stopReason && <StopReason reason={task.stopReason} />}
         {/* Only a task nobody chose to stop: the app closed with work in flight (D9). A cancellation
@@ -101,7 +110,17 @@ function Resume({ onResume }: { onResume: () => void }) {
   );
 }
 
-function Block({ block }: { block: ActivityBlock }) {
+function Block({
+  block,
+  onRollback,
+  rollingBack,
+  rolledBack,
+}: {
+  block: ActivityBlock;
+  onRollback?: (force: boolean) => void;
+  rollingBack?: boolean;
+  rolledBack?: boolean;
+}) {
   switch (block.kind) {
     case "user":
       return (
@@ -130,7 +149,25 @@ function Block({ block }: { block: ActivityBlock }) {
     case "failure":
       return <ToolFailure tool={block.tool} message={block.message} />;
     case "report":
-      return <Report validated={block.validated} summary={block.summary} checks={block.checks} />;
+      return (
+        <Report
+          validated={block.validated}
+          summary={block.summary}
+          checks={block.checks}
+          onRollback={onRollback}
+          rollingBack={rollingBack}
+          rolledBack={rolledBack}
+        />
+      );
+    case "rollback":
+      return (
+        <RollbackRow
+          restored={block.restored}
+          skipped={block.skipped}
+          onRollback={onRollback}
+          rollingBack={rollingBack}
+        />
+      );
   }
 }
 
@@ -279,7 +316,21 @@ function CommandRow({ event }: { event: CommandEvent }) {
   );
 }
 
-function Report({ validated, summary, checks }: { validated: boolean; summary: string; checks: Check[] }) {
+function Report({
+  validated,
+  summary,
+  checks,
+  onRollback,
+  rollingBack,
+  rolledBack,
+}: {
+  validated: boolean;
+  summary: string;
+  checks: Check[];
+  onRollback?: (force: boolean) => void;
+  rollingBack?: boolean;
+  rolledBack?: boolean;
+}) {
   return (
     <section aria-label="Resultado da tarefa" className="mt-2 rounded-xl border border-line px-4 py-3.5">
       <div className="flex items-start gap-3">
@@ -288,28 +339,94 @@ function Report({ validated, summary, checks }: { validated: boolean; summary: s
         >
           <Icon name={validated ? "check" : "alert"} className="size-3.5" />
         </span>
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           <h3 className="font-semibold">{validated ? "Validado" : "Não validado"}</h3>
           <p className="mt-0.5 text-pretty text-ink-muted">
             <Markdown content={summary} />
           </p>
         </div>
       </div>
-      <ul className="mt-3 space-y-1.5 border-t border-line pt-3 pl-8">
-        {checks.map((check) => (
-          <li key={check.command} className="flex items-center gap-2.5 text-[0.8125rem]">
-            <Icon
-              name={check.ok === null ? "minus" : check.ok ? "check" : "x"}
-              className={`size-3.5 ${check.ok === null ? "text-ink-faint" : check.ok ? "text-ok" : "text-bad"}`}
-            />
-            <span className="w-24 shrink-0">{check.label}</span>
-            <code className="min-w-0 truncate text-xs text-ink-faint">{check.command}</code>
-            <span className="ml-auto shrink-0 text-xs text-ink-faint">
-              {check.ok === null ? "não executado" : check.ok ? "passou" : "falhou"}
-            </span>
-          </li>
-        ))}
-      </ul>
+      {checks.length > 0 && (
+        <ul className="mt-3 space-y-1.5 border-t border-line pt-3 pl-8">
+          {checks.map((check) => (
+            <li key={check.command} className="flex items-center gap-2.5 text-[0.8125rem]">
+              <Icon
+                name={check.ok === null ? "minus" : check.ok ? "check" : "x"}
+                className={`size-3.5 ${check.ok === null ? "text-ink-faint" : check.ok ? "text-ok" : "text-bad"}`}
+              />
+              <span className="w-24 shrink-0">{check.label}</span>
+              <code className="min-w-0 truncate text-xs text-ink-faint">{check.command}</code>
+              <span className="ml-auto shrink-0 text-xs text-ink-faint">
+                {check.ok === null ? "não executado" : check.ok ? "passou" : "falhou"}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+      {onRollback && (
+        <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-line pt-3">
+          <button
+            type="button"
+            disabled={rollingBack || rolledBack}
+            onClick={() => onRollback(false)}
+            className="inline-flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-[0.8125rem] text-ink-muted transition-colors enabled:hover:bg-sidebar enabled:hover:text-ink disabled:text-ink-faint"
+          >
+            <Icon name="undo" className="size-3.5" />
+            {rolledBack ? "Alterações revertidas" : rollingBack ? "Revertendo…" : "Reverter alterações desta tarefa"}
+          </button>
+        </div>
+      )}
     </section>
+  );
+}
+
+function RollbackRow({
+  restored,
+  skipped,
+  onRollback,
+  rollingBack,
+}: {
+  restored: string[];
+  skipped: Array<{ path: string; reason: string; diff: string }>;
+  onRollback?: (force: boolean) => void;
+  rollingBack?: boolean;
+}) {
+  return (
+    <div className="-mx-2 px-2">
+      <div className={row}>
+        <Icon name="undo" className="size-4 text-ink-faint" />
+        <span>
+          {restored.length === 0
+            ? "Nenhum arquivo precisou ser revertido"
+            : `Reverteu ${plural(restored.length, "arquivo", "arquivos")}`}
+        </span>
+      </div>
+      {skipped.length > 0 && (
+        <div className="mt-1 pl-6.5">
+          <p className="text-[0.8125rem] text-pretty text-warn">
+            {plural(skipped.length, "arquivo", "arquivos")} com mudanças suas não{" "}
+            {skipped.length === 1 ? "foi" : "foram"} tocado{skipped.length === 1 ? "" : "s"}.
+          </p>
+          {onRollback && (
+            <button
+              type="button"
+              disabled={rollingBack}
+              onClick={() => onRollback(true)}
+              className="mt-1.5 inline-flex h-8 items-center rounded-lg px-2.5 text-[0.8125rem] text-ink-muted transition-colors enabled:hover:bg-sidebar enabled:hover:text-ink"
+            >
+              Reverter mesmo assim
+            </button>
+          )}
+        </div>
+      )}
+      {skipped.some((item) => item.diff) && (
+        <pre className="mt-1.5 max-h-48 overflow-auto rounded-lg bg-sidebar px-3 py-2.5 text-[0.8125rem] leading-relaxed text-ink-muted">
+          {skipped
+            .filter((item) => item.diff)
+            .map((item) => `${item.path}\n${item.diff}`)
+            .join("\n")}
+        </pre>
+      )}
+    </div>
   );
 }

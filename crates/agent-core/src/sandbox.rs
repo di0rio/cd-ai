@@ -360,10 +360,12 @@ mod linux {
                 "/dev/random",
                 "/dev/tty",
             ] {
+                // Device files reject directory/execute bits (EINVAL on ABI 6). Git opens
+                // `/dev/null` O_RDWR, so the rule has to be file read/write (+ ioctl).
                 let _ = add_path(
                     fd,
                     Path::new(device),
-                    (FS_READ | FS_WRITE_FILE | FS_IOCTL_DEV) & handled_fs,
+                    (FS_READ_FILE | FS_WRITE_FILE | FS_IOCTL_DEV) & handled_fs,
                     handled_fs,
                 );
             }
@@ -647,5 +649,42 @@ mod tests {
             "write outside workspace/tmp/cache must fail"
         );
         assert!(!target.exists());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn sandbox_allows_opening_dev_null_read_write() {
+        let status = status();
+        if !status.filesystem {
+            eprintln!("skip: no landlock on this host ({})", status.detail);
+            return;
+        }
+        if Command::new("python3")
+            .arg("-c")
+            .arg("print(1)")
+            .output()
+            .is_err()
+        {
+            eprintln!("skip: python3 missing");
+            return;
+        }
+
+        let workspace = tempdir().unwrap();
+        let mut command = Command::new("python3");
+        command.args(["-c", "open('/dev/null', 'r+').close()"]);
+        command.current_dir(workspace.path());
+        constrain(
+            &mut command,
+            SandboxExec {
+                workspace: workspace.path().to_path_buf(),
+                allow_network: false,
+            },
+        );
+        let output = command.output().expect("open /dev/null in sandbox");
+        assert!(
+            output.status.success(),
+            "sandboxed /dev/null O_RDWR must work: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 }

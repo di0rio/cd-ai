@@ -4,7 +4,9 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use crate::agent::state::{StopReason, TaskReport, TaskStatus, TaskSummary};
+use crate::agent::state::{
+    CheckpointKind, RollbackSkip, StopReason, TaskReport, TaskStatus, TaskSummary,
+};
 use crate::events::{ToolEvent, timestamp};
 
 /// Everything the loop tells the outside world. Free text here is already redacted.
@@ -82,6 +84,14 @@ pub enum AgentEvent {
         status: TaskStatus,
         stop_reason: StopReason,
         report: TaskReport,
+    },
+    CheckpointCreated {
+        commit: String,
+        kind: CheckpointKind,
+    },
+    RollbackCompleted {
+        restored: Vec<String>,
+        skipped: Vec<RollbackSkip>,
     },
 }
 
