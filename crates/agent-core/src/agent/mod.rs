@@ -4,24 +4,31 @@
 
 pub mod context;
 pub mod events;
+pub mod memory;
 pub mod model;
 pub mod profile;
 pub mod prompt;
 pub mod repo_map;
 pub mod role;
+pub mod router;
 pub mod runner;
 pub mod settings;
 pub mod state;
 pub mod storage;
 pub mod tool_calls;
+pub mod trajectory;
 pub mod verify;
 
 pub use crate::skills::SelectedSkill;
 pub use events::{AgentEvent, AgentEventMessage};
+pub use memory::{MemoryEntry, MemoryKind, MemoryStore};
 pub use model::{ChatModel, ModelError, ModelReply, OllamaModel, ScriptedModel};
 pub use profile::{WorkspaceProfile, workspace_profile};
 pub use prompt::{estimate_tokens, system_prompt, trim_for_budget};
 pub use role::{AgentRole, TaskKind};
+pub use router::{
+    ModelAssignment, ModelCategory, ModelInventory, RouteDecision, mem_available_bytes, route,
+};
 pub use runner::{RESUME_NOTE, TaskContext, TaskStart, run_task, workspace_key};
 pub use settings::{Settings, SettingsStore};
 pub use state::{

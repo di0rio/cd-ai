@@ -20,6 +20,7 @@ fn main() {
             "task_events",
             "get_settings",
             "set_preferred_model",
+            "set_router_settings",
             "sandbox_status",
             "set_permission_mode",
         ]),

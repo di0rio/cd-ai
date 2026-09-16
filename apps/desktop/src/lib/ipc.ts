@@ -37,6 +37,9 @@ export type { IfExists } from "./bindings/IfExists";
 export type { ListDirectoryArgs } from "./bindings/ListDirectoryArgs";
 export type { ListDirectoryResult } from "./bindings/ListDirectoryResult";
 export type { LoadedModel } from "./bindings/LoadedModel";
+export type { MemoryEntry } from "./bindings/MemoryEntry";
+export type { MemoryKind } from "./bindings/MemoryKind";
+export type { ModelCategory } from "./bindings/ModelCategory";
 export type { ModelInfo } from "./bindings/ModelInfo";
 export type { OllamaStatus } from "./bindings/OllamaStatus";
 export type { PermissionDecision } from "./bindings/PermissionDecision";
@@ -159,6 +162,16 @@ export function getSettings(): Promise<Settings> {
 /** Remembers the model for the next runs. The core answers even when it could not write. */
 export function setPreferredModel(model: string): Promise<void> {
   return invoke<void>("set_preferred_model", { model });
+}
+
+/** Remembers FAST/CODER/REASONER names and the trajectories opt-in. */
+export function setRouterSettings(
+  fast: string | null,
+  coder: string | null,
+  reasoner: string | null,
+  trajectories: boolean,
+): Promise<void> {
+  return invoke<void>("set_router_settings", { fast, coder, reasoner, trajectories });
 }
 
 export function getSandboxStatus(): Promise<SandboxStatus> {
