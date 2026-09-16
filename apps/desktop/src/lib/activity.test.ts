@@ -347,6 +347,35 @@ describe("applyAgentEvent", () => {
     expect(running.stopReason).toBeUndefined();
   });
 
+  test("taskFinished closes a validated task with its report", () => {
+    const next = applyAgentEvent(
+      task({ events: [{ kind: "user", text: "corrija a soma" }] }),
+      agentMessage({
+        event: "taskFinished",
+        data: {
+          status: "completed",
+          stopReason: { kind: "verified" },
+          report: {
+            summary: "Corrigi a soma e os testes passam.",
+            validated: true,
+            evidence: [{ argv: ["bun", "test"], exitCode: 0, durationMs: 800 }],
+            filesChanged: ["src/soma.ts"],
+          },
+        },
+      }),
+    );
+
+    expect(next.status).toBe("completed");
+    expect(next.stopReason).toBeUndefined();
+    expect(next.stopCause).toEqual({ kind: "verified" });
+    expect(next.events.at(-1)).toEqual({
+      kind: "report",
+      validated: true,
+      summary: "Corrigi a soma e os testes passam.",
+      checks: [{ label: "bun", command: "bun test", ok: true }],
+    });
+  });
+
   test("taskFinished closes the task with an unvalidated report and its evidence", () => {
     const next = applyAgentEvent(
       task({ events: [{ kind: "user", text: "corrija a soma" }] }),

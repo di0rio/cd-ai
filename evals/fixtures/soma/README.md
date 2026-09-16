@@ -37,5 +37,5 @@ Este fixture **não** entra no `bun run verify`, que roda os testes só em `apps
 ## Esperado
 
 O agente lê `src/soma.ts`, troca `a - b` por `a + b`, roda `bun test` (classe `validate`, aprovada
-automaticamente) e termina com status `completed_unvalidated` e código de saída 0, com as evidências
-na saída.
+automaticamente). O Verifier confirma o exit 0 depois da última edição e termina com status
+`completed` (`validated: true`) e código de saída 0.

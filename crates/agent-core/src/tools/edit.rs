@@ -275,8 +275,10 @@ fn fs_meta(path: &Path) -> Option<std::fs::Metadata> {
     std::fs::symlink_metadata(path).ok()
 }
 
-/// Syntax check for the languages the model can edit (design D3).
-fn parse_check(path: &Path, content: &str) -> Result<(), ToolError> {
+/// Syntax check for the languages the model can edit (design D3). Also used by the
+/// Verifier at the end of a task (plan 018): a file the tools never touched still has
+/// to parse if it shows up in `files_changed`.
+pub(crate) fn parse_check(path: &Path, content: &str) -> Result<(), ToolError> {
     let extension = path.extension().and_then(|ext| ext.to_str()).unwrap_or("");
     let (kind, language) = match extension {
         "tsx" => (
