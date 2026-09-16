@@ -3,7 +3,7 @@ use std::path::Path;
 
 use similar::{ChangeTag, TextDiff};
 
-use crate::permissions::{ApprovalAction, PermissionDecision};
+use crate::permissions::{ApprovalAction, PermissionDecision, PermissionKind};
 use crate::tools::{
     EditFileArgs, EditFileResult, EventSink, IfExists, Responder, ToolEngine, ToolError,
     WriteFileArgs, WriteFileResult, display_path, read_utf8_lossy, sha256_hex,
@@ -34,9 +34,10 @@ pub fn edit_file(
     parse_check(&canonical, &content)?;
     let diff = unified_diff(&original, &content);
 
-    let decision = engine.ask_approval(
+    let decision = engine.authorize(
         events,
         responder,
+        PermissionKind::EditFile,
         ApprovalAction::EditFile {
             path: display_path(&engine.workspace, &canonical),
             diff,
@@ -114,9 +115,10 @@ pub fn write_file(
 
     parse_check(&canonical, &args.content)?;
 
-    let decision = engine.ask_approval(
+    let decision = engine.authorize(
         events,
         responder,
+        PermissionKind::WriteFile,
         ApprovalAction::WriteFile {
             path: display_path(&engine.workspace, &canonical),
             size: args.content.len() as u64,
@@ -440,6 +442,12 @@ mod tests {
         crate::permissions::ApprovalResponse::Denied {
             reason: Some("não".into()),
         }
+    }
+
+    fn never_asked(
+        request: crate::permissions::ApprovalRequest,
+    ) -> crate::permissions::ApprovalResponse {
+        panic!("approval must not be requested for {:?}", request.action);
     }
 
     #[test]
@@ -829,6 +837,34 @@ mod tests {
             &mut approve,
         )
         .unwrap();
+        assert!(result.added >= 1);
+    }
+
+    #[test]
+    fn auto_mode_edits_without_approval() {
+        let dir = tempdir().unwrap();
+        std::fs::write(dir.path().join("x.txt"), "um\n").unwrap();
+        let ws = crate::workspace::Workspace::open(dir.path()).unwrap();
+        let mut engine =
+            ToolEngine::with_mode(ws, "task_edit", crate::permissions::PermissionMode::Auto);
+        let mut sink = |_: crate::events::ToolEventMessage| {};
+
+        let (decision, result) = edit_file(
+            &mut engine,
+            EditFileArgs {
+                path: "x.txt".into(),
+                old_text: "um".into(),
+                new_text: "dois".into(),
+            },
+            &mut sink,
+            &mut never_asked,
+        )
+        .unwrap();
+        assert_eq!(decision, PermissionDecision::Auto);
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("x.txt")).unwrap(),
+            "dois\n"
+        );
         assert!(result.added >= 1);
     }
 }

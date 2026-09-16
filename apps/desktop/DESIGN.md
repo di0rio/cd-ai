@@ -210,7 +210,7 @@ Cantos suaves e consistentes, crescendo com o tamanho da superfície:
 
 - **Composer:** campo único com borda `line`, fundo `raised` e raio de 16px. No foco, a borda vira verde-água a 60%, sem anel externo.
   - O textarea cresce com o conteúdo até 12.5rem (via JS, porque o WebKitGTK não tem `field-sizing`).
-  - Embaixo ficam o seletor de modo de permissão (select nativo estilizado), o modelo com o ponto de carregado e o botão de enviar.
+  - Embaixo ficam o seletor de modo de permissão (Perguntar antes / Automático / Acesso total; Acesso total desabilitado sem sandbox Linux), o modelo com o ponto de carregado e o botão de enviar.
 
 ### Navigation
 

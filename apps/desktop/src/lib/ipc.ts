@@ -7,6 +7,8 @@ import type { AppInfo } from "./bindings/AppInfo";
 import type { ChatEvent } from "./bindings/ChatEvent";
 import type { ChatRequest } from "./bindings/ChatRequest";
 import type { OllamaStatus } from "./bindings/OllamaStatus";
+import type { PermissionMode } from "./bindings/PermissionMode";
+import type { SandboxStatus } from "./bindings/SandboxStatus";
 import type { Settings } from "./bindings/Settings";
 import type { TaskSummary } from "./bindings/TaskSummary";
 import type { WorkspaceInfo } from "./bindings/WorkspaceInfo";
@@ -33,9 +35,11 @@ export type { LoadedModel } from "./bindings/LoadedModel";
 export type { ModelInfo } from "./bindings/ModelInfo";
 export type { OllamaStatus } from "./bindings/OllamaStatus";
 export type { PermissionDecision } from "./bindings/PermissionDecision";
+export type { PermissionMode } from "./bindings/PermissionMode";
 export type { ReadFileArgs } from "./bindings/ReadFileArgs";
 export type { ReadFileResult } from "./bindings/ReadFileResult";
 export type { RunCommandArgs } from "./bindings/RunCommandArgs";
+export type { SandboxStatus } from "./bindings/SandboxStatus";
 export type { SearchArgs } from "./bindings/SearchArgs";
 export type { SearchMatch } from "./bindings/SearchMatch";
 export type { SearchResult } from "./bindings/SearchResult";
@@ -134,6 +138,15 @@ export function getSettings(): Promise<Settings> {
 /** Remembers the model for the next runs. The core answers even when it could not write. */
 export function setPreferredModel(model: string): Promise<void> {
   return invoke<void>("set_preferred_model", { model });
+}
+
+export function getSandboxStatus(): Promise<SandboxStatus> {
+  return invoke<SandboxStatus>("sandbox_status");
+}
+
+/** Persists ASK / AUTO / FULL ACCESS. The core refuses FULL ACCESS without a sandbox. */
+export function setPermissionMode(mode: PermissionMode): Promise<PermissionMode> {
+  return invoke<PermissionMode>("set_permission_mode", { mode });
 }
 
 export function respondApproval(

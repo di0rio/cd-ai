@@ -15,6 +15,7 @@ dependencies = [
  "grep-regex",
  "grep-searcher",
  "ignore",
+ "libc",
  "reqwest",
  "serde",
  "serde_json",

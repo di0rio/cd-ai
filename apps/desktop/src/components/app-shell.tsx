@@ -8,11 +8,15 @@ import {
   cancelTask,
   currentWorkspace,
   getOllamaStatus,
+  getSandboxStatus,
   getSettings,
   listTasks,
   openWorkspace,
+  type PermissionMode,
   respondApproval,
   resumeTask,
+  type SandboxStatus,
+  setPermissionMode,
   setPreferredModel,
   startTask,
   steerTask,
@@ -46,6 +50,8 @@ export function AppShell() {
   const [chosenModel, setChosenModel] = useState<string | null>(null);
   // The choice the core remembered from the last runs; only decides the default model.
   const [preferredModel, setPreferred] = useState<string | null>(null);
+  const [permissionMode, setPermission] = useState<PermissionMode>("ask");
+  const [sandbox, setSandbox] = useState<SandboxStatus | null>(null);
   const [runningId, setRunningId] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
   const [taskError, setTaskError] = useState<string | null>(null);
@@ -69,9 +75,13 @@ export function AppShell() {
     }
     // Outside Tauri the call rejects and that is expected; the app then opens with no preference.
     getSettings().then(
-      (settings) => setPreferred(settings.model),
+      (settings) => {
+        setPreferred(settings.model);
+        setPermission(settings.permissionMode);
+      },
       () => {},
     );
+    getSandboxStatus().then(setSandbox, () => {});
   }, []);
 
   useEffect(() => {
@@ -200,6 +210,14 @@ export function AppShell() {
   const handleModelChange = (next: string) => {
     setChosenModel(next);
     setPreferredModel(next).catch(() => {});
+  };
+
+  const handlePermissionMode = (next: PermissionMode) => {
+    setPermission(next);
+    if (demo) return;
+    setPermissionMode(next)
+      .then(setPermission)
+      .catch((error) => setTaskError(String(error)));
   };
 
   const handleOpenWorkspace = async () => {
@@ -359,6 +377,10 @@ export function AppShell() {
                 models={models}
                 loadedModels={loadedModels}
                 model={model}
+                permissionMode={permissionMode}
+                sandboxAvailable={demo || Boolean(sandbox?.available)}
+                sandboxDetail={sandbox?.detail ?? "sandbox só existe no Linux nesta versão"}
+                onPermissionModeChange={handlePermissionMode}
                 onModelChange={demo ? setChosenModel : handleModelChange}
                 onStart={demo ? ignore : handleStart}
                 onSteer={demo ? ignore : handleSteer}
