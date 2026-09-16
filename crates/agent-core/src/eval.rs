@@ -147,6 +147,13 @@ pub struct EvalTaskResult {
     /// Skill names the router loaded for this task (plan 021). Empty when none matched.
     #[serde(default)]
     pub selected_skills: Vec<String>,
+    /// Model Router decision (plan 022).
+    #[serde(default)]
+    pub model_category: String,
+    #[serde(default)]
+    pub routed_num_ctx: u32,
+    #[serde(default)]
+    pub route_reason: String,
     pub error: Option<String>,
 }
 
@@ -346,6 +353,9 @@ fn run_one(
             rejected_edits: 0,
             files_changed: Vec::new(),
             selected_skills: Vec::new(),
+            model_category: String::new(),
+            routed_num_ctx: 0,
+            route_reason: String::new(),
             error: Some(error.to_string()),
         },
     }
@@ -454,6 +464,9 @@ fn run_one_inner(
             .iter()
             .map(|skill| skill.name.clone())
             .collect(),
+        model_category: state.model_category.as_str().to_string(),
+        routed_num_ctx: state.num_ctx,
+        route_reason: state.route_reason.clone(),
         error: check_error.filter(|_| !check_ok),
     })
 }
@@ -479,6 +492,9 @@ fn skipped_result(id: &str, reason: &str) -> EvalTaskResult {
         rejected_edits: 0,
         files_changed: Vec::new(),
         selected_skills: Vec::new(),
+        model_category: String::new(),
+        routed_num_ctx: 0,
+        route_reason: String::new(),
         error: Some(reason.to_string()),
     }
 }
@@ -611,6 +627,10 @@ struct FormatCounter<'a> {
 }
 
 impl ChatModel for FormatCounter<'_> {
+    fn apply_route(&mut self, model: &str, num_ctx: u32) {
+        self.inner.apply_route(model, num_ctx);
+    }
+
     fn turn(
         &mut self,
         messages: &[crate::ollama::ChatMessage],
@@ -795,6 +815,9 @@ mod tests {
             soma.selected_skills
         );
         assert!(soma.selected_skills.iter().any(|name| name == "typescript"));
+        assert_eq!(soma.model_category, "coder");
+        assert_eq!(soma.routed_num_ctx, crate::agent::router::TRIVIAL_CTX);
+        assert!(!soma.route_reason.is_empty());
     }
 
     #[test]

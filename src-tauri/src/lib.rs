@@ -6,9 +6,9 @@ use std::time::Duration;
 
 use agent_core::RollbackResult;
 use agent_core::agent::{
-    AgentEvent, AgentEventMessage, AgentLimits, OllamaModel, Settings, SettingsStore, StopReason,
-    TaskContext, TaskHistoryEntry, TaskReport, TaskStart, TaskStatus, TaskStore, TaskSummary,
-    run_task, workspace_key,
+    AgentEvent, AgentEventMessage, AgentLimits, ModelAssignment, ModelInventory, OllamaModel,
+    Settings, SettingsStore, StopReason, TaskContext, TaskHistoryEntry, TaskReport, TaskStart,
+    TaskStatus, TaskStore, TaskSummary, mem_available_bytes, run_task, workspace_key,
 };
 use agent_core::ollama::{ChatEvent, ChatRequest, OllamaClient};
 use agent_core::permissions::{ApprovalRequest, ApprovalResponse, PermissionMode};
@@ -302,12 +302,13 @@ async fn spawn_task(
 ) -> Result<String, String> {
     let workspace = open_workspace_of(&state)?;
     let store = state.store.clone()?;
-    let permission_mode = state
+    let settings = state
         .settings
         .as_ref()
         .ok()
-        .map(|settings| settings.load().permission_mode)
+        .map(|store| store.load())
         .unwrap_or_default();
+    let permission_mode = settings.permission_mode;
     let client = OllamaClient::new(&build_ollama_base())?;
     let runtime = tauri::async_runtime::handle().inner().clone();
     let limits = AgentLimits::default();
@@ -322,12 +323,21 @@ async fn spawn_task(
         .spawn(move || {
             // First thing in the body: from here on every exit, including a panic, frees the slot.
             let mut slot = TaskSlot::new(registry.clone(), on_event.clone());
-            let mut model = OllamaModel::new(client, runtime, model_name, num_ctx, turn_timeout);
             let mut ctx = TaskContext::new(&store, workspace);
             ctx.limits = limits;
             ctx.cancel = cancel.clone();
             ctx.steer = steer.clone();
             ctx.permission_mode = permission_mode;
+            ctx.assignment = ModelAssignment {
+                fast: settings.fast.clone(),
+                coder: settings.coder.clone(),
+                reasoner: settings.reasoner.clone(),
+            };
+            ctx.trajectories = settings.trajectories;
+            let status = runtime.block_on(client.status());
+            ctx.inventory =
+                ModelInventory::from_ollama(&status.models, &status.loaded, mem_available_bytes());
+            let mut model = OllamaModel::new(client, runtime, model_name, num_ctx, turn_timeout);
 
             let mut responder = |request: ApprovalRequest| match registry.park_approval(&request) {
                 // `respond_approval` answers through the channel. A closed channel means the task
@@ -570,6 +580,40 @@ async fn set_preferred_model(
     Ok(())
 }
 
+/// Remembers FAST/CODER/REASONER names and the trajectories opt-in. Same convenience rule as
+/// `set_preferred_model`: a full disk must not turn a preference into an error mid-task.
+#[tauri::command]
+async fn set_router_settings(
+    fast: Option<String>,
+    coder: Option<String>,
+    reasoner: Option<String>,
+    trajectories: bool,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    let store = match state.settings.clone() {
+        Ok(store) => store,
+        Err(error) => {
+            eprintln!("cd-ai: não foi possível guardar o roteador: {error}");
+            return Ok(());
+        }
+    };
+    let written = tauri::async_runtime::spawn_blocking(move || {
+        let mut settings = store.load();
+        settings.fast = fast.filter(|name| !name.is_empty());
+        settings.coder = coder.filter(|name| !name.is_empty());
+        settings.reasoner = reasoner.filter(|name| !name.is_empty());
+        settings.trajectories = trajectories;
+        store.save(&settings)
+    })
+    .await;
+    match written {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => eprintln!("cd-ai: não foi possível guardar o roteador: {error}"),
+        Err(error) => eprintln!("cd-ai: não foi possível guardar o roteador: {error}"),
+    }
+    Ok(())
+}
+
 #[tauri::command]
 fn sandbox_status() -> SandboxStatus {
     sandbox::status().clone()
@@ -719,6 +763,7 @@ pub fn run() {
             task_events,
             get_settings,
             set_preferred_model,
+            set_router_settings,
             sandbox_status,
             set_permission_mode,
             ollama_status,

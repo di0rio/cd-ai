@@ -28,6 +28,12 @@ pub struct Settings {
     pub model: Option<String>,
     /// ASK / AUTO / FULL ACCESS (SPEC §20.4). Default ASK.
     pub permission_mode: PermissionMode,
+    /// Optional FAST / CODER / REASONER names (plan 022). Empty = use `model`.
+    pub fast: Option<String>,
+    pub coder: Option<String>,
+    pub reasoner: Option<String>,
+    /// Opt-in local trajectories (SPEC §25). Off by default.
+    pub trajectories: bool,
 }
 
 /// Reads and writes `settings.json` in the app data directory. The path is built here, from the
@@ -194,5 +200,9 @@ mod tests {
 
         fs::write(store.path(), "{\"model\":null}").unwrap();
         assert_eq!(store.load().permission_mode, PermissionMode::Ask);
+        assert!(!store.load().trajectories);
+        assert_eq!(store.load().fast, None);
+        assert_eq!(store.load().coder, None);
+        assert_eq!(store.load().reasoner, None);
     }
 }

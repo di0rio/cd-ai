@@ -106,7 +106,7 @@ export function applyAgentEvent(task: Task, message: AgentEventMessage): Task {
 
     // taskStarted, modelTurnStarted, thinking, toolCallFinished, contextTrimmed,
     // contextBudgetCut, contextCompacted, roleChanged, skillsDetected, skillLoaded,
-    // skillSkipped and retrying carry no row of their own.
+    // skillSkipped, modelRouted, memoryLoaded and retrying carry no row of their own.
     default:
       return task;
   }

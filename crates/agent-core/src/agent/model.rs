@@ -56,6 +56,9 @@ pub trait ChatModel {
         on_event: &mut dyn FnMut(ChatEvent),
         cancel: &CancelToken,
     ) -> Result<ModelReply, ModelError>;
+
+    /// Switch the backing model mid-task (plan 022). Scripted models record it and keep the script.
+    fn apply_route(&mut self, _model: &str, _num_ctx: u32) {}
 }
 
 /// The real model: streams from Ollama, with a per-turn timeout and honest cancellation (D6).
@@ -94,6 +97,11 @@ impl OllamaModel {
 }
 
 impl ChatModel for OllamaModel {
+    fn apply_route(&mut self, model: &str, num_ctx: u32) {
+        self.model = model.to_string();
+        self.num_ctx = num_ctx;
+    }
+
     fn turn(
         &mut self,
         messages: &[ChatMessage],
@@ -201,6 +209,8 @@ pub struct ScriptedModel {
     pub seen: Vec<Vec<ChatMessage>>,
     /// The tools offered on the last turn.
     pub offered: Vec<String>,
+    /// Routes the loop asked for (plan 022). The script itself does not change.
+    pub routed: Vec<(String, u32)>,
 }
 
 impl ScriptedModel {
@@ -211,6 +221,7 @@ impl ScriptedModel {
             repeat_last: true,
             seen: Vec::new(),
             offered: Vec::new(),
+            routed: Vec::new(),
         }
     }
 
@@ -249,6 +260,10 @@ impl ScriptedModel {
 }
 
 impl ChatModel for ScriptedModel {
+    fn apply_route(&mut self, model: &str, num_ctx: u32) {
+        self.routed.push((model.to_string(), num_ctx));
+    }
+
     fn turn(
         &mut self,
         messages: &[ChatMessage],

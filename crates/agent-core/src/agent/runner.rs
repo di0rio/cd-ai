@@ -20,6 +20,7 @@ use crate::agent::role::{
     AgentRole, MAX_EXPLORER_ITERATIONS, TaskKind, coder_handoff_message, explorer_refusal, permits,
     tool_specs_for,
 };
+use crate::agent::router::{ModelAssignment, ModelInventory, RouteInput, route};
 use crate::agent::state::{
     AgentLimits, CheckpointKind, CommandRecord, FileChange, StopReason, TaskReport, TaskState,
     TaskStatus,
@@ -29,6 +30,7 @@ use crate::agent::tool_calls::{
     TOOL_NAMES, outcome_detail, outcome_output, redacted_input, render_outcome, signature,
     to_request, to_request_from_text,
 };
+use crate::agent::trajectory::TrajectoryLog;
 use crate::agent::verify::{
     Review, Verdict, VerifyInput, command_failure_reason, correction_message,
     is_successful_validate, judge_files, parse_review, review_prompt,
@@ -69,6 +71,12 @@ pub struct TaskContext<'a> {
     pub steer: Arc<Mutex<VecDeque<String>>>,
     /// ASK / AUTO / FULL ACCESS for this run (plan 017). Default ASK.
     pub permission_mode: crate::permissions::PermissionMode,
+    /// Configured FAST/CODER/REASONER names (plan 022). Empty = the task model for every slot.
+    pub assignment: ModelAssignment,
+    /// Provider listing + resident models. Empty listing = everything is available.
+    pub inventory: ModelInventory,
+    /// Opt-in local trajectories (SPEC §25). Off by default.
+    pub trajectories: bool,
 }
 
 impl<'a> TaskContext<'a> {
@@ -80,6 +88,9 @@ impl<'a> TaskContext<'a> {
             cancel: CancelToken::default(),
             steer: Arc::default(),
             permission_mode: crate::permissions::PermissionMode::Ask,
+            assignment: ModelAssignment::default(),
+            inventory: ModelInventory::default(),
+            trajectories: false,
         }
     }
 }
@@ -120,7 +131,7 @@ pub fn run_task(
 ) -> TaskState {
     let key = workspace_key(&ctx.workspace);
 
-    let (mut state, mut messages, opening, opening_cuts, skill_route) = match start {
+    let (mut state, mut messages, opening, opening_cuts, skill_route, memory_ids) = match start {
         TaskStart::New {
             request,
             model: model_name,
@@ -141,16 +152,40 @@ pub fn run_task(
             };
             let mut state = TaskState::new(&id, &key, &request, &model_name, num_ctx);
             state.continues = continues;
-            let assembled = assemble_new(
+            let mut assembled = assemble_new(
                 &ctx.workspace,
                 Some(ctx.store.data_dir()),
                 &request,
                 num_ctx,
                 inherited.as_deref(),
             );
-            state.role = assembled.role;
+            let decision = route(&RouteInput {
+                kind: assembled.kind,
+                default_model: &model_name,
+                assignment: &ctx.assignment,
+                inventory: &ctx.inventory,
+                requested_ctx: num_ctx,
+                coder_failures: 0,
+            });
             state.task_kind = assembled.kind;
+            state.role = assembled.role;
+            state.model = decision.model.clone();
+            state.num_ctx = decision.num_ctx;
+            state.model_category = decision.category;
+            state.route_reason = decision.reason.clone();
+            if decision.num_ctx != num_ctx {
+                assembled = assemble_new(
+                    &ctx.workspace,
+                    Some(ctx.store.data_dir()),
+                    &request,
+                    decision.num_ctx,
+                    inherited.as_deref(),
+                );
+                state.role = assembled.role;
+                state.task_kind = assembled.kind;
+            }
             state.selected_skills = assembled.skills.clone();
+            let memory_ids = assembled.memory_ids.clone();
             let messages = vec![
                 message("system", &assembled.system),
                 message("user", &request),
@@ -162,6 +197,7 @@ pub fn run_task(
                 2,
                 assembled.cuts,
                 Some((assembled.detected, assembled.skipped)),
+                memory_ids,
             )
         }
         TaskStart::Resume { task_id } => match ctx.store.load_state(&task_id) {
@@ -183,21 +219,42 @@ pub fn run_task(
                 let mut messages = resume_messages(transcript);
                 messages.push(message("user", RESUME_NOTE));
                 // Only the note is new; the rest is already on disk.
-                (state, messages, 1, Vec::new(), None)
+                (state, messages, 1, Vec::new(), None, Vec::new())
             }
             Err(error) => return unstartable(&task_id, &key, error.to_string()),
         },
     };
+
+    model.apply_route(&state.model, state.num_ctx);
+
+    let trajectory = if ctx.trajectories {
+        TrajectoryLog::create(ctx.store.data_dir(), &ctx.workspace, &state.id).ok()
+    } else {
+        None
+    };
+    if let Some(log) = &trajectory {
+        log.write_header(&state);
+    }
 
     let mut emitter = Emitter {
         task_id: state.id.clone(),
         sequence: 0,
         store: ctx.store,
         sink: on_event,
+        trajectory,
     };
     emitter.emit(AgentEvent::TaskStarted {
         summary: state.summary(),
     });
+    emitter.emit(AgentEvent::ModelRouted {
+        category: state.model_category,
+        model: state.model.clone(),
+        num_ctx: state.num_ctx,
+        reason: state.route_reason.clone(),
+    });
+    if !memory_ids.is_empty() {
+        emitter.emit(AgentEvent::MemoryLoaded { ids: memory_ids });
+    }
     if let Some((detected, skipped)) = skill_route {
         emitter.emit(AgentEvent::SkillsDetected { names: detected });
         for skill in &state.selected_skills {
@@ -497,6 +554,7 @@ fn run_loop(
                 // (SPEC §4.3). Three in a row and the task gives up (D7).
                 Err(problem) => {
                     consecutive_invalid += 1;
+                    maybe_escalate(ctx, state, messages, emitter, model);
                     state.errors.push(redact(&problem));
                     emitter.emit(AgentEvent::ToolCallFinished {
                         tool: call.name.clone(),
@@ -1096,6 +1154,7 @@ fn after_model_finished(
                             state,
                             messages,
                             emitter,
+                            model,
                             correction_attempts,
                             &reasons,
                         );
@@ -1107,9 +1166,15 @@ fn after_model_finished(
             }
             Some(StopReason::Verified)
         }
-        Verdict::Fail { reasons } => {
-            send_correction(ctx, state, messages, emitter, correction_attempts, &reasons)
-        }
+        Verdict::Fail { reasons } => send_correction(
+            ctx,
+            state,
+            messages,
+            emitter,
+            model,
+            correction_attempts,
+            &reasons,
+        ),
         Verdict::Unvalidated { .. } => Some(StopReason::Finished),
         Verdict::Run { .. } => Some(StopReason::Finished),
     }
@@ -1117,9 +1182,10 @@ fn after_model_finished(
 
 fn send_correction(
     ctx: &TaskContext<'_>,
-    state: &TaskState,
+    state: &mut TaskState,
     messages: &mut Vec<ChatMessage>,
     emitter: &mut Emitter<'_>,
+    model: &mut dyn ChatModel,
     correction_attempts: &mut u32,
     reasons: &[String],
 ) -> Option<StopReason> {
@@ -1127,6 +1193,7 @@ fn send_correction(
         return Some(StopReason::Finished);
     }
     *correction_attempts += 1;
+    maybe_escalate(ctx, state, messages, emitter, model);
     let text = correction_message(
         *correction_attempts,
         ctx.limits.max_correction_retries,
@@ -1139,6 +1206,40 @@ fn send_correction(
         text: redact(&text),
     });
     None
+}
+
+/// After a quality failure, bump the counter and switch to REASONER when the router says so.
+fn maybe_escalate(
+    ctx: &TaskContext<'_>,
+    state: &mut TaskState,
+    messages: &mut [ChatMessage],
+    emitter: &mut Emitter<'_>,
+    model: &mut dyn ChatModel,
+) {
+    state.coder_failures = state.coder_failures.saturating_add(1);
+    let decision = route(&RouteInput {
+        kind: state.task_kind,
+        default_model: &state.model,
+        assignment: &ctx.assignment,
+        inventory: &ctx.inventory,
+        requested_ctx: state.num_ctx,
+        coder_failures: state.coder_failures,
+    });
+    if decision.model == state.model && decision.num_ctx == state.num_ctx {
+        return;
+    }
+    state.model = decision.model.clone();
+    state.num_ctx = decision.num_ctx;
+    state.model_category = decision.category;
+    state.route_reason = decision.reason.clone();
+    model.apply_route(&state.model, state.num_ctx);
+    refresh_system_prompt(ctx, state, messages);
+    emitter.emit(AgentEvent::ModelRouted {
+        category: state.model_category,
+        model: state.model.clone(),
+        num_ctx: state.num_ctx,
+        reason: state.route_reason.clone(),
+    });
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1291,10 +1392,14 @@ struct Emitter<'a> {
     sequence: u64,
     store: &'a TaskStore,
     sink: &'a mut dyn FnMut(AgentEventMessage),
+    trajectory: Option<TrajectoryLog>,
 }
 
 impl Emitter<'_> {
     fn emit(&mut self, event: AgentEvent) {
+        if let Some(log) = &self.trajectory {
+            log.observe(&event);
+        }
         self.sequence += 1;
         let message = AgentEventMessage::new(self.task_id.clone(), self.sequence, event);
         // Best effort: a task must not die because its log could not be appended.
@@ -2942,5 +3047,124 @@ name = \"x\"
             )),
             "o CHANGES_REQUIRED do review vira correção"
         );
+    }
+
+    #[test]
+    fn a_trivial_task_emits_a_route_and_caps_the_window() {
+        let harness = soma_harness();
+        let mut model = ScriptedModel::new(vec![ScriptedModel::text("ok")]);
+        let (state, events) = run(
+            harness.context(),
+            &mut model,
+            start("O teste de soma falha. Corrija."),
+            &mut grant,
+        );
+        assert_eq!(state.num_ctx, crate::agent::router::TRIVIAL_CTX);
+        assert_eq!(
+            state.model_category,
+            crate::agent::router::ModelCategory::Coder
+        );
+        assert_eq!(state.model, "modelo-x");
+        assert!(
+            events.iter().any(|message| matches!(
+                &message.event,
+                AgentEvent::ModelRouted { num_ctx, .. } if *num_ctx == crate::agent::router::TRIVIAL_CTX
+            )),
+            "modelRouted missing"
+        );
+        assert_eq!(
+            model.routed.last().map(|r| r.1),
+            Some(crate::agent::router::TRIVIAL_CTX)
+        );
+    }
+
+    #[test]
+    fn two_quality_failures_escalate_to_reasoner() {
+        let harness = soma_harness();
+        let mut model = ScriptedModel::new(vec![
+            ScriptedModel::calls(&[(
+                "edit_file",
+                serde_json::json!({
+                    "path": "src/soma.ts",
+                    "old_text": "a - b",
+                    "new_text": "a * b",
+                }),
+            )]),
+            ScriptedModel::text("pronto"),
+        ]);
+        let mut ctx = harness.context();
+        ctx.assignment = ModelAssignment {
+            fast: Some("fast-x".into()),
+            coder: Some("coder-x".into()),
+            reasoner: Some("reasoner-x".into()),
+        };
+        ctx.limits.max_correction_retries = 3;
+        ctx.limits.llm_review = false;
+        let (state, events) = run(
+            ctx,
+            &mut model,
+            TaskStart::New {
+                request: "corrija a soma".into(),
+                model: "coder-x".into(),
+                num_ctx: 16_384,
+                continues: None,
+            },
+            &mut grant,
+        );
+        assert!(
+            state.coder_failures >= 2,
+            "falhas: {}",
+            state.coder_failures
+        );
+        assert!(
+            model.routed.iter().any(|(name, _)| name == "reasoner-x"),
+            "rotas: {:?}",
+            model.routed
+        );
+        assert!(
+            events.iter().any(|message| matches!(
+                &message.event,
+                AgentEvent::ModelRouted { model, reason, .. }
+                    if model == "reasoner-x" && reason.contains("escalonamento")
+            )),
+            "esperava modelRouted de escalonamento"
+        );
+    }
+
+    #[test]
+    fn trajectories_are_off_by_default_and_opt_in_writes_jsonl() {
+        let harness = soma_harness();
+        let mut model = ScriptedModel::new(vec![ScriptedModel::text("ok")]);
+        let (_state, _) = run(
+            harness.context(),
+            &mut model,
+            start("corrija a soma"),
+            &mut grant,
+        );
+        let traj_root = harness.store.data_dir().join("trajectories");
+        assert!(
+            !traj_root.exists() || fs::read_dir(&traj_root).map(|d| d.count()).unwrap_or(0) == 0,
+            "sem opt-in não há trajetória"
+        );
+
+        let harness = soma_harness();
+        let mut model = ScriptedModel::new(vec![ScriptedModel::text("ok")]);
+        let mut ctx = harness.context();
+        ctx.trajectories = true;
+        let (state, _) = run(ctx, &mut model, start("corrija a soma"), &mut grant);
+        let mut found = None;
+        let root = harness.store.data_dir().join("trajectories");
+        for dir in fs::read_dir(&root).unwrap() {
+            for file in fs::read_dir(dir.unwrap().path()).unwrap() {
+                found = Some(file.unwrap().path());
+            }
+        }
+        let path = found.expect("jsonl da trajetória");
+        assert!(path.ends_with(format!("{}.jsonl", state.id)));
+        let text = fs::read_to_string(&path).unwrap();
+        assert!(text.contains("\"kind\":\"header\""));
+        assert!(text.contains("\"kind\":\"route\""));
+        assert!(text.contains("\"kind\":\"outcome\""));
+        assert!(!text.contains("ghp_"));
     }
 }
