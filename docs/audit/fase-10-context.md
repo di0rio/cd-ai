@@ -22,9 +22,15 @@ O Context Manager **não** faz rede e **não** monta prompt no frontend. Resulta
 
 O modelo scripted reporta `promptTokens` do Ollama = 0. A evidência desta fase é a estimativa `chars/4` gravada em `TaskMetrics.estimatedTokens` / `peakEstimatedTokens` e no JSON do eval (`estimatedTokens`).
 
-O mapa de um fixture pequeno (soma/greet/dobro) cabe em dezenas de tokens e é menor do que concatenar os `.ts`. Numa tarefa viva, o ganho real é o Coder **não** listar a árvore inteira e a higiene encolher logs/leituras velhas nos turnos seguintes.
+Medido em 2026-09-16 (`cargo run -q -p cd-ai-cli -- eval --scripted`, HEAD desta PR):
 
-Comparar `estimatedTokens` entre relatórios (Fase 9 vs Fase 10) no mesmo `--scripted` mede o custo do mapa no system prompt; o script ainda faz as mesmas tool calls, então a queda de tokens **por tarefa ao vivo** só aparece com Ollama.
+| tarefa | iterações | `estimatedTokens` (último turno) | `agentStatus` |
+|---|---|---|---|
+| dobro | 4 | 752 | `completed` |
+| greet | 4 | 730 | `completed` |
+| soma | 4 | 718 | `completed` |
+
+**100% (3/3).** Os fixtures são minúsculos: o mapa entra no system prompt (dezenas de tokens) e o script ainda faz as mesmas tool calls, então o `estimatedTokens` **não é menor** do que um prompt só com o perfil — é o custo honesto de nunca mandar o projeto inteiro. O ganho aparece (1) vs concatenar as fontes (teste `the_map_is_much_smaller_than_dumping_sources`) e (2) em tarefas vivas com logs/leituras velhas, via higiene + compactação. Tokens reais do Ollama (`promptTokens`) só com o comando ao vivo abaixo.
 
 ## Eval
 
@@ -32,7 +38,7 @@ Comparar `estimatedTokens` entre relatórios (Fase 9 vs Fase 10) no mesmo `--scr
 cargo run -q -p cd-ai-cli -- eval --scripted
 ```
 
-A suíte não cresceu (planos 016 D3 / 018 D10 / 019 D10 / 020 D9). Esperado: **100% (3/3)** sem regressão, `agentStatus: completed`.
+A suíte não cresceu (planos 016 D3 / 018 D10 / 019 D10 / 020 D9). Taxa scripted medida em 2026-09-16: **100% (3/3)** — sem regressão; `agentStatus: completed` nas três.
 
 ## Caminho ao vivo (Ollama + CODER)
 

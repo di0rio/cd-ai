@@ -99,9 +99,9 @@ hit          = mesmo (mtime, size) por path relativo
 - [x] Cache invalida por mtime/size e reparse só o arquivo mudado
 - [x] Higiene omite leitura obsoleta e colapsa log grande
 - [x] Pergunta clara usa o prompt/tools do Explorer; Coder nas demais
-- [ ] `cd-ai eval --scripted` 3/3, com estimativa de tokens no relatório
-- [ ] `bun run verify` exit 0
-- [ ] PR aberto
+- [x] `cd-ai eval --scripted` 3/3, com estimativa de tokens no relatório
+- [x] `bun run verify` exit 0
+- [x] PR aberto
 
 ## STOP conditions
 

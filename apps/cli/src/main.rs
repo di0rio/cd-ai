@@ -521,6 +521,20 @@ fn print_eval_event(task: &EvalTask, message: &AgentEventMessage) {
         AgentEvent::Retrying { attempt, reason } => {
             eprintln!("[{}] tentativa {attempt}: {reason}", task.id);
         }
+        AgentEvent::ContextReady {
+            role,
+            classification,
+            repo_map_files,
+            cache_hit,
+            estimated_tokens,
+            ..
+        } => {
+            let cache = if *cache_hit { "hit" } else { "miss" };
+            eprintln!(
+                "[{}] contexto: {role}/{classification}  mapa {repo_map_files} arquivo(s)  cache={cache}  ~{estimated_tokens} tok",
+                task.id
+            );
+        }
         AgentEvent::TaskFinished {
             status,
             stop_reason,
