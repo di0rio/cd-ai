@@ -116,9 +116,9 @@ trajectories = true            → JSONL local, redigido, sem output de tool
 - [x] Escalonamento após 2 falhas (teste no loop com `apply_route`)
 - [x] Memória relevante no prompt, stale fora, secrets redigidos (teste)
 - [x] Trajetórias off por padrão; on grava JSONL local redigido (teste)
-- [ ] Eval scripted 3/3; JSON com rota; audit com evidência de custo/latência
-- [ ] `bun run verify` exit 0
-- [ ] PR aberto
+- [x] Eval scripted 3/3; JSON com rota; audit com evidência de custo/latência
+- [x] `bun run verify` exit 0
+- [x] PR aberto
 
 ## STOP conditions
 

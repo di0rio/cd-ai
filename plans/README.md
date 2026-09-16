@@ -103,7 +103,7 @@ Escrita em 2026-09-16 sobre o `main` com as Fases 0–11 fechadas (PR #11).
 
 | Plano | Título | Prioridade | Esforço | Depende de | Status |
 |------|--------|-----------|---------|------------|--------|
-| 022 | Fase 12 — Model Router, memória e trajetórias (FAST/CODER/REASONER, memória estruturada, JSONL opt-in) | P1 | L | 021 | IN PROGRESS |
+| 022 | Fase 12 — Model Router, memória e trajetórias (FAST/CODER/REASONER, memória estruturada, JSONL opt-in) | P1 | L | 021 | DONE |
 
 Valores de status: TODO | IN PROGRESS | DONE | BLOCKED (com motivo de uma linha) | REJECTED (com justificativa de uma linha).
 

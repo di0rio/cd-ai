@@ -58,18 +58,20 @@ cargo run -q -p cd-ai-cli -- eval --scripted --out evals/results/scripted-fase12
 
 | evidência | resultado |
 |---|---|
-| Taxa scripted | **100% (3/3)** — mesma da Fase 11 |
+| Taxa scripted | **100% (3/3)** — mesma da Fase 11. Gate `bun run verify` exit 0. |
 | Rota nas fixtures | `coder` / `8192` (trivial + um só modelo) |
 | Campo no JSON | `modelCategory`, `routedNumCtx`, `routeReason` |
 | Prefill vs Fase 11 | janela 8k em vez de 16k; tokens estimados continuam `chars/4` (o prompt cabe; o ganho é prefill, não contagem de chars) |
 
-Números por tarefa (preenchidos após o gate):
+Números por tarefa (`evals/results/scripted-fase12.json`, 2026-09-16):
 
 | tarefa | iterações | estimatedPromptTokens | modelCategory | routedNumCtx | agentStatus |
 |---|---|---|---|---|---|
-| dobro | — | — | coder | 8192 | completed |
-| greet | — | — | coder | 8192 | completed |
-| soma | — | — | coder | 8192 | completed |
+| dobro | 4 | 3307 | coder | 8192 | completed |
+| greet | 4 | 3138 | coder | 8192 | completed |
+| soma | 4 | 3100 | coder | 8192 | completed |
+
+Taxa **100% (3/3)**. Tokens estimados iguais à Fase 11 (o prompt das fixtures cabe em 8k; o ganho é prefill, não `chars/4`). Rota `coder/8192` em todas.
 
 ## Caminho ao vivo (Ollama + CODER, opcionalmente FAST)
 
