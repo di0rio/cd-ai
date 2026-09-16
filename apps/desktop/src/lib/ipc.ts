@@ -17,6 +17,7 @@ import type { WorkspaceInfo } from "./bindings/WorkspaceInfo";
 
 export type { AgentEvent } from "./bindings/AgentEvent";
 export type { AgentEventMessage } from "./bindings/AgentEventMessage";
+export type { AgentRole } from "./bindings/AgentRole";
 export type { AppInfo } from "./bindings/AppInfo";
 export type { ApprovalAction } from "./bindings/ApprovalAction";
 export type { ApprovalRequest } from "./bindings/ApprovalRequest";
@@ -54,6 +55,7 @@ export type { SecretKind } from "./bindings/SecretKind";
 export type { Settings } from "./bindings/Settings";
 export type { StopReason } from "./bindings/StopReason";
 export type { TaskHistoryEntry } from "./bindings/TaskHistoryEntry";
+export type { TaskKind } from "./bindings/TaskKind";
 export type { TaskReport } from "./bindings/TaskReport";
 export type { TaskStatus } from "./bindings/TaskStatus";
 export type { TaskSummary } from "./bindings/TaskSummary";

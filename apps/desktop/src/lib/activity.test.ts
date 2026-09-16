@@ -585,6 +585,9 @@ describe("applyAgentEvent", () => {
       { event: "toolCallRequested", data: { tool: "read_file", input: { path: "a.ts" } } },
       { event: "toolCallFinished", data: { tool: "read_file", ok: true, detail: "3 linhas", output: null } },
       { event: "contextTrimmed", data: { removedMessages: 2, estimatedTokens: 900 } },
+      { event: "contextBudgetCut", data: { section: "repo_map", tokensBefore: 400, tokensAfter: 200 } },
+      { event: "contextCompacted", data: { estimatedTokens: 800, reason: "histórico condensado" } },
+      { event: "roleChanged", data: { role: "coder", reason: "exploração concluída" } },
       { event: "retrying", data: { attempt: 2, reason: "timeout" } },
       { event: "checkpointCreated", data: { commit: "abc123", kind: "baseline" } },
     ] as AgentEventBody[]) {

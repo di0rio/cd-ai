@@ -134,6 +134,8 @@ pub struct EvalTaskResult {
     pub retries: u32,
     pub prompt_tokens: u64,
     pub gen_tokens: u64,
+    /// `chars/4` summed across turns (plan 020). Filled even when the driver reports 0 prompt tokens.
+    pub estimated_prompt_tokens: u64,
     pub duration_ms: u64,
     pub model_ms: u64,
     pub tool_ms: u64,
@@ -331,6 +333,7 @@ fn run_one(
             retries: 0,
             prompt_tokens: 0,
             gen_tokens: 0,
+            estimated_prompt_tokens: 0,
             duration_ms: started.elapsed().as_millis() as u64,
             model_ms: 0,
             tool_ms: 0,
@@ -429,6 +432,7 @@ fn run_one_inner(
         retries: state.retries,
         prompt_tokens: state.metrics.prompt_tokens,
         gen_tokens: state.metrics.gen_tokens,
+        estimated_prompt_tokens: state.metrics.estimated_prompt_tokens,
         duration_ms: 0,
         model_ms: state.metrics.model_ms,
         tool_ms: state.metrics.tool_ms,
@@ -456,6 +460,7 @@ fn skipped_result(id: &str, reason: &str) -> EvalTaskResult {
         retries: 0,
         prompt_tokens: 0,
         gen_tokens: 0,
+        estimated_prompt_tokens: 0,
         duration_ms: 0,
         model_ms: 0,
         tool_ms: 0,
@@ -770,6 +775,10 @@ mod tests {
         assert_eq!(soma.tool_call_format_failures, 0);
         assert_eq!(soma.rejected_edits, 0);
         assert!(soma.native_tool_call_turns > 0);
+        assert!(
+            soma.estimated_prompt_tokens > 0,
+            "o context manager tem que medir o prompt mesmo no scripted"
+        );
     }
 
     #[test]
