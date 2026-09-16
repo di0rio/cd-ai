@@ -136,6 +136,8 @@ fn base_prompt(profile: &str) -> String {
          - Paths are relative to the workspace root. Never try to leave it.\n\
          - run_command takes argv as an array of strings and runs without a shell: no pipes, &&, \
          redirects or globs. One command per call.\n\
+         - For git status, diff, log and branch, use git_status / git_diff / git_log / git_branch \
+         (read-only, the user's repository). Do not use run_command for git.\n\
          - For existing files prefer edit_file (exact old_text -> new_text) over write_file.\n\
          - Never write content you already wrote into a second file to make it \"simpler\". If a \
          file already holds what you meant, that step is done: improve it with edit_file, or \

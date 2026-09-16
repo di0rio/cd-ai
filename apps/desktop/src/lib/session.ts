@@ -23,7 +23,8 @@ export type ActivityEvent =
   // `id` is the engine's command id, so a completion can find the row it belongs to.
   | { kind: "command"; id?: number; command: string; exitCode: number | null; durationMs: number; output?: string }
   | { kind: "failure"; tool: string; message: string }
-  | { kind: "report"; validated: boolean; summary: string; checks: Check[] };
+  | { kind: "report"; validated: boolean; summary: string; checks: Check[] }
+  | { kind: "rollback"; restored: string[]; skipped: Array<{ path: string; reason: string; diff: string }> };
 
 // The exact action awaiting a decision (Fase 4 design §5.3): full argv or full diff, never a summary.
 export type PendingApproval = { id: string; action: ApprovalAction };
@@ -54,6 +55,7 @@ export type Task = {
   streamingAssistant?: boolean;
   // Id of the task this one continues, for showing the chain in the sidebar.
   continues?: string | null;
+  rolledBack?: boolean;
 };
 
 // Routine exploration (successful reads and searches in a row) folds into one block; failures stay standalone.

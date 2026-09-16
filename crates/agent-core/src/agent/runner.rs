@@ -19,7 +19,8 @@ use crate::agent::prompt::{
     inherited_context, is_exhausted, system_prompt, trim_for_budget, wrap_untrusted_tool_result,
 };
 use crate::agent::state::{
-    AgentLimits, CommandRecord, FileChange, StopReason, TaskReport, TaskState, TaskStatus,
+    AgentLimits, CheckpointKind, CommandRecord, FileChange, StopReason, TaskReport, TaskState,
+    TaskStatus,
 };
 use crate::agent::storage::TaskStore;
 use crate::agent::tool_calls::{
@@ -30,9 +31,10 @@ use crate::agent::verify::{
     Review, Verdict, VerifyInput, command_failure_reason, correction_message,
     is_successful_validate, judge_files, parse_review, review_prompt,
 };
+use crate::checkpoint::{ShadowRepo, record_checkpoint};
 use crate::events::{ToolEvent, ToolEventMessage};
 use crate::ollama::{ChatEvent, ChatMessage, ModelFunctionCall, ModelToolCall};
-use crate::permissions::ApprovalRequest;
+use crate::permissions::{ApprovalRequest, CommandClass, classify};
 use crate::redactor;
 use crate::tool_call::parse_text_tool_calls;
 use crate::tools::cancel::CancelToken;
@@ -236,6 +238,26 @@ fn run_loop(
     let specs = tool_specs();
     let started = Instant::now();
     let task_timeout = Duration::from_millis(ctx.limits.task_timeout_ms);
+
+    let shadow = match ShadowRepo::open(ctx.store.data_dir(), &ctx.workspace) {
+        Ok(repo) => Some(repo),
+        Err(error) => {
+            state.errors.push(error.to_string());
+            None
+        }
+    };
+    if crate::checkpoint::baseline_commit(state).is_none() {
+        let message = format!("cd-ai baseline {}", state.id);
+        take_snapshot(
+            shadow.as_ref(),
+            state,
+            emitter,
+            CheckpointKind::Baseline,
+            &message,
+            None,
+        );
+        let _ = ctx.store.save_state(state);
+    }
 
     // A task parked on an approval prompt is spending the human's time, not the machine's, so it
     // must not spend the deadline either. The wait happens inside the caller's `Responder` (the CLI
@@ -475,6 +497,20 @@ fn run_loop(
                 repeated_write = None;
             }
 
+            if let ToolRequest::RunCommand(args) = &request
+                && classify(&args.argv) == CommandClass::Destructive
+            {
+                let message = format!("cd-ai before-destructive {}", state.id);
+                take_snapshot(
+                    shadow.as_ref(),
+                    state,
+                    emitter,
+                    CheckpointKind::BeforeDestructive,
+                    &message,
+                    None,
+                );
+            }
+
             let started_tool = Instant::now();
             let blocked_before = blocked_ms.get();
             let outcome = {
@@ -522,6 +558,22 @@ fn run_loop(
             if outcome.ok {
                 last_error = None;
                 error_repeats = 0;
+                let paths = match &outcome.data {
+                    Some(ToolOutput::EditFile(result)) => Some(vec![result.path.clone()]),
+                    Some(ToolOutput::WriteFile(result)) => Some(vec![result.path.clone()]),
+                    _ => None,
+                };
+                if let Some(paths) = paths {
+                    let message = format!("cd-ai after-write {}", state.id);
+                    take_snapshot(
+                        shadow.as_ref(),
+                        state,
+                        emitter,
+                        CheckpointKind::AfterWrite,
+                        &message,
+                        Some(paths.as_slice()),
+                    );
+                }
             } else {
                 if last_error.as_deref() == Some(detail.as_str()) {
                     error_repeats += 1;
@@ -652,6 +704,33 @@ fn push_tool_result(
     };
     let _ = ctx.store.append_transcript(&state.id, &result);
     messages.push(result);
+}
+
+fn take_snapshot(
+    shadow: Option<&ShadowRepo>,
+    state: &mut TaskState,
+    emitter: &mut Emitter<'_>,
+    kind: CheckpointKind,
+    message: &str,
+    paths: Option<&[String]>,
+) {
+    let Some(repo) = shadow else {
+        return;
+    };
+    let result = match paths {
+        Some(paths) => repo.snapshot_paths(paths, message),
+        None => repo.snapshot(message),
+    };
+    match result {
+        Ok(commit) => {
+            let checkpoint = record_checkpoint(state, commit, kind);
+            emitter.emit(AgentEvent::CheckpointCreated {
+                commit: checkpoint.commit,
+                kind: checkpoint.kind,
+            });
+        }
+        Err(error) => state.errors.push(error.to_string()),
+    }
 }
 
 /// Keeps the evidence of the task up to date from what the engine reports. Deriving it from the
@@ -1842,6 +1921,22 @@ mod tests {
         assert!(!content.contains("a - b"), "{content}");
         assert_eq!(state.files_changed.len(), 1);
         assert_eq!(state.files_changed[0].path, "src/soma.ts");
+        assert!(
+            state
+                .checkpoints
+                .iter()
+                .any(|checkpoint| checkpoint.kind == CheckpointKind::Baseline),
+            "a tarefa precisa de um snapshot baseline: {:?}",
+            state.checkpoints
+        );
+        assert!(
+            state
+                .checkpoints
+                .iter()
+                .any(|checkpoint| checkpoint.kind == CheckpointKind::AfterWrite),
+            "a edição precisa de um snapshot after-write: {:?}",
+            state.checkpoints
+        );
         assert_eq!(state.commands.len(), 1);
         assert_eq!(state.commands[0].argv, ["bun", "test"]);
         assert_eq!(
