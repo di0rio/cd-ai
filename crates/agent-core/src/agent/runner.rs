@@ -120,7 +120,7 @@ pub fn run_task(
 ) -> TaskState {
     let key = workspace_key(&ctx.workspace);
 
-    let (mut state, mut messages, opening, opening_cuts) = match start {
+    let (mut state, mut messages, opening, opening_cuts, skill_route) = match start {
         TaskStart::New {
             request,
             model: model_name,
@@ -150,12 +150,19 @@ pub fn run_task(
             );
             state.role = assembled.role;
             state.task_kind = assembled.kind;
+            state.selected_skills = assembled.skills.clone();
             let messages = vec![
                 message("system", &assembled.system),
                 message("user", &request),
             ];
             // Both go to the transcript: a resume rebuilds the conversation from it.
-            (state, messages, 2, assembled.cuts)
+            (
+                state,
+                messages,
+                2,
+                assembled.cuts,
+                Some((assembled.detected, assembled.skipped)),
+            )
         }
         TaskStart::Resume { task_id } => match ctx.store.load_state(&task_id) {
             Ok(mut state) => {
@@ -176,7 +183,7 @@ pub fn run_task(
                 let mut messages = resume_messages(transcript);
                 messages.push(message("user", RESUME_NOTE));
                 // Only the note is new; the rest is already on disk.
-                (state, messages, 1, Vec::new())
+                (state, messages, 1, Vec::new(), None)
             }
             Err(error) => return unstartable(&task_id, &key, error.to_string()),
         },
@@ -191,6 +198,21 @@ pub fn run_task(
     emitter.emit(AgentEvent::TaskStarted {
         summary: state.summary(),
     });
+    if let Some((detected, skipped)) = skill_route {
+        emitter.emit(AgentEvent::SkillsDetected { names: detected });
+        for skill in &state.selected_skills {
+            emitter.emit(AgentEvent::SkillLoaded {
+                name: skill.name.clone(),
+                reason: skill.reason.clone(),
+            });
+        }
+        for skip in skipped {
+            emitter.emit(AgentEvent::SkillSkipped {
+                name: skip.name,
+                reason: skip.reason,
+            });
+        }
+    }
     for cut in opening_cuts {
         emitter.emit(AgentEvent::ContextBudgetCut {
             section: cut.section,
@@ -896,6 +918,7 @@ fn refresh_system_prompt(ctx: &TaskContext<'_>, state: &TaskState, messages: &mu
         state.num_ctx,
         inherited.as_deref(),
         state.role,
+        Some(&state.selected_skills),
     );
     system.content = assembled.system;
 }
@@ -2360,6 +2383,39 @@ mod tests {
                 .any(|message| message.content.contains("somente leitura")),
             "{result:?}"
         );
+    }
+
+    #[test]
+    fn a_typescript_fix_task_emits_skill_events_and_keeps_the_trust_boundary() {
+        let harness = soma_harness();
+        let mut model = ScriptedModel::new(vec![ScriptedModel::text("ok")]);
+        let (state, events) = run(
+            harness.context(),
+            &mut model,
+            start("O teste de soma falha. Corrija e rode os testes."),
+            &mut grant,
+        );
+        let names: Vec<&str> = state
+            .selected_skills
+            .iter()
+            .map(|skill| skill.name.as_str())
+            .collect();
+        assert!(names.contains(&"typescript"), "{names:?}");
+        assert!(names.contains(&"testing"), "{names:?}");
+        assert!(names.contains(&"debugging"), "{names:?}");
+        assert!(
+            events
+                .iter()
+                .any(|message| matches!(&message.event, AgentEvent::SkillsDetected { .. })),
+            "skillsDetected missing"
+        );
+        assert!(events.iter().any(|message| matches!(
+            &message.event,
+            AgentEvent::SkillLoaded { name, .. } if name == "testing"
+        )));
+        let system = &model.seen[0][0].content;
+        assert!(system.contains("### testing"));
+        assert!(state.files_changed.is_empty());
     }
 
     #[test]

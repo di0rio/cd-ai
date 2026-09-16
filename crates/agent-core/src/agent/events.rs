@@ -95,6 +95,18 @@ pub enum AgentEvent {
         role: AgentRole,
         reason: String,
     },
+    /// Names that scored above the router threshold (plan 021 / SPEC §17.3).
+    SkillsDetected {
+        names: Vec<String>,
+    },
+    SkillLoaded {
+        name: String,
+        reason: String,
+    },
+    SkillSkipped {
+        name: String,
+        reason: String,
+    },
     Retrying {
         attempt: u32,
         reason: String,
