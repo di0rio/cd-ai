@@ -119,7 +119,7 @@ Escrita em 2026-09-16 sobre o `main` com as Fases 0–13 fechadas (PR #13).
 
 | Plano | Título | Prioridade | Esforço | Depende de | Status |
 |------|--------|-----------|---------|------------|--------|
-| 024 | Fase 14 — Release Linux x86_64 (`.deb`, AppImage, instalação limpa) | P1 | M | 023 | IN PROGRESS |
+| 024 | Fase 14 — Release Linux x86_64 (`.deb`, AppImage, instalação limpa) | P1 | M | 023 | DONE |
 
 Valores de status: TODO | IN PROGRESS | DONE | BLOCKED (com motivo de uma linha) | REJECTED (com justificativa de uma linha).
 
