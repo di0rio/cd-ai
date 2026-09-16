@@ -15,7 +15,9 @@ use serde_json::Value;
 use crate::agent::events::{AgentEvent, AgentEventMessage};
 use crate::agent::model::{ChatModel, ModelError, ModelReply};
 use crate::agent::profile::workspace_profile;
-use crate::agent::prompt::{inherited_context, is_exhausted, system_prompt, trim_for_budget};
+use crate::agent::prompt::{
+    inherited_context, is_exhausted, system_prompt, trim_for_budget, wrap_untrusted_tool_result,
+};
 use crate::agent::state::{
     AgentLimits, CommandRecord, FileChange, StopReason, TaskReport, TaskState, TaskStatus,
 };
@@ -55,6 +57,8 @@ pub struct TaskContext<'a> {
     pub cancel: CancelToken,
     /// Course corrections typed while the task runs; drained at the top of each iteration.
     pub steer: Arc<Mutex<VecDeque<String>>>,
+    /// ASK / AUTO / FULL ACCESS for this run (plan 017). Default ASK.
+    pub permission_mode: crate::permissions::PermissionMode,
 }
 
 impl<'a> TaskContext<'a> {
@@ -65,6 +69,7 @@ impl<'a> TaskContext<'a> {
             limits: AgentLimits::default(),
             cancel: CancelToken::default(),
             steer: Arc::default(),
+            permission_mode: crate::permissions::PermissionMode::Ask,
         }
     }
 }
@@ -178,7 +183,7 @@ pub fn run_task(
     }
     let _ = ctx.store.save_state(&state);
 
-    let mut engine = ToolEngine::new(ctx.workspace.clone(), &state.id);
+    let mut engine = ToolEngine::with_mode(ctx.workspace.clone(), &state.id, ctx.permission_mode);
     engine.set_cancel(ctx.cancel.clone());
 
     let (reason, final_text) = run_loop(
@@ -612,7 +617,7 @@ fn push_tool_result(
 ) {
     let result = ChatMessage {
         role: "tool".to_string(),
-        content: content.to_string(),
+        content: wrap_untrusted_tool_result(content),
         tool_calls: Vec::new(),
         tool_name: Some(tool.to_string()),
     };
@@ -834,7 +839,7 @@ impl Emitter<'_> {
 mod tests {
     use super::*;
     use crate::agent::model::ScriptedModel;
-    use crate::agent::prompt::INHERITED_BEGIN;
+    use crate::agent::prompt::{INHERITED_BEGIN, UNTRUSTED_TOOL_BEGIN, UNTRUSTED_TOOL_END};
     use crate::permissions::{ApprovalRequest, ApprovalResponse};
     use crate::tools::command::test_argv;
     use std::fs;
@@ -981,11 +986,13 @@ mod tests {
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].tool_name.as_deref(), Some("read_file"));
         assert!(
-            results[0]
-                .content
-                .starts_with("src/soma.ts (linhas 1-1 de 1)")
+            results[0].content.starts_with(UNTRUSTED_TOOL_BEGIN),
+            "{}",
+            results[0].content
         );
+        assert!(results[0].content.contains("src/soma.ts (linhas 1-1 de 1)"));
         assert!(results[0].content.contains("a - b"));
+        assert!(results[0].content.contains(UNTRUSTED_TOOL_END));
 
         // The events name the tool and say it went fine.
         assert!(events.iter().any(|message| matches!(
@@ -1045,7 +1052,7 @@ mod tests {
         assert_eq!(state.iterations, 3);
         let results = tool_messages(&model, 1);
         assert_eq!(results.len(), 1);
-        assert!(results[0].content.starts_with("erro: tool desconhecida"));
+        assert!(results[0].content.contains("erro: tool desconhecida"));
         assert!(events.iter().any(|message| matches!(
             &message.event,
             AgentEvent::ToolCallFinished { ok: false, detail, .. } if detail.contains("desconhecida")
@@ -1148,7 +1155,7 @@ mod tests {
         assert_eq!(state.stop_reason, Some(StopReason::Finished));
         let results = tool_messages(&model, 1);
         assert!(
-            results[0].content.starts_with("erro: permissão negada"),
+            results[0].content.contains("erro: permissão negada"),
             "{}",
             results[0].content
         );
@@ -1390,8 +1397,8 @@ mod tests {
         let results = tool_messages(&model, model.seen.len() - 1);
         assert_eq!(results.len(), 3);
         assert_eq!(results[0].content, crate::agent::prompt::OMITTED_RESULT);
-        assert!(results[1].content.starts_with("b.rs (linhas 1-200 de 200)"));
-        assert!(results[2].content.starts_with("c.rs (linhas 1-200 de 200)"));
+        assert!(results[1].content.contains("b.rs (linhas 1-200 de 200)"));
+        assert!(results[2].content.contains("c.rs (linhas 1-200 de 200)"));
     }
 
     // 11 ───────────────────────────────────────────────────────────────────────────────────────
@@ -1484,7 +1491,7 @@ mod tests {
         assert_eq!(state.commands.len(), 1);
         assert_eq!(state.commands[0].exit_code, Some(0));
         let results = tool_messages(&model, 1);
-        assert!(results[0].content.starts_with("exit 0"));
+        assert!(results[0].content.contains("exit 0"));
         assert!(results[0].content.contains("oi"));
 
         // The report carries the command as evidence, unvalidated.
@@ -1605,7 +1612,7 @@ mod tests {
         let content = fs::read_to_string(harness.workspace.root().join("src/soma.ts")).unwrap();
         assert!(content.contains("a + b"));
         let results = tool_messages(&model, 1);
-        assert!(results[0].content.starts_with("ok: src/soma.ts"));
+        assert!(results[0].content.contains("ok: src/soma.ts"));
     }
 
     #[test]
@@ -1812,7 +1819,13 @@ mod tests {
 
         assert_eq!(state.stop_reason, Some(StopReason::Finished));
         let results = tool_messages(&model, 1);
-        assert_eq!(results[0].content, "erro: caminho fora do workspace");
+        assert!(
+            results[0]
+                .content
+                .contains("erro: caminho fora do workspace"),
+            "{}",
+            results[0].content
+        );
         assert!(state.files_read.is_empty());
     }
 

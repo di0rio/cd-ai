@@ -13,7 +13,7 @@ Coding agent desktop local: Tauri 2 + Next.js (static export) + core em Rust + O
 - Só a UI no navegador: `bun run --cwd apps/desktop dev`, depois abrir `http://localhost:1420/?demo` para ver os dados de demonstração
 - Binário release, sem instalador: `bun tauri build --no-bundle`
 - CLI: `cargo run -q -p cd-ai-cli -- --version`
-- Tarefa pela CLI (com o Ollama rodando): `cargo run -q -p cd-ai-cli -- task --model <modelo> [--workspace <pasta>] "<pedido>"` (as aprovações são pedidas no terminal; retome com `--resume <id>`)
+- Tarefa pela CLI (com o Ollama rodando): `cargo run -q -p cd-ai-cli -- task --model <modelo> [--workspace <pasta>] [--mode ask|auto|full-access] "<pedido>"` (as aprovações são pedidas no terminal; retome com `--resume <id>`)
 - Eval da suíte (headless; `--scripted` não precisa do Ollama): `cargo run -q -p cd-ai-cli -- eval --scripted` ou `cargo run -q -p cd-ai-cli -- eval --model <modelo>`
 - Benchmark de modelos (com o Ollama rodando): `bun scripts/bench-models.ts <modelo> [modelo...]`
 

@@ -3,6 +3,8 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
+use crate::sandbox::SandboxCapabilities;
+
 /// Deterministic classification of a command line (design §4), pure function.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export)]
@@ -27,6 +29,89 @@ pub enum PermissionDecision {
     Denied,
     Auto,
     Granted,
+}
+
+/// User-facing permission mode (SPEC §20.4). Default is Ask: the v1 behaviour before a sandbox.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "camelCase")]
+pub enum PermissionMode {
+    #[default]
+    Ask,
+    Auto,
+    FullAccess,
+}
+
+/// What the policy is deciding on. Paths outside the workspace never reach this: they die in
+/// `Workspace::resolve` first.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PermissionKind {
+    ReadFile { secret: bool },
+    EditFile,
+    WriteFile,
+    RunCommand { class: CommandClass },
+}
+
+/// Pure outcome of [`policy`]: execute, ask the user, or refuse without asking.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Policy {
+    Auto,
+    Ask,
+    Deny,
+}
+
+/// SPEC §20.4. Full Access without a complete sandbox is treated as Ask (D5).
+pub fn effective_mode(mode: PermissionMode, caps: SandboxCapabilities) -> PermissionMode {
+    match mode {
+        PermissionMode::FullAccess if !caps.ready() => PermissionMode::Ask,
+        other => other,
+    }
+}
+
+/// Deterministic permission table. Never reads model text or tool output (SPEC §20.5).
+pub fn policy(mode: PermissionMode, kind: &PermissionKind, caps: SandboxCapabilities) -> Policy {
+    let mode = effective_mode(mode, caps);
+    match kind {
+        PermissionKind::ReadFile { secret: false } => Policy::Auto,
+        PermissionKind::ReadFile { secret: true } => Policy::Ask,
+        PermissionKind::EditFile | PermissionKind::WriteFile => match mode {
+            PermissionMode::Ask => Policy::Ask,
+            PermissionMode::Auto | PermissionMode::FullAccess => Policy::Auto,
+        },
+        PermissionKind::RunCommand { class } => match class {
+            CommandClass::Read | CommandClass::Validate => Policy::Auto,
+            CommandClass::Write => match mode {
+                PermissionMode::Ask => Policy::Ask,
+                PermissionMode::Auto | PermissionMode::FullAccess if caps.filesystem => {
+                    Policy::Auto
+                }
+                PermissionMode::Auto | PermissionMode::FullAccess => Policy::Ask,
+            },
+            CommandClass::Network | CommandClass::Destructive | CommandClass::Unknown => {
+                Policy::Ask
+            }
+        },
+    }
+}
+
+impl PermissionMode {
+    /// CLI / config spelling: `ask`, `auto`, `full-access`.
+    pub fn parse_slug(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "ask" => Some(Self::Ask),
+            "auto" => Some(Self::Auto),
+            "full-access" | "fullaccess" | "full_access" => Some(Self::FullAccess),
+            _ => None,
+        }
+    }
+
+    pub fn slug(self) -> &'static str {
+        match self {
+            Self::Ask => "ask",
+            Self::Auto => "auto",
+            Self::FullAccess => "full-access",
+        }
+    }
 }
 
 /// The exact thing the user is asked to approve (design §5.3). Never a model summary.
@@ -656,5 +741,211 @@ mod tests {
         let cleared = manager.clear();
         assert_eq!(cleared.len(), 2);
         assert_eq!(manager.pending_ids().count(), 0);
+    }
+
+    fn caps(filesystem: bool, network_block: bool) -> SandboxCapabilities {
+        SandboxCapabilities {
+            filesystem,
+            network_block,
+        }
+    }
+
+    fn none() -> SandboxCapabilities {
+        caps(false, false)
+    }
+
+    fn ready() -> SandboxCapabilities {
+        caps(true, true)
+    }
+
+    #[test]
+    fn ask_mode_matches_the_phase_4_table() {
+        assert_eq!(
+            policy(
+                PermissionMode::Ask,
+                &PermissionKind::ReadFile { secret: false },
+                none()
+            ),
+            Policy::Auto
+        );
+        assert_eq!(
+            policy(
+                PermissionMode::Ask,
+                &PermissionKind::ReadFile { secret: true },
+                none()
+            ),
+            Policy::Ask
+        );
+        assert_eq!(
+            policy(PermissionMode::Ask, &PermissionKind::EditFile, none()),
+            Policy::Ask
+        );
+        assert_eq!(
+            policy(PermissionMode::Ask, &PermissionKind::WriteFile, none()),
+            Policy::Ask
+        );
+        assert_eq!(
+            policy(
+                PermissionMode::Ask,
+                &PermissionKind::RunCommand {
+                    class: CommandClass::Read
+                },
+                none()
+            ),
+            Policy::Auto
+        );
+        assert_eq!(
+            policy(
+                PermissionMode::Ask,
+                &PermissionKind::RunCommand {
+                    class: CommandClass::Validate
+                },
+                none()
+            ),
+            Policy::Auto
+        );
+        for class in [
+            CommandClass::Write,
+            CommandClass::Network,
+            CommandClass::Destructive,
+            CommandClass::Unknown,
+        ] {
+            assert_eq!(
+                policy(
+                    PermissionMode::Ask,
+                    &PermissionKind::RunCommand {
+                        class: class.clone()
+                    },
+                    ready()
+                ),
+                Policy::Ask,
+                "{class:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn auto_mode_edits_without_asking_and_write_commands_need_a_filesystem_sandbox() {
+        assert_eq!(
+            policy(PermissionMode::Auto, &PermissionKind::EditFile, none()),
+            Policy::Auto
+        );
+        assert_eq!(
+            policy(PermissionMode::Auto, &PermissionKind::WriteFile, none()),
+            Policy::Auto
+        );
+        assert_eq!(
+            policy(
+                PermissionMode::Auto,
+                &PermissionKind::RunCommand {
+                    class: CommandClass::Write
+                },
+                caps(true, false)
+            ),
+            Policy::Auto
+        );
+        assert_eq!(
+            policy(
+                PermissionMode::Auto,
+                &PermissionKind::RunCommand {
+                    class: CommandClass::Write
+                },
+                none()
+            ),
+            Policy::Ask
+        );
+        for class in [
+            CommandClass::Network,
+            CommandClass::Destructive,
+            CommandClass::Unknown,
+        ] {
+            assert_eq!(
+                policy(
+                    PermissionMode::Auto,
+                    &PermissionKind::RunCommand {
+                        class: class.clone()
+                    },
+                    ready()
+                ),
+                Policy::Ask,
+                "{class:?}"
+            );
+        }
+        assert_eq!(
+            policy(
+                PermissionMode::Auto,
+                &PermissionKind::ReadFile { secret: true },
+                ready()
+            ),
+            Policy::Ask
+        );
+    }
+
+    #[test]
+    fn full_access_without_a_complete_sandbox_behaves_like_ask() {
+        assert_eq!(
+            effective_mode(PermissionMode::FullAccess, none()),
+            PermissionMode::Ask
+        );
+        assert_eq!(
+            effective_mode(PermissionMode::FullAccess, caps(true, false)),
+            PermissionMode::Ask
+        );
+        assert_eq!(
+            effective_mode(PermissionMode::FullAccess, ready()),
+            PermissionMode::FullAccess
+        );
+        assert_eq!(
+            policy(
+                PermissionMode::FullAccess,
+                &PermissionKind::EditFile,
+                none()
+            ),
+            Policy::Ask
+        );
+        assert_eq!(
+            policy(
+                PermissionMode::FullAccess,
+                &PermissionKind::EditFile,
+                ready()
+            ),
+            Policy::Auto
+        );
+        assert_eq!(
+            policy(
+                PermissionMode::FullAccess,
+                &PermissionKind::RunCommand {
+                    class: CommandClass::Write
+                },
+                ready()
+            ),
+            Policy::Auto
+        );
+        assert_eq!(
+            policy(
+                PermissionMode::FullAccess,
+                &PermissionKind::RunCommand {
+                    class: CommandClass::Network
+                },
+                ready()
+            ),
+            Policy::Ask
+        );
+    }
+
+    #[test]
+    fn permission_mode_slug_round_trips() {
+        for mode in [
+            PermissionMode::Ask,
+            PermissionMode::Auto,
+            PermissionMode::FullAccess,
+        ] {
+            assert_eq!(PermissionMode::parse_slug(mode.slug()), Some(mode));
+        }
+        assert_eq!(
+            PermissionMode::parse_slug("full-access"),
+            Some(PermissionMode::FullAccess)
+        );
+        assert_eq!(PermissionMode::parse_slug("nope"), None);
     }
 }

@@ -2,6 +2,7 @@
 
 import { type RefObject, useEffect, useState } from "react";
 import { formatTokens } from "@/lib/format";
+import type { PermissionMode } from "@/lib/ipc";
 import { PHASES, type Phase, type Task, type TaskStatus } from "@/lib/session";
 import { IconButton } from "./icon-button";
 import { Icon, type IconName } from "./icons";
@@ -22,11 +23,17 @@ const OUTCOME: Record<FinishedStatus, { label: string; icon: IconName; tone: str
   cancelled: { label: "Cancelada", icon: "x", tone: "text-ink-faint" },
 };
 
-// SPEC §20.4 has three permission modes; the core implements only ASK (decision 0001). A chooser
-// with one option is not a chooser, so the mode shows as the state it is — visible, because the user
-// has to know that writes will stop for approval, and inert, because there is nothing to choose yet.
-const PERMISSION_MODE = "Perguntar antes";
-const PERMISSION_HINT = "Toda escrita e todo comando que não seja de leitura pedem aprovação.";
+const PERMISSION_OPTIONS: { value: PermissionMode; label: string }[] = [
+  { value: "ask", label: "Perguntar antes" },
+  { value: "auto", label: "Automático" },
+  { value: "fullAccess", label: "Acesso total" },
+];
+
+const PERMISSION_HINT: Record<PermissionMode, string> = {
+  ask: "Toda escrita e todo comando que não seja de leitura pedem aprovação.",
+  auto: "Edições seguem sozinhas. Comandos de escrita também, se o sandbox estiver ativo. Rede, destrutivo e secrets ainda pedem aprovação.",
+  fullAccess: "O sandbox está ativo. Rede, destrutivo e secrets ainda pedem aprovação.",
+};
 
 type ComposerProps = {
   task: Task | null;
@@ -36,6 +43,10 @@ type ComposerProps = {
   models: string[];
   loadedModels: string[];
   model: string;
+  permissionMode: PermissionMode;
+  sandboxAvailable: boolean;
+  sandboxDetail: string;
+  onPermissionModeChange: (mode: PermissionMode) => void;
   onModelChange: (model: string) => void;
   onStart: (text: string) => void;
   onSteer: (text: string) => void;
@@ -51,6 +62,10 @@ export function Composer({
   models,
   loadedModels,
   model,
+  permissionMode,
+  sandboxAvailable,
+  sandboxDetail,
+  onPermissionModeChange,
   onModelChange,
   onStart,
   onSteer,
@@ -178,14 +193,27 @@ export function Composer({
             {/* In a narrow column only the icons stay: the model name is what has to remain readable. */}
             <Tooltip>
               <TooltipTrigger asChild>
-                <span className="flex shrink-0 items-center gap-1.5 px-1 text-xs text-ink-faint">
-                  <Icon name="lock" className="size-3.5" />
-                  <span className="hidden @lg:inline">{PERMISSION_MODE}</span>
-                  {/* The tooltip is a hover affordance; a reader that never hovers still gets the rule. */}
-                  <span className="sr-only">{PERMISSION_HINT}</span>
+                <span className="flex min-w-0 shrink-0 items-center">
+                  <Icon name="lock" className="size-3.5 text-ink-faint" />
+                  <Select
+                    label="Modo de permissão"
+                    value={permissionMode}
+                    options={PERMISSION_OPTIONS.map((option) =>
+                      option.value === "fullAccess" && !sandboxAvailable ? { ...option, disabled: true } : option,
+                    )}
+                    onChange={onPermissionModeChange}
+                    disabled={running}
+                  />
+                  <span className="sr-only">
+                    {sandboxAvailable || permissionMode !== "fullAccess"
+                      ? PERMISSION_HINT[permissionMode]
+                      : sandboxDetail}
+                  </span>
                 </span>
               </TooltipTrigger>
-              <TooltipContent>{PERMISSION_HINT}</TooltipContent>
+              <TooltipContent>
+                {permissionMode === "fullAccess" && !sandboxAvailable ? sandboxDetail : PERMISSION_HINT[permissionMode]}
+              </TooltipContent>
             </Tooltip>
             <Tooltip>
               <TooltipTrigger asChild>
@@ -290,7 +318,7 @@ function Outcome({ status }: { status: FinishedStatus }) {
 type SelectProps<T extends string> = {
   label: string;
   value: T;
-  options: { value: T; label: string }[];
+  options: { value: T; label: string; disabled?: boolean }[];
   onChange: (value: T) => void;
   disabled?: boolean;
   mono?: boolean;
@@ -311,7 +339,7 @@ function Select<T extends string>({ label, value, options, onChange, disabled, m
         className={`min-w-0 appearance-none truncate bg-transparent py-1.5 pr-6 pl-2 disabled:text-ink-faint ${mono ? "font-mono" : ""}`}
       >
         {options.map((option) => (
-          <option key={option.value} value={option.value}>
+          <option key={option.value} value={option.value} disabled={option.disabled}>
             {option.label}
           </option>
         ))}

@@ -57,6 +57,14 @@ Escrita em 2026-09-15 sobre o `main` com as Fases 0–5 fechadas.
 |------|--------|-----------|---------|------------|--------|
 | 016 | Fase 6 — Eval baseline (suite, runner headless, número registrado) | P1 | M | 015 | DONE |
 
+### Geração 5
+
+Escrita em 2026-09-16 sobre o `main` com as Fases 0–6 fechadas (PR #3).
+
+| Plano | Título | Prioridade | Esforço | Depende de | Status |
+|------|--------|-----------|---------|------------|--------|
+| 017 | Fase 7 — Permissões e sandbox (modos ASK/AUTO/FULL ACCESS, Landlock+netns, conteúdo não confiável) | P1 | L | 016 | DONE |
+
 Valores de status: TODO | IN PROGRESS | DONE | BLOCKED (com motivo de uma linha) | REJECTED (com justificativa de uma linha).
 
 ## Notas de dependência
@@ -90,6 +98,10 @@ Valores de status: TODO | IN PROGRESS | DONE | BLOCKED (com motivo de uma linha)
 ### Geração 4
 
 - **016 depois do 015.** O runner chama `run_task`; não reimplementa o loop. `--yes` no `task` continua proibido (D13 do 015); só o `eval` auto-aprova, e só na cópia da fixture.
+
+### Geração 5
+
+- **017 depois do 016.** O sandbox envolve `run_command`; a policy é função pura. FULL ACCESS exige sandbox Linux completo. Allowlist por workspace (§30) fica de fora. O eval scripted não cresce — só não pode regressar.
 
 ## Achados considerados e descartados
 

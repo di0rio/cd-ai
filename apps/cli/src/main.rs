@@ -13,19 +13,24 @@ use agent_core::agent::{
 };
 use agent_core::eval::{EvalDriver, EvalOptions, EvalTask, default_report_path, run_suite};
 use agent_core::ollama::{ChatEvent, ChatMessage, ChatRequest, OllamaClient};
-use agent_core::permissions::{ApprovalAction, ApprovalRequest, ApprovalResponse, CommandClass};
+use agent_core::permissions::{
+    ApprovalAction, ApprovalRequest, ApprovalResponse, CommandClass, PermissionMode,
+};
+use agent_core::sandbox;
 use agent_core::tools::cancel::CancelToken;
 use agent_core::workspace::Workspace;
 
 const USAGE: &str = "uso: cd-ai [--version | --help]
      cd-ai chat --model <nome> [--ctx <n>] <prompt>
-     cd-ai task --model <nome> [--ctx <n>] [--workspace <pasta>] [--max-iterations <n>] [--continue] <pedido…>
-     cd-ai task --resume <id> --model <nome> [--ctx <n>] [--workspace <pasta>]
+     cd-ai task --model <nome> [--ctx <n>] [--workspace <pasta>] [--max-iterations <n>] [--mode ask|auto|full-access] [--continue] <pedido…>
+     cd-ai task --resume <id> --model <nome> [--ctx <n>] [--workspace <pasta>] [--mode ask|auto|full-access]
      cd-ai eval --model <nome> [--suite <pasta>] [--task <id>] [--out <arquivo>] [--ctx <n>]
      cd-ai eval --scripted [--suite <pasta>] [--task <id>] [--out <arquivo>] [--ctx <n>]
 
 --continue: a tarefa nova continua a última deste workspace e herda o relatório dela (pedido,
 arquivos alterados, comandos e resumo), nunca a conversa inteira.
+--mode: ASK (padrão) pergunta; AUTO edita sozinho e, com sandbox, escreve sozinho; FULL ACCESS
+exige sandbox Linux completo. Rede, destrutivo e secrets sempre pedem aprovação.
 eval: corre a suíte em evals/ sobre cópias descartáveis e aprova sozinho. --scripted não fala com
 o Ollama.";
 
@@ -189,6 +194,7 @@ struct TaskArgs {
     resume: Option<String>,
     /// Whether this task continues the most recent one of the workspace.
     cont: bool,
+    permission_mode: PermissionMode,
     request: String,
 }
 
@@ -199,6 +205,7 @@ fn parse_task_args(args: impl Iterator<Item = String>) -> Result<TaskArgs, ExitC
     let mut max_iterations = None;
     let mut resume = None;
     let mut cont = false;
+    let mut permission_mode = PermissionMode::Ask;
     let mut request = Vec::new();
     let mut args = args;
 
@@ -227,6 +234,17 @@ fn parse_task_args(args: impl Iterator<Item = String>) -> Result<TaskArgs, ExitC
                 resume = Some(value);
             }
             "--continue" => cont = true,
+            "--mode" => {
+                let Some(value) = flag_value(&mut args, "--mode", "ask, auto ou full-access")
+                else {
+                    return Err(ExitCode::from(2));
+                };
+                let Some(mode) = PermissionMode::parse_slug(&value) else {
+                    eprintln!("--mode deve ser ask, auto ou full-access\n{USAGE}");
+                    return Err(ExitCode::from(2));
+                };
+                permission_mode = mode;
+            }
             // Everything after `--` is the request, so a request may start with a hyphen.
             "--" => {
                 request.extend(args.by_ref());
@@ -269,6 +287,7 @@ fn parse_task_args(args: impl Iterator<Item = String>) -> Result<TaskArgs, ExitC
         max_iterations,
         resume,
         cont,
+        permission_mode,
         request,
     })
 }
@@ -556,6 +575,14 @@ async fn task(args: impl Iterator<Item = String>) -> ExitCode {
         }
     };
 
+    if args.permission_mode == PermissionMode::FullAccess && !sandbox::status().available {
+        eprintln!(
+            "FULL ACCESS exige sandbox ativo ({})",
+            sandbox::status().detail
+        );
+        return ExitCode::from(1);
+    }
+
     let client = match ollama_client() {
         Ok(client) => client,
         Err(error) => {
@@ -577,11 +604,13 @@ async fn task(args: impl Iterator<Item = String>) -> ExitCode {
     let handle = tokio::runtime::Handle::current();
     let model_name = args.model.clone();
     let num_ctx = args.num_ctx;
+    let permission_mode = args.permission_mode;
 
     let mut join = tokio::task::spawn_blocking(move || {
         let mut ctx = TaskContext::new(&store, workspace);
         ctx.limits = limits;
         ctx.cancel = task_cancel;
+        ctx.permission_mode = permission_mode;
         let mut model = OllamaModel::new(client, handle, model_name, num_ctx, turn_timeout);
 
         let printer = Rc::new(RefCell::new(Printer::default()));
@@ -960,6 +989,7 @@ mod tests {
         assert_eq!(parsed.num_ctx, TASK_CTX);
         assert_eq!(parsed.workspace, ".");
         assert!(parsed.resume.is_none());
+        assert_eq!(parsed.permission_mode, PermissionMode::Ask);
 
         let args = ["--model", "qwen3"].map(String::from);
         assert!(parse_task_args(args.into_iter()).is_err());
@@ -992,6 +1022,20 @@ mod tests {
         let parsed = parse_task_args(args.into_iter()).expect("argumentos válidos");
         assert_eq!(parsed.request, "--arrume a soma");
         assert_eq!(parsed.model, "qwen3");
+    }
+
+    #[test]
+    fn mode_flag_parses_and_rejects_unknown_values() {
+        let args = ["--model", "qwen3", "--mode", "auto", "oi"].map(String::from);
+        let parsed = parse_task_args(args.into_iter()).expect("argumentos válidos");
+        assert_eq!(parsed.permission_mode, PermissionMode::Auto);
+
+        let args = ["--model", "qwen3", "--mode", "full-access", "oi"].map(String::from);
+        let parsed = parse_task_args(args.into_iter()).expect("argumentos válidos");
+        assert_eq!(parsed.permission_mode, PermissionMode::FullAccess);
+
+        let args = ["--model", "qwen3", "--mode", "yolo", "oi"].map(String::from);
+        assert!(parse_task_args(args.into_iter()).is_err());
     }
 
     #[test]

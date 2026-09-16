@@ -10,7 +10,8 @@ use agent_core::agent::{
     workspace_key,
 };
 use agent_core::ollama::{ChatEvent, ChatRequest, OllamaClient};
-use agent_core::permissions::{ApprovalRequest, ApprovalResponse};
+use agent_core::permissions::{ApprovalRequest, ApprovalResponse, PermissionMode};
+use agent_core::sandbox::{self, SandboxStatus};
 use agent_core::tools::cancel::CancelToken;
 use agent_core::workspace::Workspace;
 use tauri::ipc::Channel;
@@ -300,6 +301,12 @@ async fn spawn_task(
 ) -> Result<String, String> {
     let workspace = open_workspace_of(&state)?;
     let store = state.store.clone()?;
+    let permission_mode = state
+        .settings
+        .as_ref()
+        .ok()
+        .map(|settings| settings.load().permission_mode)
+        .unwrap_or_default();
     let client = OllamaClient::new(&build_ollama_base())?;
     let runtime = tauri::async_runtime::handle().inner().clone();
     let limits = AgentLimits::default();
@@ -319,6 +326,7 @@ async fn spawn_task(
             ctx.limits = limits;
             ctx.cancel = cancel.clone();
             ctx.steer = steer.clone();
+            ctx.permission_mode = permission_mode;
 
             let mut responder = |request: ApprovalRequest| match registry.park_approval(&request) {
                 // `respond_approval` answers through the channel. A closed channel means the task
@@ -532,6 +540,41 @@ async fn set_preferred_model(
 }
 
 #[tauri::command]
+fn sandbox_status() -> SandboxStatus {
+    sandbox::status().clone()
+}
+
+/// Persists ASK / AUTO / FULL ACCESS. FULL ACCESS is refused when the OS sandbox is not ready;
+/// the webview cannot enable it on its own.
+#[tauri::command]
+async fn set_permission_mode(
+    mode: PermissionMode,
+    state: tauri::State<'_, AppState>,
+) -> Result<PermissionMode, String> {
+    if mode == PermissionMode::FullAccess && !sandbox::status().available {
+        return Err(format!(
+            "Acesso total exige sandbox ativo ({})",
+            sandbox::status().detail
+        ));
+    }
+    let store = match state.settings.clone() {
+        Ok(store) => store,
+        Err(error) => {
+            eprintln!("cd-ai: não foi possível guardar o modo de permissão: {error}");
+            return Ok(mode);
+        }
+    };
+    let written = tauri::async_runtime::spawn_blocking(move || {
+        let mut settings = store.load();
+        settings.permission_mode = mode;
+        store.save(&settings).map(|()| mode)
+    })
+    .await
+    .map_err(|error| error.to_string())?;
+    written.map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 async fn ollama_status() -> agent_core::ollama::OllamaStatus {
     match agent_core::ollama::OllamaClient::new(&build_ollama_base()) {
         Ok(client) => client.status().await,
@@ -643,6 +686,8 @@ pub fn run() {
             task_events,
             get_settings,
             set_preferred_model,
+            sandbox_status,
+            set_permission_mode,
             ollama_status,
             chat,
             cancel_chat
