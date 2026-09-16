@@ -8,4 +8,12 @@ export type AgentLimits = { maxIterations: number, maxModelRetries: number,
 /**
  * Consecutive invalid tool calls tolerated before the task fails.
  */
-maxInvalidToolCalls: number, modelTurnTimeoutMs: number, taskTimeoutMs: number, };
+maxInvalidToolCalls: number, 
+/**
+ * How many times a failed verification may send the model back to fix (plan 018, D7).
+ */
+maxCorrectionRetries: number, 
+/**
+ * Isolated LLM review after a deterministic pass (SPEC §13.2). Empty/unparseable = skip.
+ */
+llmReview: boolean, modelTurnTimeoutMs: number, taskTimeoutMs: number, };

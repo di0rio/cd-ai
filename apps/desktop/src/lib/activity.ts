@@ -87,7 +87,7 @@ export function applyAgentEvent(task: Task, message: AgentEventMessage): Task {
       const finished = withStop({ ...closeStream(task), status }, stopReason, describeStopReason(stopReason));
       return append(finished, {
         kind: "report",
-        // The core is the one that decides: it pins `validated` to false until the Verifier (phase 8).
+        // The core is the one that decides: `validated` is true only with Verifier evidence.
         validated: report.validated,
         summary: report.summary,
         checks: report.evidence.map(toCheck),
@@ -170,6 +170,8 @@ function toCheck(record: CommandRecord): Check {
 function describeStopReason(reason: StopReason): string | null {
   switch (reason.kind) {
     case "finished":
+      return null;
+    case "verified":
       return null;
     // Each sentence completes "A tarefa parou: …", so none of them repeats "a tarefa".
     case "maxIterations":

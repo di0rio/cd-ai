@@ -58,8 +58,16 @@ pub fn workspace_profile(workspace: &Workspace) -> WorkspaceProfile {
 
     let package_manager = detect_package_manager(workspace);
     if has_package_json {
-        // Without a lockfile there is no evidence of a manager; npm is the safe assumption.
-        let runner = package_manager.as_deref().unwrap_or("npm");
+        // Lockfile is the hard evidence. Without one, a script body that invokes bun is
+        // enough to pick bun — `npm run test` on a bun-only fixture is a false failure
+        // (plan 018, D4). Otherwise npm is the safe assumption.
+        let runner = package_manager.as_deref().unwrap_or_else(|| {
+            if scripts_invoke_bun(workspace) {
+                "bun"
+            } else {
+                "npm"
+            }
+        });
         for script in package_scripts(workspace) {
             validation_commands.push(format!("{runner} run {script}"));
         }
@@ -72,6 +80,38 @@ pub fn workspace_profile(workspace: &Workspace) -> WorkspaceProfile {
         rules_excerpt: read_root_file(workspace, "AGENTS.md", MAX_RULES_BYTES)
             .or_else(|| read_root_file(workspace, "CLAUDE.md", MAX_RULES_BYTES)),
         root_entries: root_entries(workspace),
+    }
+}
+
+/// Validation commands as argv, cheapest first (SPEC §13.1 / plan 018, D4).
+pub fn validation_argv(workspace: &Workspace) -> Vec<Vec<String>> {
+    let mut commands: Vec<Vec<String>> = workspace_profile(workspace)
+        .validation_commands
+        .iter()
+        .filter_map(|line| split_argv(line))
+        .collect();
+    commands.sort_by_key(|argv| cost_rank(argv));
+    commands
+}
+
+fn split_argv(line: &str) -> Option<Vec<String>> {
+    let parts: Vec<String> = line.split_whitespace().map(str::to_string).collect();
+    if parts.is_empty() { None } else { Some(parts) }
+}
+
+/// Lower is cheaper: typecheck → lint → tests → check/verify → build (SPEC §13.1).
+fn cost_rank(argv: &[String]) -> u8 {
+    let joined = argv.join(" ").to_ascii_lowercase();
+    if joined.contains("typecheck") || joined.contains("cargo check") {
+        0
+    } else if joined.contains("lint") || joined.contains("clippy") || joined.contains("fmt") {
+        1
+    } else if joined.contains("test") {
+        2
+    } else if joined.contains("build") {
+        4
+    } else {
+        3
     }
 }
 
@@ -141,6 +181,23 @@ fn detect_package_manager(workspace: &Workspace) -> Option<String> {
         .iter()
         .find(|(file, _)| has_root_file(workspace, file))
         .map(|(_, manager)| (*manager).to_string())
+}
+
+/// True when a package.json script body is invoked with bun (plan 018, D4).
+fn scripts_invoke_bun(workspace: &Workspace) -> bool {
+    let Some(text) = read_root_file(workspace, "package.json", MAX_MANIFEST_BYTES) else {
+        return false;
+    };
+    let Ok(manifest) = serde_json::from_str::<serde_json::Value>(&text) else {
+        return false;
+    };
+    let Some(scripts) = manifest.get("scripts").and_then(|value| value.as_object()) else {
+        return false;
+    };
+    scripts
+        .values()
+        .filter_map(|value| value.as_str())
+        .any(|body| body.split_whitespace().next() == Some("bun"))
 }
 
 /// Names of the known scripts declared in `package.json`, in the order of `SCRIPT_NAMES`.
@@ -271,6 +328,46 @@ mod tests {
         let profile = workspace_profile(&ws);
         assert_eq!(profile.package_manager, None);
         assert_eq!(profile.validation_commands, vec!["npm run lint"]);
+    }
+
+    #[test]
+    fn without_a_lockfile_a_bun_script_uses_bun() {
+        let (_dir, ws) = workspace(&[("package.json", r#"{ "scripts": { "test": "bun test" } }"#)]);
+        let profile = workspace_profile(&ws);
+        assert_eq!(profile.package_manager, None);
+        assert_eq!(profile.validation_commands, vec!["bun run test"]);
+        assert_eq!(
+            validation_argv(&ws),
+            vec![vec![
+                "bun".to_string(),
+                "run".to_string(),
+                "test".to_string()
+            ]]
+        );
+    }
+
+    #[test]
+    fn validation_argv_is_cheapest_first() {
+        let (_dir, ws) = workspace(&[
+            ("Cargo.toml", "[package]\nname = \"x\"\n"),
+            (
+                "package.json",
+                r#"{ "scripts": { "test": "bun test", "typecheck": "tsc", "lint": "biome check ." } }"#,
+            ),
+            ("bun.lock", "{}"),
+        ]);
+        let argv = validation_argv(&ws);
+        let rendered: Vec<String> = argv.iter().map(|cmd| cmd.join(" ")).collect();
+        assert_eq!(
+            rendered,
+            vec![
+                "bun run typecheck",
+                "cargo clippy",
+                "bun run lint",
+                "cargo test",
+                "bun run test",
+            ]
+        );
     }
 
     #[test]
