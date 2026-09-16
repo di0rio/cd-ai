@@ -271,7 +271,7 @@ fn diff_checks(files: &[FileChange], diffs: &HashMap<String, String>) -> Vec<Str
 
 fn is_lockfile(path: &str) -> bool {
     let name = path.rsplit(['/', '\\']).next().unwrap_or(path);
-    LOCKFILE_NAMES.iter().any(|known| *known == name)
+    LOCKFILE_NAMES.contains(&name)
 }
 
 fn count_diff_lines(diff: &str) -> usize {
