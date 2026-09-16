@@ -64,6 +64,8 @@ export function AppShell() {
   // Read by the event callback, which outlives the render that created it.
   const workspaceName = useRef("");
   const composerInput = useRef<HTMLTextAreaElement>(null);
+  const queued = useRef<AgentEventMessage[]>([]);
+  const frame = useRef<number | null>(null);
 
   useEffect(() => {
     // Invented sessions only in development with ?demo; production shows real state only, and a
@@ -160,14 +162,36 @@ export function AppShell() {
   }, [selectedId]);
 
   const handleEvent = useCallback((message: AgentEventMessage) => {
-    setTasks((previous) => applyLive(previous, message, workspaceName.current));
-    if (message.event === "taskStarted") {
-      replayed.current.add(message.taskId);
-      setRunningId(message.taskId);
-      setSelectedId(message.taskId);
-    } else if (message.event === "taskFinished") {
-      setRunningId((current) => (current === message.taskId ? null : current));
-    }
+    queued.current.push(message);
+    if (frame.current != null) return;
+    frame.current = window.requestAnimationFrame(() => {
+      frame.current = null;
+      const batch = queued.current;
+      queued.current = [];
+      if (batch.length === 0) return;
+      setTasks((previous) => {
+        let next = previous;
+        for (const item of batch) {
+          next = applyLive(next, item, workspaceName.current);
+        }
+        return next;
+      });
+      for (const item of batch) {
+        if (item.event === "taskStarted") {
+          replayed.current.add(item.taskId);
+          setRunningId(item.taskId);
+          setSelectedId(item.taskId);
+        } else if (item.event === "taskFinished") {
+          setRunningId((current) => (current === item.taskId ? null : current));
+        }
+      }
+    });
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (frame.current != null) window.cancelAnimationFrame(frame.current);
+    };
   }, []);
 
   // There is no core behind a demonstration: the controls stay on screen to be looked at, and do nothing.

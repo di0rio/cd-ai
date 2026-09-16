@@ -105,6 +105,14 @@ Escrita em 2026-09-16 sobre o `main` com as Fases 0–11 fechadas (PR #11).
 |------|--------|-----------|---------|------------|--------|
 | 022 | Fase 12 — Model Router, memória e trajetórias (FAST/CODER/REASONER, memória estruturada, JSONL opt-in) | P1 | L | 021 | DONE |
 
+### Geração 11
+
+Escrita em 2026-09-16 sobre o `main` com as Fases 0–12 fechadas (PR #12).
+
+| Plano | Título | Prioridade | Esforço | Depende de | Status |
+|------|--------|-----------|---------|------------|--------|
+| 023 | Fase 13 — Otimização (medir, depois contexto/cache/leituras/redactor/UI) | P1 | M | 022 | DONE |
+
 Valores de status: TODO | IN PROGRESS | DONE | BLOCKED (com motivo de uma linha) | REJECTED (com justificativa de uma linha).
 
 ## Notas de dependência
@@ -158,6 +166,14 @@ Valores de status: TODO | IN PROGRESS | DONE | BLOCKED (com motivo de uma linha)
 ### Geração 9
 
 - **021 depois do 020.** Skills são conhecimento no prompt, não tools. Licença é gate do registry. O router é puro. A suíte de eval não cresce — a evidência da fase é 3/3 + `selectedSkills` + testes de condensação/deps.
+
+### Geração 10
+
+- **022 depois do 021.** Router puro FAST/CODER/REASONER, memória local, trajetórias opt-in. A suíte não cresce.
+
+### Geração 11
+
+- **023 depois do 022.** Medir primeiro. Entropia linear, um walk por assemble, leituras paralelas, métricas, UI coalescida. Sem tokenizer, sem watcher, sem suíte maior.
 
 ### Geração 10
 

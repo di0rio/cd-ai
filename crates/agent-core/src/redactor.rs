@@ -40,6 +40,9 @@ impl RedactedText {
 const ENTROPY_WINDOW: usize = 32;
 const ENTROPY_LIMIT: f64 = 4.7;
 const ENTROPY_RUN: usize = 2;
+/// Windows with fewer distinct bytes cannot exceed [`ENTROPY_LIMIT`]:
+/// max H = log2(k) and log2(25) ≈ 4.64 < 4.7.
+const ENTROPY_MIN_UNIQUE: u32 = 26;
 
 /// Detects a secret by file path (design §6.1). Never touches the content.
 pub fn detect_path_secret(path: &Path) -> Option<SecretKind> {
@@ -343,18 +346,45 @@ fn entropy_spans(text: &str) -> Vec<SecretSpan> {
     if bytes.len() < ENTROPY_WINDOW * ENTROPY_RUN {
         return Vec::new();
     }
-    let mut windows = Vec::with_capacity(bytes.len() - ENTROPY_WINDOW + 1);
-    for start in 0..=bytes.len() - ENTROPY_WINDOW {
-        windows.push(shannon_entropy(&bytes[start..start + ENTROPY_WINDOW]));
+
+    let mut counts = [0u32; 256];
+    let mut unique = 0_u32;
+    for &byte in &bytes[..ENTROPY_WINDOW] {
+        let slot = byte as usize;
+        if counts[slot] == 0 {
+            unique += 1;
+        }
+        counts[slot] += 1;
+    }
+
+    let n = bytes.len() - ENTROPY_WINDOW + 1;
+    let mut high = vec![false; n];
+    for start in 0..n {
+        if unique >= ENTROPY_MIN_UNIQUE && shannon_from_counts(&counts) > ENTROPY_LIMIT {
+            high[start] = true;
+        }
+        if start + 1 == n {
+            break;
+        }
+        let outgoing = bytes[start] as usize;
+        counts[outgoing] -= 1;
+        if counts[outgoing] == 0 {
+            unique -= 1;
+        }
+        let incoming = bytes[start + ENTROPY_WINDOW] as usize;
+        if counts[incoming] == 0 {
+            unique += 1;
+        }
+        counts[incoming] += 1;
     }
 
     let mut spans = Vec::new();
     let mut index = 0;
-    while index < windows.len() {
-        if windows[index] > ENTROPY_LIMIT {
+    while index < high.len() {
+        if high[index] {
             let run_start = index;
             let mut run_end = index;
-            while run_end + 1 < windows.len() && windows[run_end + 1] > ENTROPY_LIMIT {
+            while run_end + 1 < high.len() && high[run_end + 1] {
                 run_end += 1;
             }
             if run_end - run_start + 1 >= ENTROPY_RUN {
@@ -390,12 +420,8 @@ fn entropy_spans(text: &str) -> Vec<SecretSpan> {
     spans
 }
 
-fn shannon_entropy(window: &[u8]) -> f64 {
-    let mut counts = [0u32; 256];
-    for byte in window {
-        counts[*byte as usize] += 1;
-    }
-    let length = window.len() as f64;
+fn shannon_from_counts(counts: &[u32; 256]) -> f64 {
+    let length = ENTROPY_WINDOW as f64;
     -counts
         .iter()
         .filter(|count| **count > 0)
@@ -671,6 +697,20 @@ mod tests {
         let text = "fn classify(argv: &[String]) -> CommandClass { /* tabela determinística, sem regex */ }\nlet Ok(outcome) = engine.run(request, &mut sink) else { return Err; };";
         let redacted = redact(text);
         assert_eq!(redacted.text, text);
+    }
+
+    #[test]
+    fn entropy_scan_of_low_cardinality_source_is_bounded() {
+        use std::time::Instant;
+        let text = "x".repeat(64 * 1024);
+        let started = Instant::now();
+        let redacted = redact(&text);
+        let elapsed = started.elapsed();
+        assert_eq!(redacted.count(), 0);
+        assert!(
+            elapsed.as_millis() < 50,
+            "low-cardinality 64 KiB must stay cheap: {elapsed:?}"
+        );
     }
 
     #[test]
