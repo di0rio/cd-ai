@@ -31,10 +31,18 @@ jobs:
       # otherwise OOM the agent ("hosted runner lost communication").
       - name: Enable swap
         run: |
-          sudo fallocate -l 8G /swapfile
-          sudo chmod 600 /swapfile
-          sudo mkswap /swapfile
-          sudo swapon /swapfile
+          free -h
+          swapon --show || true
+          if swapon --show | grep -q .; then
+            echo "swap already enabled"
+            exit 0
+          fi
+          SWAPFILE=/mnt/swapfile
+          sudo rm -f "$SWAPFILE"
+          sudo fallocate -l 8G "$SWAPFILE" || sudo dd if=/dev/zero of="$SWAPFILE" bs=1M count=8192 status=none
+          sudo chmod 600 "$SWAPFILE"
+          sudo mkswap "$SWAPFILE"
+          sudo swapon "$SWAPFILE"
           swapon --show
           free -h
 
