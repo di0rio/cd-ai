@@ -33,7 +33,9 @@ Isso é o comportamento do SPEC §20.3 para plataforma sem sandbox, não um sand
 cargo run -q -p cd-ai-cli -- eval --scripted
 ```
 
-O eval continua no modo ASK com responder que concede (cópia descartável). Os `run_command` da suíte (`bun test`) passam pelo sandbox Linux. Sem regressão: **3/3**.
+Medido em 2026-09-16: **100% (3/3)**. Os `run_command` da suíte (`bun test`) passam pelo sandbox Linux. Sem regressão.
+
+O eval continua no modo ASK com responder que concede (cópia descartável).
 
 ## Fora desta fase
 

@@ -63,7 +63,7 @@ Escrita em 2026-09-16 sobre o `main` com as Fases 0–6 fechadas (PR #3).
 
 | Plano | Título | Prioridade | Esforço | Depende de | Status |
 |------|--------|-----------|---------|------------|--------|
-| 017 | Fase 7 — Permissões e sandbox (modos ASK/AUTO/FULL ACCESS, Landlock+netns, conteúdo não confiável) | P1 | L | 016 | IN PROGRESS |
+| 017 | Fase 7 — Permissões e sandbox (modos ASK/AUTO/FULL ACCESS, Landlock+netns, conteúdo não confiável) | P1 | L | 016 | DONE |
 
 Valores de status: TODO | IN PROGRESS | DONE | BLOCKED (com motivo de uma linha) | REJECTED (com justificativa de uma linha).
 

@@ -96,14 +96,14 @@ Modo na CLI: `--mode ask|auto|full-access`. Default `ask`. Valor inválido → e
 
 ## Critérios de pronto
 
-- [ ] `plans/017-fase-7-permissoes-e-sandbox.md` existe; linha 017 em `plans/README.md` = DONE
-- [ ] Testes da tabela ASK/AUTO/FULL ACCESS passando
-- [ ] No Linux: comando sem classe `network` não alcança um TCP listener local; escrita fora do workspace/tmp/cache falha
-- [ ] Windows/macOS: gap documentado; FULL ACCESS indisponível; testes de policy ainda passam
-- [ ] Tool results delimitados como não confiáveis
-- [ ] `cd-ai eval --scripted` 3/3
-- [ ] `bun run verify` exit 0
-- [ ] PR aberto
+- [x] `plans/017-fase-7-permissoes-e-sandbox.md` existe; linha 017 em `plans/README.md` = DONE
+- [x] Testes da tabela ASK/AUTO/FULL ACCESS passando
+- [x] No Linux: comando sem classe `network` não alcança um TCP listener local; escrita fora do workspace/tmp/cache falha
+- [x] Windows/macOS: gap documentado; FULL ACCESS indisponível; testes de policy ainda passam
+- [x] Tool results delimitados como não confiáveis
+- [x] `cd-ai eval --scripted` 3/3
+- [x] `bun run verify` exit 0
+- [x] PR aberto
 
 ## STOP conditions
 
