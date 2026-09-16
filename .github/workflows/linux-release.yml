@@ -16,14 +16,27 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: "0"
-  CARGO_BUILD_JOBS: "2"
+  CARGO_BUILD_JOBS: "1"
+  CARGO_PROFILE_DEV_DEBUG: "0"
+  CARGO_PROFILE_TEST_DEBUG: "0"
 
 jobs:
   linux-x86_64:
     runs-on: ubuntu-22.04
-    timeout-minutes: 60
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
+
+      # Hosted runners have ~7 GiB. Debug clippy/test and the Tauri/WebKit link
+      # otherwise OOM the agent ("hosted runner lost communication").
+      - name: Enable swap
+        run: |
+          sudo fallocate -l 8G /swapfile
+          sudo chmod 600 /swapfile
+          sudo mkswap /swapfile
+          sudo swapon /swapfile
+          swapon --show
+          free -h
 
       - uses: oven-sh/setup-bun@v2
         with:
@@ -34,13 +47,13 @@ jobs:
           components: rustfmt, clippy
 
       - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: linux-release-v2
 
       - run: bun install --frozen-lockfile
 
-      # Do not run `bun run verify` here: clippy --workspace --all-targets compiles the
-      # Tauri/WebKit crate in debug on a 7 GiB runner and the hosted agent lost
-      # communication (CPU/RAM). Core+CLI cover the gate; the desktop crate is
-      # type-checked by the release `tauri build` below. Local `bun run verify` is unchanged.
+      # Local gate remains `bun run verify` (includes desktop). CI skips debug
+      # WebKit and clippy --all-targets: both exhausted the previous runners.
       - name: Verify frontend and release metadata
         run: |
           bun run check
@@ -49,12 +62,18 @@ jobs:
           bun scripts/check-release-metadata.ts
           cargo fmt --all --check
 
-      - name: Clippy and test agent-core + CLI
-        run: |
-          cargo clippy -p agent-core -p cd-ai-cli --all-targets -- -D warnings
-          cargo test -p agent-core -p cd-ai-cli
+      - name: Clippy agent-core + CLI
+        timeout-minutes: 20
+        run: cargo clippy -p agent-core -p cd-ai-cli -- -D warnings
+
+      - name: Test agent-core + CLI
+        timeout-minutes: 20
+        env:
+          RUST_TEST_THREADS: "2"
+        run: cargo test -p agent-core -p cd-ai-cli
 
       - name: Eval scripted
+        timeout-minutes: 10
         run: cargo run -q -p cd-ai-cli -- eval --scripted --out evals/results/scripted-ci.json
 
       - name: Install Tauri Linux dependencies
@@ -71,6 +90,7 @@ jobs:
             build-essential
 
       - name: Build .deb and AppImage
+        timeout-minutes: 40
         run: bun scripts/build-linux-release.ts
 
       - uses: actions/upload-artifact@v4

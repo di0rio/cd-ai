@@ -38,7 +38,7 @@ Saída em `dist/linux/`:
 
 Workflow: [`.github/workflows/linux-release.yml`](../.github/workflows/linux-release.yml) (PR, `workflow_dispatch`, tag `v*`). Tag `v0.1.0` publica os arquivos num GitHub Release.
 
-A CI **não** corre `bun run verify` inteiro: no runner de 7 GiB o `clippy --workspace --all-targets` (debug + WebKit) derrubou o agente. Lá o gate é frontend + `agent-core` + CLI; o crate desktop é compilado uma vez, em release, pelo script de bundle. Na máquina de desenvolvimento o gate continua a ser `bun run verify`.
+A CI **não** corre `bun run verify` inteiro: o runner de 7 GiB morreu duas vezes (`clippy` debug + WebKit, depois `clippy --all-targets` de core/CLI). Lá o gate é frontend + clippy/test de `agent-core`/`cd-ai-cli` (com swap); o crate desktop é compilado uma vez, em release, pelo script de bundle. Na máquina de desenvolvimento o gate continua a ser `bun run verify`.
 
 ## Instalação limpa (sem Rust/Tauri)
 

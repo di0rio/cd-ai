@@ -33,7 +33,9 @@ env -i HOME="$HOME" PATH="/usr/bin:/bin:$HOME/.bun/bin" \
 | eval ao vivo com Ollama | **não corrido** | sem daemon nesta VM |
 | artefato glibc 2.35 (Ubuntu 22.04) | CI | [`.github/workflows/linux-release.yml`](../../.github/workflows/linux-release.yml). **Não use o `.deb` desta VM 24.04 em 22.04.** |
 
-A primeira corrida da CI (commit `2153cc5`) morreu no passo `bun run verify`: *“The hosted runner lost communication with the server”* (CPU/RAM ou rede). `clippy --workspace --all-targets` compilava o crate Tauri/WebKit em **debug** no runner de 7 GiB. O workflow passou a verificar frontend + `agent-core` + CLI, e a ligar WebKit só no `tauri build` em release. `bun run verify` local continua a incluir o desktop.
+A primeira corrida da CI (commit `2153cc5`) morreu no passo `bun run verify`: *“The hosted runner lost communication with the server”* (CPU/RAM). `clippy --workspace --all-targets` compilava o crate Tauri/WebKit em **debug** no runner de 7 GiB.
+
+A segunda (`db45c1e`, só core+CLI) morreu no mesmo erro durante `clippy --all-targets` + `cargo test` (~46 min). O workflow agora: 8 GiB de swap, `CARGO_BUILD_JOBS=1`, clippy **sem** `--all-targets`, testes com 2 threads, WebKit só no `tauri build` em release. `bun run verify` local continua a incluir o desktop.
 
 SHA256 desta VM (`dist/linux/`, não commitado):
 
