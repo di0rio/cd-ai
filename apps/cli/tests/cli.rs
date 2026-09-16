@@ -92,6 +92,7 @@ fn help_mentions_task() {
             text.contains("--workspace"),
             "{flag} não cita --workspace: {text}"
         );
+        assert!(text.contains("--mode"), "{flag} não cita --mode: {text}");
     }
 }
 
@@ -271,6 +272,12 @@ fn continue_without_a_previous_task_exits_1_with_message() {
 fn help_mentions_continue() {
     let output = run_cli(&["--help"]);
     assert!(stdout(&output).contains("--continue"));
+}
+
+#[test]
+fn help_mentions_permission_mode() {
+    let text = stdout(&run_cli(&["--help"]));
+    assert!(text.contains("full-access"), "{text}");
 }
 
 #[test]
