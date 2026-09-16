@@ -275,25 +275,32 @@ fn fs_meta(path: &Path) -> Option<std::fs::Metadata> {
     std::fs::symlink_metadata(path).ok()
 }
 
+/// Grammar used to parse a file, when we have one. Shared with the repo map (plan 020).
+pub(crate) fn language_for_path(path: &Path) -> Option<(&'static str, tree_sitter::Language)> {
+    let extension = path.extension().and_then(|ext| ext.to_str())?;
+    match extension {
+        "tsx" => Some((
+            "typescript",
+            tree_sitter::Language::new(tree_sitter_typescript::LANGUAGE_TSX),
+        )),
+        "rs" => Some((
+            "rust",
+            tree_sitter::Language::new(tree_sitter_rust::LANGUAGE),
+        )),
+        "ts" | "js" | "jsx" => Some((
+            "typescript",
+            tree_sitter::Language::new(tree_sitter_typescript::LANGUAGE_TYPESCRIPT),
+        )),
+        _ => None,
+    }
+}
+
 /// Syntax check for the languages the model can edit (design D3). Also used by the
 /// Verifier at the end of a task (plan 018): a file the tools never touched still has
 /// to parse if it shows up in `files_changed`.
 pub(crate) fn parse_check(path: &Path, content: &str) -> Result<(), ToolError> {
-    let extension = path.extension().and_then(|ext| ext.to_str()).unwrap_or("");
-    let (kind, language) = match extension {
-        "tsx" => (
-            "typescript",
-            tree_sitter::Language::new(tree_sitter_typescript::LANGUAGE_TSX),
-        ),
-        "rs" => (
-            "rust",
-            tree_sitter::Language::new(tree_sitter_rust::LANGUAGE),
-        ),
-        "ts" | "js" | "jsx" => (
-            "typescript",
-            tree_sitter::Language::new(tree_sitter_typescript::LANGUAGE_TYPESCRIPT),
-        ),
-        _ => return Ok(()),
+    let Some((kind, language)) = language_for_path(path) else {
+        return Ok(());
     };
 
     let mut parser = tree_sitter::Parser::new();

@@ -84,11 +84,11 @@ Coder: as 10 tools atuais. Uma chamada de escrita no Explorer volta como erro ao
 
 ## Critérios de pronto
 
-- [ ] `plans/020-fase-10-context-manager.md` existe; linha 020 em `plans/README.md` = DONE
-- [ ] Repo map tree-sitter no system prompt, ranqueado, cache invalidado por mtime
-- [ ] Orçamento por seção com corte explícito
-- [ ] Higiene: obsoleto / log enorme / duplicata
-- [ ] Explorer como role (prompt + tools) nas perguntas; briefing nas tarefas de código
+- [x] `plans/020-fase-10-context-manager.md` existe; linha 020 em `plans/README.md` = DONE
+- [x] Repo map tree-sitter no system prompt, ranqueado, cache invalidado por mtime
+- [x] Orçamento por seção com corte explícito
+- [x] Higiene: obsoleto / log enorme / duplicata
+- [x] Explorer como role (prompt + tools) nas perguntas; briefing nas tarefas de código
 - [ ] Eval scripted 3/3 sem regressão; tokens documentados (teste de redução no Core)
 - [ ] `bun run verify` exit 0
 - [ ] PR aberto

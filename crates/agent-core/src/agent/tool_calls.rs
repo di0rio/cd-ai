@@ -184,6 +184,14 @@ pub fn tool_specs() -> Vec<ToolSpec> {
     ]
 }
 
+/// Specs for one role: the same tables, filtered to the names that role may call (plan 020, D7).
+pub fn tool_specs_for(names: &[&str]) -> Vec<ToolSpec> {
+    tool_specs()
+        .into_iter()
+        .filter(|spec| names.contains(&spec.function.name.as_str()))
+        .collect()
+}
+
 /// Maps one native tool call into a request. The error text goes back to the model as the tool
 /// result, so it is written in pt-BR like every other message it reads (SPEC §4.3).
 pub fn to_request(name: &str, args: &Value) -> Result<ToolRequest, String> {

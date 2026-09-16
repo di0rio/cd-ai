@@ -12,12 +12,16 @@ use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
+use crate::agent::context::{
+    assemble, compact_history, is_exhausted, needs_compact, trim_for_budget,
+};
 use crate::agent::events::{AgentEvent, AgentEventMessage};
 use crate::agent::model::{ChatModel, ModelError, ModelReply};
-use crate::agent::profile::workspace_profile;
 use crate::agent::prompt::{
-    inherited_context, is_exhausted, system_prompt, trim_for_budget, wrap_untrusted_tool_result,
+    estimate_tokens, inherited_context, system_prompt, wrap_untrusted_tool_result,
 };
+use crate::agent::repo_map::RepoMapCache;
+use crate::agent::role::{Role, classify as classify_task};
 use crate::agent::state::{
     AgentLimits, CheckpointKind, CommandRecord, FileChange, StopReason, TaskReport, TaskState,
     TaskStatus,
@@ -25,7 +29,7 @@ use crate::agent::state::{
 use crate::agent::storage::TaskStore;
 use crate::agent::tool_calls::{
     TOOL_NAMES, outcome_detail, outcome_output, redacted_input, render_outcome, signature,
-    to_request, to_request_from_text, tool_specs,
+    to_request, to_request_from_text, tool_specs_for,
 };
 use crate::agent::verify::{
     Review, Verdict, VerifyInput, command_failure_reason, correction_message,
@@ -139,9 +143,19 @@ pub fn run_task(
             };
             let mut state = TaskState::new(&id, &key, &request, &model_name, num_ctx);
             state.continues = continues;
-            let profile = workspace_profile(&ctx.workspace).render();
+            let cache = RepoMapCache::open(ctx.store.data_dir(), &ctx.workspace);
+            let assembled = assemble(
+                &ctx.workspace,
+                &request,
+                num_ctx,
+                classify_task(&request).role(),
+                Some(&cache),
+            );
             let messages = vec![
-                message("system", &system_prompt(&profile, inherited.as_deref())),
+                message(
+                    "system",
+                    &system_prompt(&assembled.text, inherited.as_deref()),
+                ),
                 message("user", &request),
             ];
             // Both go to the transcript: a resume rebuilds the conversation from it.
@@ -163,7 +177,14 @@ pub fn run_task(
                 state.stop_reason = None;
                 state.touch();
                 let transcript = ctx.store.load_transcript(&task_id).unwrap_or_default();
-                let mut messages = resume_messages(transcript, &ctx.workspace);
+                let cache = RepoMapCache::open(ctx.store.data_dir(), &ctx.workspace);
+                let mut messages = resume_messages(
+                    transcript,
+                    &ctx.workspace,
+                    &state.request,
+                    state.num_ctx,
+                    Some(&cache),
+                );
                 messages.push(message("user", RESUME_NOTE));
                 // Only the note is new; the rest is already on disk.
                 (state, messages, 1)
@@ -235,7 +256,8 @@ fn run_loop(
     model: &mut dyn ChatModel,
     responder: Responder<'_>,
 ) -> (StopReason, String) {
-    let specs = tool_specs();
+    let role = classify_task(&state.request).role();
+    let specs = tool_specs_for(role.tool_names());
     let started = Instant::now();
     let task_timeout = Duration::from_millis(ctx.limits.task_timeout_ms);
 
@@ -317,6 +339,15 @@ fn run_loop(
                 estimated_tokens,
             });
         }
+        if needs_compact(messages, state.num_ctx) {
+            let removed = compact_history(messages, state);
+            if removed > 0 {
+                emitter.emit(AgentEvent::ContextTrimmed {
+                    removed_messages: removed,
+                    estimated_tokens: estimate_tokens(messages),
+                });
+            }
+        }
         if is_exhausted(messages, state.num_ctx) {
             break StopReason::ContextExhausted;
         }
@@ -356,12 +387,17 @@ fn run_loop(
                 }
             }
         };
-        state.metrics.prompt_tokens += reply.prompt_tokens;
+        let prompt_tokens = if reply.prompt_tokens > 0 {
+            reply.prompt_tokens
+        } else {
+            estimate_tokens(messages)
+        };
+        state.metrics.prompt_tokens += prompt_tokens;
         state.metrics.gen_tokens += reply.gen_tokens;
         state.metrics.model_ms += reply.prompt_ms + reply.gen_ms;
 
         // 6. Native tool calls first, the text format as fallback (D2).
-        let turn = read_turn(&reply);
+        let turn = read_turn(&reply, role);
 
         // Only the prose is a message: the `<function=…>` markup of the text format is machinery,
         // and showing it made the user read every call twice (once raw, once as the tool line).
@@ -631,7 +667,7 @@ fn normalize_content(content: &str) -> String {
 }
 
 /// Native `tool_calls` when there are any; otherwise the text format of the CODER model (D2).
-fn read_turn(reply: &ModelReply) -> ModelTurn {
+fn read_turn(reply: &ModelReply, role: Role) -> ModelTurn {
     if !reply.tool_calls.is_empty() {
         return ModelTurn {
             calls: reply
@@ -640,7 +676,11 @@ fn read_turn(reply: &ModelReply) -> ModelTurn {
                 .map(|call| PendingCall {
                     name: call.function.name.clone(),
                     input: call.function.arguments.clone(),
-                    request: to_request(&call.function.name, &call.function.arguments),
+                    request: gated_request(
+                        role,
+                        &call.function.name,
+                        to_request(&call.function.name, &call.function.arguments),
+                    ),
                 })
                 .collect(),
             text: reply.content.clone(),
@@ -650,7 +690,7 @@ fn read_turn(reply: &ModelReply) -> ModelTurn {
 
     // `parse_text_tool_calls` already drops any name that was not offered, and hands back the
     // content without the blocks it consumed.
-    let parsed = parse_text_tool_calls(&reply.content, &TOOL_NAMES);
+    let parsed = parse_text_tool_calls(&reply.content, role.tool_names());
     if parsed.calls.is_empty() {
         // Nothing was consumed, so nothing was stripped: the reply is plain prose.
         return ModelTurn {
@@ -678,7 +718,7 @@ fn read_turn(reply: &ModelReply) -> ModelTurn {
         calls.push(PendingCall {
             name: call.name.clone(),
             input,
-            request: to_request_from_text(call),
+            request: gated_request(role, &call.name, to_request_from_text(call)),
         });
     }
     ModelTurn {
@@ -686,6 +726,27 @@ fn read_turn(reply: &ModelReply) -> ModelTurn {
         text: parsed.prose,
         tool_calls,
     }
+}
+
+fn gated_request(
+    role: Role,
+    name: &str,
+    request: Result<ToolRequest, String>,
+) -> Result<ToolRequest, String> {
+    if !TOOL_NAMES.contains(&name) {
+        return request;
+    }
+    if role.allows(name) {
+        return request;
+    }
+    let label = match role {
+        Role::Explorer => "Explorer (só leitura)",
+        Role::Coder => "Coder",
+    };
+    Err(format!(
+        "o role {label} não pode usar {name}. Disponíveis: {}",
+        role.tool_names().join(", ")
+    ))
 }
 
 /// Appends a tool result to the conversation and to the transcript.
@@ -859,7 +920,13 @@ fn last_assistant_text(store: &TaskStore, id: &str) -> String {
 /// The last assistant turn whose tool calls have no results is dropped: sending it again would
 /// leave the model waiting for answers that never came. A transcript without a system prompt
 /// (a task from before the prompt changed, or a truncated file) gets a fresh one.
-fn resume_messages(mut transcript: Vec<ChatMessage>, workspace: &Workspace) -> Vec<ChatMessage> {
+fn resume_messages(
+    mut transcript: Vec<ChatMessage>,
+    workspace: &Workspace,
+    request: &str,
+    num_ctx: u32,
+    cache: Option<&RepoMapCache>,
+) -> Vec<ChatMessage> {
     if let Some(index) = transcript
         .iter()
         .rposition(|message| message.role == "assistant" && !message.tool_calls.is_empty())
@@ -876,8 +943,14 @@ fn resume_messages(mut transcript: Vec<ChatMessage>, workspace: &Workspace) -> V
     if transcript.first().map(|first| first.role.as_str()) != Some("system") {
         // Only a truncated or pre-`system` transcript lands here, so the rebuilt prompt carries no
         // inherited block: the real one is the first line of every transcript this loop writes.
-        let profile = workspace_profile(workspace).render();
-        transcript.insert(0, message("system", &system_prompt(&profile, None)));
+        let assembled = assemble(
+            workspace,
+            request,
+            num_ctx,
+            classify_task(request).role(),
+            cache,
+        );
+        transcript.insert(0, message("system", &system_prompt(&assembled.text, None)));
     }
     transcript
 }
@@ -1185,6 +1258,8 @@ mod tests {
     use super::*;
     use crate::agent::model::ScriptedModel;
     use crate::agent::prompt::{INHERITED_BEGIN, UNTRUSTED_TOOL_BEGIN, UNTRUSTED_TOOL_END};
+    use crate::agent::role::Role;
+    use crate::agent::tool_calls::TOOL_NAMES;
     use crate::permissions::{ApprovalRequest, ApprovalResponse};
     use crate::tools::command::test_argv;
     use std::fs;
@@ -1315,13 +1390,44 @@ mod tests {
         assert_eq!(finished.0.summary, "arrumei nada, estava ok");
         assert_eq!(finished.1, TaskStatus::CompletedUnvalidated);
 
-        // The task was offered exactly the six tools.
-        assert_eq!(model.offered, TOOL_NAMES.to_vec());
+        // A pergunta is Explorer: read-only tools, not the full Coder set.
+        assert_eq!(model.offered, Role::Explorer.tool_names().to_vec());
         // The context is the system prompt plus the request.
         assert_eq!(model.seen[0][0].role, "system");
         assert!(model.seen[0][0].content.contains("You are cd-ai"));
-        assert!(model.seen[0][0].content.contains("Cargo.toml"));
+        assert!(model.seen[0][0].content.contains("Languages: Rust"));
         assert_eq!(model.seen[0][1].content, "olhe o projeto");
+    }
+
+    #[test]
+    fn explorer_rejects_an_edit_and_coder_gets_every_tool() {
+        let harness = harness(&[("src/a.ts", "export const a = 1;\n")]);
+        let mut explorer = ScriptedModel::once(vec![ScriptedModel::calls(&[(
+            "edit_file",
+            serde_json::json!({ "path": "src/a.ts", "old_text": "1", "new_text": "2" }),
+        )])]);
+        let (state, _) = run(
+            harness.context(),
+            &mut explorer,
+            start("explique src/a.ts"),
+            &mut grant,
+        );
+        assert_eq!(state.files_changed.len(), 0);
+        let results = tool_messages(&explorer, 1);
+        assert!(
+            results[0].content.contains("só leitura"),
+            "{}",
+            results[0].content
+        );
+
+        let mut coder = ScriptedModel::new(vec![ScriptedModel::text("ok")]);
+        let _ = run(
+            harness.context(),
+            &mut coder,
+            start("corrija src/a.ts"),
+            &mut grant,
+        );
+        assert_eq!(coder.offered, TOOL_NAMES.to_vec());
     }
 
     // 2 ────────────────────────────────────────────────────────────────────────────────────────
@@ -2480,9 +2586,8 @@ mod tests {
             system.contains("li a soma; o operador está trocado"),
             "o resumo anterior"
         );
-        // O que não é herdado: a conversa da tarefa anterior (isso seria a opção A).
         assert!(
-            !system.contains("export const soma"),
+            !system.contains("(linhas "),
             "nenhum resultado de tool da tarefa anterior viaja junto"
         );
         assert_eq!(second.seen[0][1].content, "agora conserte");

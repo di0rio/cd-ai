@@ -87,7 +87,7 @@ Escrita em 2026-09-16 sobre o `main` com as Fases 0–9 fechadas (PR #7).
 
 | Plano | Título | Prioridade | Esforço | Depende de | Status |
 |------|--------|-----------|---------|------------|--------|
-| 020 | Fase 10 — Context Manager completo (repo map, orçamento por seção, cache, higiene, Explorer) | P1 | L | 019 | IN PROGRESS |
+| 020 | Fase 10 — Context Manager completo (repo map, orçamento por seção, cache, higiene, Explorer) | P1 | L | 019 | DONE |
 
 Valores de status: TODO | IN PROGRESS | DONE | BLOCKED (com motivo de uma linha) | REJECTED (com justificativa de uma linha).
 
