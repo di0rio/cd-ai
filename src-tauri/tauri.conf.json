@@ -1,13 +1,14 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "cd-ai",
+  "mainBinaryName": "cd-ai-desktop",
   "version": "0.1.0",
   "identifier": "dev.cdai.desktop",
   "build": {
     "frontendDist": "../apps/desktop/out",
     "devUrl": "http://localhost:1420",
     "beforeDevCommand": "bun run --cwd apps/desktop dev",
-    "beforeBuildCommand": "bun run --cwd apps/desktop build"
+    "beforeBuildCommand": "bun run --cwd apps/desktop build && cargo build --release -p cd-ai-cli"
   },
   "app": {
     "windows": [
@@ -26,6 +27,32 @@
   "bundle": {
     "active": true,
     "targets": ["deb", "appimage"],
-    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.icns", "icons/icon.ico"]
+    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.icns", "icons/icon.ico"],
+    "category": "DeveloperTool",
+    "homepage": "https://github.com/di0rio/cd-ai",
+    "publisher": "cd-ai",
+    "shortDescription": "Coding agent local-first",
+    "longDescription": "Coding agent desktop local. Usa modelos via Ollama na sua máquina: edita código, corre comandos e só declara sucesso com evidência.",
+    "createUpdaterArtifacts": false,
+    "linux": {
+      "deb": {
+        "section": "devel",
+        "priority": "optional",
+        "recommends": ["git"],
+        "files": {
+          "/usr/bin/cd-ai": "../target/release/cd-ai",
+          "/usr/share/cd-ai/evals/tasks": "../evals/tasks",
+          "/usr/share/cd-ai/evals/fixtures": "../evals/fixtures"
+        }
+      },
+      "appimage": {
+        "bundleMediaFramework": false,
+        "files": {
+          "/usr/bin/cd-ai": "../target/release/cd-ai",
+          "/usr/share/cd-ai/evals/tasks": "../evals/tasks",
+          "/usr/share/cd-ai/evals/fixtures": "../evals/fixtures"
+        }
+      }
+    }
   }
 }

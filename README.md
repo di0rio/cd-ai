@@ -11,12 +11,36 @@ A especificação completa está em [SPEC.md](SPEC.md) e as decisões de arquite
 ## Pré-requisitos
 
 - [Bun](https://bun.sh)
-- [Rust](https://rustup.rs) (toolchain estável, com suporte à edition 2024)
-- Os [pré-requisitos do Tauri](https://tauri.app/start/prerequisites/) pro seu sistema. No Windows são o WebView2 e o Microsoft C++ Build Tools.
+- [Rust](https://rustup.rs) (toolchain estável, com suporte à edition 2024 — rustc 1.85+)
+- Os [pré-requisitos do Tauri](https://tauri.app/start/prerequisites/) pro seu sistema. No Windows são o WebView2 e o Microsoft C++ Build Tools. No Linux, WebKitGTK 4.1 + GTK 3 (detalhe em [docs/release.md](docs/release.md)).
+- [Ollama](https://ollama.com) para tarefas ao vivo (o eval `--scripted` não precisa).
 
 Confira se `cargo --version` funciona no terminal. Se o Rust estiver instalado mas o comando não for encontrado, adicione `%USERPROFILE%\.cargo\bin` (Windows) ou `~/.cargo/bin` (Linux/macOS) ao PATH e abra o terminal de novo.
 
-## Instalação
+## Instalar (Linux x86_64)
+
+Pacotes da [página de releases](https://github.com/di0rio/cd-ai/releases) ou gerados com `bun scripts/build-linux-release.ts`. Sem Rust nem Tauri na máquina de uso.
+
+### .deb (Debian / Ubuntu)
+
+```bash
+sudo apt install ./cd-ai_0.1.0_amd64.deb
+cd-ai --version
+cd-ai-desktop &
+```
+
+A CLI (`cd-ai`) e a GUI (`cd-ai-desktop`) vêm no mesmo pacote. A suíte de eval fica em `/usr/share/cd-ai/evals`.
+
+### AppImage
+
+```bash
+chmod +x cd-ai_0.1.0_amd64.AppImage
+./cd-ai_0.1.0_amd64.AppImage
+```
+
+Passo a passo, glibc, eval numa máquina limpa e o que ficou para depois (Flatpak, RPM, Windows, macOS): [docs/release.md](docs/release.md).
+
+## Desenvolvimento
 
 ```bash
 bun install
@@ -77,13 +101,21 @@ cargo run -p cd-ai-cli -- eval --model <modelo>
 `--scripted` não fala com o Ollama (usa o campo `script` de cada tarefa). O eval aprova sozinho
 porque só edita a cópia descartável. Detalhes em [evals/README.md](evals/README.md).
 
+### Pacotes de release (Linux x86_64)
+
+```bash
+bun scripts/build-linux-release.ts
+```
+
+Gera `.deb`, AppImage e a CLI em `dist/linux/`. Equivale a `bun run build` (`tauri build`) mais cópia e hashes. O `beforeBuildCommand` do Tauri também compila a CLI.
+
 ### Binário de release (sem instalador)
 
 ```bash
 bun tauri build --no-bundle
 ```
 
-Gera o binário final do app em `src-tauri/target/release/` sem criar instalador — útil pra testar o app de produção antes do empacotamento.
+Gera o executável da GUI sem criar instalador — útil pra testar o app de produção em qualquer SO, inclusive Windows/macOS, onde este release ainda não empacota.
 
 ### Benchmark de modelos (com o Ollama rodando)
 
@@ -95,9 +127,10 @@ bun scripts/bench-models.ts <modelo> [modelo...]
 
 | Comando | O que faz |
 | --- | --- |
-| `bun run verify` | Roda todos os checks: Biome, typecheck, testes do frontend, `cargo fmt`, clippy e testes do Rust |
-| `bun run build` | Gera o app desktop de produção (`tauri build`, com instalador) |
-| `bun tauri build --no-bundle` | Gera só o binário do app de produção, sem instalador |
+| `bun run verify` | Roda todos os checks: Biome, typecheck, testes do frontend, metadados de release, `cargo fmt`, clippy e testes do Rust |
+| `bun run build` | Gera o app desktop de produção (`tauri build`: `.deb` + AppImage no Linux) |
+| `bun scripts/build-linux-release.ts` | Idem, e copia artefatos + SHA256 para `dist/linux/` |
+| `bun tauri build --no-bundle` | Gera só o binário da GUI de produção, sem instalador |
 | `bun run check` | Lint e formatação com Biome |
 | `bun run format` | Formata o código com Biome |
 | `bun run --cwd apps/desktop typecheck` | Checagem de tipos do TypeScript |
@@ -105,7 +138,7 @@ bun scripts/bench-models.ts <modelo> [modelo...]
 | `cargo test` | Testes do Rust |
 | `cargo run -p cd-ai-cli -- eval --scripted` | Roda a suíte de eval sem Ollama (Fase 6) |
 
-Os formatos de instalador ficam em `bundle.targets`, no [src-tauri/tauri.conf.json](src-tauri/tauri.conf.json). Hoje só `deb` e `appimage` (Linux) estão configurados. Pra gerar instalador no Windows, acrescente `msi` ou `nsis`.
+Os formatos de instalador ficam em `bundle.targets`, no [src-tauri/tauri.conf.json](src-tauri/tauri.conf.json). O primeiro release só empacota `deb` e `appimage` (Linux x86_64). Flatpak, RPM, Windows (`msi`/`nsis`) e macOS (`.dmg`) são follow-ups — ver [docs/release.md](docs/release.md).
 
 ## Estrutura
 
@@ -116,8 +149,10 @@ crates/agent-core/  núcleo do agente em Rust
 src-tauri/          shell desktop Tauri
 evals/              suíte de eval (Fase 6): tasks, fixtures, results
 docs/decisions/     registros de decisão (ADRs)
+docs/release.md     instalação Linux (.deb / AppImage)
 plans/              planos de implementação
-scripts/            scripts auxiliares (ex.: benchmark de modelos no Ollama)
+scripts/            scripts auxiliares (benchmark, release Linux)
+.github/workflows/  CI de pacotes Linux (Ubuntu 22.04)
 ```
 
 ## Referências e inspiração

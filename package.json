@@ -8,8 +8,9 @@
     "tauri": "tauri",
     "dev": "tauri dev",
     "build": "tauri build",
+    "release:linux": "bun scripts/build-linux-release.ts",
     "check": "biome check .",
-    "verify": "bun run check && bun run --cwd apps/desktop typecheck && bun run --cwd apps/desktop test && cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace",
+    "verify": "bun run check && bun run --cwd apps/desktop typecheck && bun run --cwd apps/desktop test && bun scripts/check-release-metadata.ts && cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace",
     "format": "biome format --write ."
   },
   "devDependencies": {
