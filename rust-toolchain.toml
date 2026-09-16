@@ -1,0 +1,5 @@
+# Edition 2024 (Cargo.toml) needs rustc 1.85+. Without this file, rust-analyzer
+# follows whatever default rustup has and paints every crate as broken.
+[toolchain]
+channel = "stable"
+components = ["rustfmt", "clippy"]
