@@ -4,53 +4,61 @@ import { useEffect, useState } from "react";
 import { getOllamaStatus, type OllamaStatus } from "@/lib/ipc";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 
-type Status = { state: "loading" } | { state: "ready"; status: OllamaStatus } | { state: "unavailable" };
+export type OllamaView = { state: "loading" } | { state: "ready"; status: OllamaStatus } | { state: "unavailable" };
 
-export function OllamaIndicator() {
-  const [status, setStatus] = useState<Status>({ state: "loading" });
+export function useOllamaStatus(): OllamaView {
+  const [view, setView] = useState<OllamaView>({ state: "loading" });
 
   useEffect(() => {
     let cancelled = false;
-    let timer: ReturnType<typeof setInterval>;
-
-    const fetchStatus = () =>
+    const load = () =>
       getOllamaStatus().then(
-        (result) => {
-          if (!cancelled) setStatus({ state: "ready", status: result });
+        (status) => {
+          if (!cancelled) setView({ state: "ready", status });
         },
         () => {
-          if (!cancelled) setStatus({ state: "unavailable" });
+          if (!cancelled) setView({ state: "unavailable" });
         },
       );
-
-    fetchStatus();
-    timer = setInterval(fetchStatus, 15_000);
-    window.addEventListener("focus", fetchStatus);
+    load();
+    const timer = setInterval(load, 15_000);
+    window.addEventListener("focus", load);
     return () => {
       cancelled = true;
       clearInterval(timer);
-      window.removeEventListener("focus", fetchStatus);
+      window.removeEventListener("focus", load);
     };
   }, []);
 
+  return view;
+}
+
+export function ollamaModels(view: OllamaView): { models: string[]; loaded: string[] } {
+  if (view.state !== "ready") return { models: [], loaded: [] };
+  return {
+    models: view.status.models.map((model) => model.name),
+    loaded: view.status.loaded.map((model) => model.name),
+  };
+}
+
+export function OllamaIndicator({ view }: { view: OllamaView }) {
   let dot: string;
   let label: string;
-  // Only the offline case has one: the error the core reported.
   let detail: string | undefined;
 
-  if (status.state === "unavailable") {
+  if (view.state === "unavailable") {
     dot = "bg-ink-faint";
     label = "Ollama · indisponível fora do Tauri";
-  } else if (status.state === "ready" && !status.status.reachable) {
+  } else if (view.state === "ready" && !view.status.reachable) {
     dot = "bg-bad";
     label = "Ollama offline";
-    detail = status.status.error ?? undefined;
-  } else if (status.state === "ready" && status.status.loaded.length > 0) {
+    detail = view.status.error ?? undefined;
+  } else if (view.state === "ready" && view.status.loaded.length > 0) {
     dot = "bg-ok";
-    label = `${status.status.loaded[0].name} carregado`;
-  } else if (status.state === "ready") {
+    label = `${view.status.loaded[0].name} carregado`;
+  } else if (view.state === "ready") {
     dot = "bg-ok";
-    label = `Ollama ${status.status.version ?? "?"} · ${status.status.models.length} modelos`;
+    label = `Ollama ${view.status.version ?? "?"} · ${view.status.models.length} modelos`;
   } else {
     dot = "bg-ink-faint";
     label = "Ollama · verificando…";
@@ -73,7 +81,6 @@ export function OllamaIndicator() {
       ) : (
         line
       )}
-      {/* The tooltip only opens on hover, so the error still has to reach the live region. */}
       {detail && <span className="sr-only">{detail}</span>}
     </output>
   );

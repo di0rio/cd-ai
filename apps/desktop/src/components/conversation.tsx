@@ -342,9 +342,9 @@ function Report({
         </span>
         <div className="min-w-0 flex-1">
           <h3 className="font-semibold">{validated ? "Validado" : "Não validado"}</h3>
-          <p className="mt-0.5 text-pretty text-ink-muted">
+          <div className="mt-0.5 text-pretty text-ink-muted">
             <Markdown content={summary} />
-          </p>
+          </div>
         </div>
       </div>
       {checks.length > 0 && (

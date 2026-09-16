@@ -7,7 +7,6 @@ import {
   type AgentEventMessage,
   cancelTask,
   currentWorkspace,
-  getOllamaStatus,
   getSandboxStatus,
   getSettings,
   listTasks,
@@ -32,12 +31,14 @@ import { Composer } from "./composer";
 import { Conversation } from "./conversation";
 import { EmptyWorkspace } from "./empty-workspace";
 import { IconButton } from "./icon-button";
+import { ollamaModels, useOllamaStatus } from "./ollama-status";
 import { type PanelKind, SidePanel } from "./side-panel";
 import { Sidebar } from "./sidebar";
 import { TooltipProvider } from "./ui/tooltip";
 
 // Decision 0002, rule 3: every task the UI starts gets the same context window.
 const NUM_CTX = 16_384;
+const noop = () => {};
 
 export function AppShell() {
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -47,10 +48,7 @@ export function AppShell() {
   const [workspace, setWorkspace] = useState<WorkspaceInfo | null>(null);
   const [workspaceError, setWorkspaceError] = useState<string | null>(null);
   const [demo, setDemo] = useState(false);
-  const [models, setModels] = useState<string[]>([]);
-  const [loadedModels, setLoadedModels] = useState<string[]>([]);
   const [chosenModel, setChosenModel] = useState<string | null>(null);
-  // The choice the core remembered from the last runs; only decides the default model.
   const [preferredModel, setPreferred] = useState<string | null>(null);
   const [permissionMode, setPermission] = useState<PermissionMode>("ask");
   const [sandbox, setSandbox] = useState<SandboxStatus | null>(null);
@@ -58,18 +56,17 @@ export function AppShell() {
   const [starting, setStarting] = useState(false);
   const [taskError, setTaskError] = useState<string | null>(null);
   const [rollingBack, setRollingBack] = useState(false);
+  const [zoomLevel, setZoomLevel] = useState(1);
 
-  // Tasks whose conversation is already in memory, so a replay from disk never runs twice.
   const replayed = useRef(new Set<string>());
-  // Read by the event callback, which outlives the render that created it.
   const workspaceName = useRef("");
   const composerInput = useRef<HTMLTextAreaElement>(null);
   const queued = useRef<AgentEventMessage[]>([]);
   const frame = useRef<number | null>(null);
+  const ollama = useOllamaStatus();
+  const { models, loaded: loadedModels } = ollamaModels(ollama);
 
   useEffect(() => {
-    // Invented sessions only in development with ?demo; production shows real state only, and a
-    // demonstration touches no IPC at all — hence the early return.
     if (process.env.NODE_ENV !== "production" && new URLSearchParams(window.location.search).has("demo")) {
       setTasks(demoTasks);
       setSelectedId(demoTasks[0].id);
@@ -78,66 +75,33 @@ export function AppShell() {
       for (const task of demoTasks) replayed.current.add(task.id);
       return;
     }
-    // Outside Tauri the call rejects and that is expected; the app then opens with no preference.
-    getSettings().then(
-      (settings) => {
-        setPreferred(settings.model);
-        setPermission(settings.permissionMode);
-      },
-      () => {},
-    );
-    getSandboxStatus().then(setSandbox, () => {});
-  }, []);
-
-  useEffect(() => {
-    // Outside Tauri the call rejects and that is expected.
-    currentWorkspace().then(setWorkspace, () => {});
+    getSettings().then((settings) => {
+      setPreferred(settings.model);
+      setPermission(settings.permissionMode);
+    }, noop);
+    getSandboxStatus().then(setSandbox, noop);
+    currentWorkspace().then(setWorkspace, noop);
   }, []);
 
   useEffect(() => {
     workspaceName.current = workspace?.name ?? "";
   }, [workspace]);
 
-  // The task history of the open workspace, newest first, as the core has it on disk.
   useEffect(() => {
     if (demo || !workspace) return;
     let cancelled = false;
-    listTasks().then(
-      (summaries) => {
-        if (cancelled) return;
-        setTasks((previous) => {
-          const live = new Map(previous.map((task) => [task.id, task]));
-          return summaries.map((summary) => live.get(summary.id) ?? fromSummary(summary, workspace.name));
-        });
-      },
-      () => {},
-    );
+    listTasks().then((summaries) => {
+      if (cancelled) return;
+      setTasks((previous) => {
+        const live = new Map(previous.map((task) => [task.id, task]));
+        return summaries.map((summary) => live.get(summary.id) ?? fromSummary(summary, workspace.name));
+      });
+    }, noop);
     return () => {
       cancelled = true;
     };
   }, [demo, workspace]);
 
-  useEffect(() => {
-    let cancelled = false;
-    const load = () =>
-      getOllamaStatus().then(
-        (status) => {
-          if (cancelled) return;
-          setModels(status.models.map((model) => model.name));
-          setLoadedModels(status.loaded.map((model) => model.name));
-        },
-        () => {},
-      );
-    load();
-    window.addEventListener("focus", load);
-    return () => {
-      cancelled = true;
-      window.removeEventListener("focus", load);
-    };
-  }, []);
-
-  // Opening an older task rebuilds its conversation from the stored events, through the same
-  // reducer the live stream uses.
   useEffect(() => {
     const id = selectedId;
     if (!id || replayed.current.has(id)) return;
@@ -171,9 +135,7 @@ export function AppShell() {
       if (batch.length === 0) return;
       setTasks((previous) => {
         let next = previous;
-        for (const item of batch) {
-          next = applyLive(next, item, workspaceName.current);
-        }
+        for (const item of batch) next = applyLive(next, item, workspaceName.current);
         return next;
       });
       for (const item of batch) {
@@ -189,54 +151,49 @@ export function AppShell() {
   }, []);
 
   useEffect(() => {
+    document.documentElement.style.zoom = String(zoomLevel);
+  }, [zoomLevel]);
+
+  useEffect(() => {
     return () => {
+      document.documentElement.style.zoom = "";
       if (frame.current != null) window.cancelAnimationFrame(frame.current);
     };
   }, []);
 
-  // There is no core behind a demonstration: the controls stay on screen to be looked at, and do nothing.
-  const ignore = () => {};
-  const task = tasks.find((candidate) => candidate.id === selectedId) ?? null;
-  const model = chosenModel ?? defaultModel(preferredModel, loadedModels, models);
-  const running = starting || runningId !== null;
-  const togglePanel = (kind: PanelKind) => setPanel((current) => (current === kind ? null : kind));
-
-  const [zoomLevel, setZoomLevel] = useState(1);
-  const zoomIn = useCallback(() => setZoomLevel((z) => Math.min(z + 0.1, 2)), []);
-  const zoomOut = useCallback(() => setZoomLevel((z) => Math.max(z - 0.1, 0.5)), []);
-  const zoomReset = useCallback(() => setZoomLevel(1), []);
-
-  useEffect(() => {
-    document.documentElement.style.zoom = `${zoomLevel}`;
-  }, [zoomLevel]);
-
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "b") {
+      const mod = event.ctrlKey || event.metaKey;
+      if (mod && event.key.toLowerCase() === "b") {
         event.preventDefault();
         setSidebarOpen((open) => !open);
       } else if (event.key === "Escape") {
         setPanel(null);
-      } else if ((event.ctrlKey || event.metaKey) && (event.key === "=" || event.key === "+")) {
+      } else if (mod && (event.key === "=" || event.key === "+")) {
         event.preventDefault();
-        zoomIn();
-      } else if ((event.ctrlKey || event.metaKey) && event.key === "-") {
+        setZoomLevel((z) => Math.min(z + 0.1, 2));
+      } else if (mod && event.key === "-") {
         event.preventDefault();
-        zoomOut();
-      } else if ((event.ctrlKey || event.metaKey) && event.key === "0") {
+        setZoomLevel((z) => Math.max(z - 0.1, 0.5));
+      } else if (mod && event.key === "0") {
         event.preventDefault();
-        zoomReset();
+        setZoomLevel(1);
       }
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [zoomIn, zoomOut, zoomReset]);
+  }, []);
 
-  // The core remembers the choice for the next runs. It answers even when it could not write, and a
-  // rejection here only means there is no core (browser): either way the choice holds on screen.
+  const task = tasks.find((candidate) => candidate.id === selectedId) ?? null;
+  const model = chosenModel ?? defaultModel(preferredModel, loadedModels, models);
+  const running = starting || runningId !== null;
+  const togglePanel = (kind: PanelKind) => setPanel((current) => (current === kind ? null : kind));
+  const live = !demo;
+  const rollbackBusy = running || task?.status === "running" || task?.status === "waiting_approval";
+
   const handleModelChange = (next: string) => {
     setChosenModel(next);
-    setPreferredModel(next).catch(() => {});
+    setPreferredModel(next).catch(noop);
   };
 
   const handlePermissionMode = (next: PermissionMode) => {
@@ -263,13 +220,9 @@ export function AppShell() {
     setTaskError(null);
     setStarting(true);
     try {
-      const selectedTask = tasks.find((t) => t.id === selectedId);
       const continues =
-        selectedTask &&
-        selectedTask.workspace === workspace?.name &&
-        selectedTask.status !== "running" &&
-        selectedTask.status !== "waiting_approval"
-          ? selectedTask.id
+        task && task.workspace === workspace?.name && task.status !== "running" && task.status !== "waiting_approval"
+          ? task.id
           : undefined;
       setRunningId(await startTask(text, model, NUM_CTX, handleEvent, continues));
     } catch (error) {
@@ -279,11 +232,8 @@ export function AppShell() {
     }
   };
 
-  // The commands answer `false` when the task is no longer in the registry: say so instead of
-  // letting the correction or the cancellation look accepted.
   const handleSteer = async (text: string) => {
     if (!runningId) return;
-    // A correction always goes to the one task in flight, so bring it back on screen first.
     setSelectedId(runningId);
     try {
       if (!(await steerTask(runningId, text))) setTaskError("a tarefa não está mais em andamento");
@@ -314,26 +264,29 @@ export function AppShell() {
     }
   };
 
+  const markRolledBack = (id: string, restored: string[], skipped: RollbackResult["skipped"]) => {
+    setTasks((previous) =>
+      previous.map((candidate) =>
+        candidate.id === id
+          ? applyAgentEvent(candidate, {
+              taskId: id,
+              sequence: 0,
+              at: new Date().toISOString().replace(/\.\d+Z$/, "Z"),
+              event: "rollbackCompleted",
+              data: { restored, skipped },
+            })
+          : candidate,
+      ),
+    );
+  };
+
   const handleRollback = async (force: boolean) => {
     if (!task) return;
     setTaskError(null);
     setRollingBack(true);
     try {
-      const result: RollbackResult = await rollbackTask(task.id, force);
-      const at = new Date().toISOString().replace(/\.\d+Z$/, "Z");
-      setTasks((previous) =>
-        previous.map((candidate) =>
-          candidate.id === task.id
-            ? applyAgentEvent(candidate, {
-                taskId: task.id,
-                sequence: 0,
-                at,
-                event: "rollbackCompleted",
-                data: { restored: result.restored, skipped: result.skipped },
-              })
-            : candidate,
-        ),
-      );
+      const result = await rollbackTask(task.id, force);
+      markRolledBack(task.id, result.restored, result.skipped);
     } catch (error) {
       setTaskError(String(error));
     } finally {
@@ -341,7 +294,10 @@ export function AppShell() {
     }
   };
 
-  // The answer only carries the decision; what it authorises is decided and enforced in Rust.
+  const handleDemoRollback = () => {
+    if (task) markRolledBack(task.id, ["apps/cli/src/main.rs"], []);
+  };
+
   const handleApproval = async (granted: boolean, reason?: string) => {
     const pending = task?.pendingApproval;
     if (!task || !pending) return;
@@ -362,8 +318,6 @@ export function AppShell() {
   };
 
   return (
-    // Long enough that the pointer has to rest on a control, short enough not to feel like the
-    // half-second lag of the native Windows tooltip this replaced.
     <TooltipProvider delayDuration={400}>
       <div className="flex h-full">
         <Sidebar
@@ -375,6 +329,7 @@ export function AppShell() {
           onSelect={setSelectedId}
           onOpenWorkspace={handleOpenWorkspace}
           onNewTask={handleNewTask}
+          ollama={ollama}
         />
 
         <main className="relative flex min-w-0 flex-1">
@@ -415,31 +370,9 @@ export function AppShell() {
               <Conversation
                 key={task.id}
                 task={task}
-                onApprovalDecision={demo ? undefined : handleApproval}
-                // One task per workspace (D5): no offer to resume while another one holds the slot.
-                onResume={demo ? ignore : running ? undefined : handleResume}
-                onRollback={
-                  demo
-                    ? () => {
-                        setTasks((previous) =>
-                          previous.map((candidate) =>
-                            candidate.id === task.id
-                              ? {
-                                  ...candidate,
-                                  rolledBack: true,
-                                  events: [
-                                    ...candidate.events,
-                                    { kind: "rollback" as const, restored: ["apps/cli/src/main.rs"], skipped: [] },
-                                  ],
-                                }
-                              : candidate,
-                          ),
-                        );
-                      }
-                    : running || task.status === "running" || task.status === "waiting_approval"
-                      ? undefined
-                      : handleRollback
-                }
+                onApprovalDecision={live ? handleApproval : undefined}
+                onResume={demo ? noop : running ? undefined : handleResume}
+                onRollback={demo ? handleDemoRollback : rollbackBusy ? undefined : handleRollback}
                 rollingBack={rollingBack}
               />
             ) : (
@@ -449,7 +382,6 @@ export function AppShell() {
               <Composer
                 task={task}
                 running={running}
-                // A demonstration has a workspace in its own data, so the composer shows its normal state.
                 workspaceOpen={demo || Boolean(workspace)}
                 models={models}
                 loadedModels={loadedModels}
@@ -458,10 +390,10 @@ export function AppShell() {
                 sandboxAvailable={demo || Boolean(sandbox?.available)}
                 sandboxDetail={sandbox?.detail ?? "sandbox só existe no Linux nesta versão"}
                 onPermissionModeChange={handlePermissionMode}
-                onModelChange={demo ? setChosenModel : handleModelChange}
-                onStart={demo ? ignore : handleStart}
-                onSteer={demo ? ignore : handleSteer}
-                onCancel={demo ? ignore : handleCancel}
+                onModelChange={live ? handleModelChange : setChosenModel}
+                onStart={live ? handleStart : noop}
+                onSteer={live ? handleSteer : noop}
+                onCancel={live ? handleCancel : noop}
                 error={taskError}
                 inputRef={composerInput}
               />
@@ -475,7 +407,6 @@ export function AppShell() {
   );
 }
 
-// A task the core knows about but whose conversation has not been loaded yet.
 function taskShell(id: string, title: string, model: string, workspace: string): Task {
   return {
     id,
@@ -503,7 +434,6 @@ function fromSummary(summary: TaskSummary, workspace: string): Task {
   };
 }
 
-// The core stores an instant; the sidebar shows how long ago it was.
 function relativeTime(iso: string): string {
   const at = Date.parse(iso);
   if (Number.isNaN(at)) return "";
@@ -516,8 +446,6 @@ function relativeTime(iso: string): string {
   return days === 1 ? "ontem" : `${days} dias`;
 }
 
-// A task the live stream has never seen is built from its own first event, so nothing is lost
-// between `start_task` accepting the request and resolving with the id.
 function applyLive(tasks: Task[], message: AgentEventMessage, workspace: string): Task[] {
   const index = tasks.findIndex((task) => task.id === message.taskId);
   if (index >= 0) {
