@@ -37,6 +37,16 @@ cargo run -q -p cd-ai-cli -- eval --scripted
 
 A suíte não cresceu (planos 016 D3 / 018 D10 / 019 D10 / 020 D9). Taxa scripted medida nesta fase: **100% (3/3)** — sem regressão. Cada linha do relatório CLI mostra `~N tok` (estimado).
 
+Medido em 2026-09-16 (`evals/results/scripted-fase10.json`):
+
+| tarefa | iterações | estimatedPromptTokens | agentStatus |
+|---|---|---|---|
+| dobro | 4 | 2450 | completed |
+| greet | 4 | 2278 | completed |
+| soma | 4 | 2240 | completed |
+
+Isso é a **soma** de `chars/4` nos 4 turnos (system+histórico cresce). `promptTokens` do ScriptedModel continua 0. A prova de *menos* tokens que o corte cego da Fase 5 está nos testes de higiene/orçamento/compactação: uma conversa inchada agora termina `Finished` em vez de `ContextExhausted`.
+
 ## Caminho ao vivo (Ollama + CODER)
 
 Nesta VM de cloud **não há Ollama**. A taxa ao vivo e a comparação de `promptTokens` reais ficam bloqueadas até rodar, numa máquina com o Ollama 0.34+ e `qwen3-coder:30b` puxado (decisão 0002):
