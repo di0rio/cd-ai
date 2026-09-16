@@ -1,6 +1,6 @@
 "use client";
 
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { formatDuration, plural } from "@/lib/format";
 import {
   type ActivityBlock,
@@ -38,6 +38,7 @@ export function Conversation({ task, onApprovalDecision, onResume, onRollback, r
   const last = task.events.at(-1);
   // Streaming tokens grow the last row without growing the list, so its length is what moves.
   const tail = last?.kind === "assistant" ? last.text.length : 0;
+  const blocks = useMemo(() => groupActivity(task.events), [task.events]);
 
   // Runs on mount, whenever activity arrives or the last answer grows, and when an approval opens.
   // biome-ignore lint/correctness/useExhaustiveDependencies: intentionally reacts to growth without reading the events.
@@ -57,7 +58,7 @@ export function Conversation({ task, onApprovalDecision, onResume, onRollback, r
     >
       {/* 46rem of column plus the 24px of breathing room on each side, so the rows line up with the composer. */}
       <div className="mx-auto flex max-w-[49rem] flex-col gap-4 px-6 pt-18 pb-10">
-        {groupActivity(task.events).map((block, index) => (
+        {blocks.map((block, index) => (
           <Block
             // biome-ignore lint/suspicious/noArrayIndexKey: the activity log is append-only, so positions are stable
             key={index}

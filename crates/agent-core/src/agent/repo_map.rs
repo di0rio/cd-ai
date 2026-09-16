@@ -124,30 +124,38 @@ impl RepoMap {
             return (String::new(), false);
         }
         let mut lines: Vec<String> = Vec::new();
+        let mut file_ends: Vec<usize> = Vec::new();
         for file in &self.files {
             lines.push(file.path.clone());
             for symbol in file.symbols.iter().take(MAX_SYMBOLS_PER_FILE) {
                 lines.push(format!("  {}", symbol.signature));
             }
+            file_ends.push(lines.len());
         }
-        let full = lines.join("\n");
-        if full.chars().count() <= max_chars {
-            return (full, false);
+        let mut prefix = Vec::with_capacity(lines.len() + 1);
+        prefix.push(0_usize);
+        for line in &lines {
+            let extra = if prefix.len() == 1 { 0 } else { 1 };
+            prefix.push(prefix.last().copied().unwrap_or(0) + extra + line.chars().count());
         }
-        // Drop lowest-score files first (the vec is already score-desc).
-        let mut keep = lines.len();
-        while keep > 0 {
-            let candidate = lines[..keep].join("\n");
-            if candidate.chars().count() <= max_chars.saturating_sub(24) {
-                return (format!("{candidate}\n[repo map truncated]"), true);
+        let total = *prefix.last().unwrap_or(&0);
+        if total <= max_chars {
+            return (lines.join("\n"), false);
+        }
+        let budget = max_chars.saturating_sub(24);
+        let mut keep_files = 0;
+        for (index, end) in file_ends.iter().enumerate() {
+            if prefix[*end] > budget {
+                break;
             }
-            keep = keep.saturating_sub(1);
-            // Drop a whole file at a time when possible: back up to the previous path-only line.
-            while keep > 0 && lines[keep - 1].starts_with("  ") {
-                keep -= 1;
-            }
+            keep_files = index + 1;
         }
-        (String::from("[repo map truncated]"), true)
+        if keep_files == 0 {
+            return (String::from("[repo map truncated]"), true);
+        }
+        let keep = file_ends[keep_files - 1];
+        let candidate = lines[..keep].join("\n");
+        (format!("{candidate}\n[repo map truncated]"), true)
     }
 }
 
@@ -161,6 +169,7 @@ fn index_workspace(workspace: &Workspace, data_dir: Option<&Path>) -> (Vec<MapFi
     } else {
         Vec::new()
     };
+    let cached_len = cached_files.len();
 
     let mut by_path: std::collections::HashMap<String, CachedFile> = cached_files
         .into_iter()
@@ -168,17 +177,13 @@ fn index_workspace(workspace: &Workspace, data_dir: Option<&Path>) -> (Vec<MapFi
         .collect();
 
     let mut fresh: Vec<CachedFile> = Vec::new();
-    let mut reparsed = 0_usize;
+    let mut jobs: Vec<ParseJob> = Vec::new();
 
     let mut builder = ignore::WalkBuilder::new(workspace.root());
-    builder
-        .standard_filters(true)
-        .threads(1)
-        .require_git(false)
-        .sort_by_file_path(|a, b| a.cmp(b));
+    builder.standard_filters(true).threads(1).require_git(false);
 
     for (seen, entry) in builder.build().enumerate() {
-        if seen >= MAX_WALK_ENTRIES || fresh.len() >= MAX_INDEXED_FILES {
+        if seen >= MAX_WALK_ENTRIES || fresh.len() + jobs.len() >= MAX_INDEXED_FILES {
             break;
         }
         let Ok(entry) = entry else { continue };
@@ -205,22 +210,31 @@ fn index_workspace(workspace: &Workspace, data_dir: Option<&Path>) -> (Vec<MapFi
             fresh.push(hit);
             continue;
         }
-        let symbols = if language_for_path(path).is_some() && size <= MAX_PARSE_BYTES {
-            reparsed += 1;
-            extract_symbols(path)
+        if language_for_path(path).is_some() && size <= MAX_PARSE_BYTES {
+            jobs.push(ParseJob {
+                path: path.to_path_buf(),
+                relative,
+                mtime_ms,
+                size,
+            });
         } else {
-            Vec::new()
-        };
-        fresh.push(CachedFile {
-            path: relative,
-            mtime_ms,
-            size,
-            symbols,
-        });
+            fresh.push(CachedFile {
+                path: relative,
+                mtime_ms,
+                size,
+                symbols: Vec::new(),
+            });
+        }
     }
 
+    let reparsed = jobs.len();
+    fresh.extend(parse_jobs(jobs));
+    let unchanged = cached_ok && reparsed == 0 && by_path.is_empty() && fresh.len() == cached_len;
+
     // Paths that were in the cache but not on disk anymore are dropped by not pushing them.
-    if let Some(dir) = data_dir {
+    if let Some(dir) = data_dir
+        && !unchanged
+    {
         let cache = DiskCache {
             schema: CACHE_SCHEMA,
             root: workspace.root().to_string_lossy().into_owned(),
@@ -252,18 +266,102 @@ fn index_workspace(workspace: &Workspace, data_dir: Option<&Path>) -> (Vec<MapFi
     (files, from_cache)
 }
 
-fn extract_symbols(path: &Path) -> Vec<Symbol> {
+#[derive(Clone)]
+struct ParseJob {
+    path: PathBuf,
+    relative: String,
+    mtime_ms: u64,
+    size: u64,
+}
+
+struct Parsers {
+    typescript: tree_sitter::Parser,
+    tsx: tree_sitter::Parser,
+    rust: tree_sitter::Parser,
+}
+
+impl Parsers {
+    fn new() -> Self {
+        let mut typescript = tree_sitter::Parser::new();
+        let mut tsx = tree_sitter::Parser::new();
+        let mut rust = tree_sitter::Parser::new();
+        let _ = typescript.set_language(&tree_sitter::Language::new(
+            tree_sitter_typescript::LANGUAGE_TYPESCRIPT,
+        ));
+        let _ = tsx.set_language(&tree_sitter::Language::new(
+            tree_sitter_typescript::LANGUAGE_TSX,
+        ));
+        let _ = rust.set_language(&tree_sitter::Language::new(tree_sitter_rust::LANGUAGE));
+        Self {
+            typescript,
+            tsx,
+            rust,
+        }
+    }
+
+    fn for_path(&mut self, path: &Path) -> Option<&mut tree_sitter::Parser> {
+        match path.extension().and_then(|ext| ext.to_str()).unwrap_or("") {
+            "tsx" => Some(&mut self.tsx),
+            "rs" => Some(&mut self.rust),
+            "ts" | "js" | "jsx" => Some(&mut self.typescript),
+            _ => None,
+        }
+    }
+}
+
+fn parse_jobs(jobs: Vec<ParseJob>) -> Vec<CachedFile> {
+    if jobs.is_empty() {
+        return Vec::new();
+    }
+    if jobs.len() < 8 {
+        let mut parsers = Parsers::new();
+        return jobs
+            .into_iter()
+            .map(|job| parse_one(&mut parsers, job))
+            .collect();
+    }
+    let workers = std::thread::available_parallelism()
+        .map(|n| n.get().clamp(1, 4))
+        .unwrap_or(1)
+        .min(jobs.len());
+    let chunk = jobs.len().div_ceil(workers);
+    std::thread::scope(|scope| {
+        let mut handles = Vec::new();
+        for slice in jobs.chunks(chunk) {
+            let owned = slice.to_vec();
+            handles.push(scope.spawn(move || {
+                let mut parsers = Parsers::new();
+                owned
+                    .into_iter()
+                    .map(|job| parse_one(&mut parsers, job))
+                    .collect::<Vec<_>>()
+            }));
+        }
+        handles
+            .into_iter()
+            .flat_map(|handle| handle.join().unwrap())
+            .collect()
+    })
+}
+
+fn parse_one(parsers: &mut Parsers, job: ParseJob) -> CachedFile {
+    let symbols = extract_symbols(parsers, &job.path);
+    CachedFile {
+        path: job.relative,
+        mtime_ms: job.mtime_ms,
+        size: job.size,
+        symbols,
+    }
+}
+
+fn extract_symbols(parsers: &mut Parsers, path: &Path) -> Vec<Symbol> {
     let Ok(bytes) = fs::read(path) else {
         return Vec::new();
     };
     let content = String::from_utf8_lossy(&bytes);
-    let Some((_, language)) = language_for_path(path) else {
+    let Some(parser) = parsers.for_path(path) else {
         return Vec::new();
     };
-    let mut parser = tree_sitter::Parser::new();
-    if parser.set_language(&language).is_err() {
-        return Vec::new();
-    }
     let Some(tree) = parser.parse(content.as_bytes(), None) else {
         return Vec::new();
     };
@@ -579,5 +677,64 @@ mod tests {
         assert!(cut);
         assert!(rendered.contains("[repo map truncated]"));
         assert!(rendered.chars().count() <= 80);
+    }
+
+    /// Phase 13 baseline: index + render cost on a 400-file tree (kept as a regression so
+    /// later edits cannot silently make the walk or the truncated render quadratic again).
+    #[test]
+    fn a_midsize_tree_indexes_and_renders_in_bounded_time() {
+        use std::time::Instant;
+
+        let dir = tempdir().unwrap();
+        for i in 0..400 {
+            let path = dir.path().join(format!("src/f{i:03}.ts"));
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(&path, format!("export function f{i}() {{ return {i}; }}\n")).unwrap();
+        }
+        let workspace = Workspace::open(dir.path()).unwrap();
+        let data = tempdir().unwrap();
+
+        let started = Instant::now();
+        let first = load_repo_map(&workspace, Some(data.path()), "f042");
+        let cold = started.elapsed();
+        assert_eq!(first.files.len(), 400);
+        assert!(!first.from_cache);
+
+        let started = Instant::now();
+        let second = load_repo_map(&workspace, Some(data.path()), "f042");
+        let warm = started.elapsed();
+        assert!(second.from_cache);
+
+        let started = Instant::now();
+        let (tight, cut) = first.render(800);
+        let render_tight = started.elapsed();
+        assert!(cut);
+        assert!(tight.contains("[repo map truncated]"));
+
+        let started = Instant::now();
+        let (full, full_cut) = first.render(1_000_000);
+        let render_full = started.elapsed();
+        assert!(!full_cut);
+        assert!(full.contains("src/f042.ts"));
+
+        eprintln!(
+            "phase13 map: cold={cold:?} warm={warm:?} render_tight={render_tight:?} render_full={render_full:?}"
+        );
+        // Cold parse of 400 tiny TS files is tree-sitter bound; a second should be plenty.
+        assert!(cold.as_millis() < 2_000, "cold index too slow: {cold:?}");
+        // Warm still walks; it must not reparse. A second is a loose ceiling, the ratio is the proof.
+        assert!(warm.as_millis() < 1_000, "warm index too slow: {warm:?}");
+        assert!(
+            warm < cold,
+            "warm cache walk should beat a cold parse: warm={warm:?} cold={cold:?}"
+        );
+        assert!(
+            render_tight.as_millis() < 200,
+            "truncated render too slow: {render_tight:?}"
+        );
+        assert!(
+            render_full.as_millis() < 50,
+            "full render too slow: {render_full:?}"
+        );
     }
 }

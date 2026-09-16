@@ -139,6 +139,13 @@ pub struct EvalTaskResult {
     pub duration_ms: u64,
     pub model_ms: u64,
     pub tool_ms: u64,
+    /// Wall time assembling context (plan 023).
+    #[serde(default)]
+    pub context_ms: u64,
+    #[serde(default)]
+    pub cache_hits: u64,
+    #[serde(default)]
+    pub cache_misses: u64,
     pub tool_call_format_failures: u32,
     pub native_tool_call_turns: u32,
     pub text_tool_call_turns: u32,
@@ -347,6 +354,9 @@ fn run_one(
             duration_ms: started.elapsed().as_millis() as u64,
             model_ms: 0,
             tool_ms: 0,
+            context_ms: 0,
+            cache_hits: 0,
+            cache_misses: 0,
             tool_call_format_failures: 0,
             native_tool_call_turns: 0,
             text_tool_call_turns: 0,
@@ -450,6 +460,9 @@ fn run_one_inner(
         duration_ms: 0,
         model_ms: state.metrics.model_ms,
         tool_ms: state.metrics.tool_ms,
+        context_ms: state.metrics.context_ms,
+        cache_hits: state.metrics.cache_hits,
+        cache_misses: state.metrics.cache_misses,
         tool_call_format_failures: format_failures,
         native_tool_call_turns: counter.native_turns,
         text_tool_call_turns: counter.text_turns,
@@ -486,6 +499,9 @@ fn skipped_result(id: &str, reason: &str) -> EvalTaskResult {
         duration_ms: 0,
         model_ms: 0,
         tool_ms: 0,
+        context_ms: 0,
+        cache_hits: 0,
+        cache_misses: 0,
         tool_call_format_failures: 0,
         native_tool_call_turns: 0,
         text_tool_call_turns: 0,
@@ -818,6 +834,10 @@ mod tests {
         assert_eq!(soma.model_category, "coder");
         assert_eq!(soma.routed_num_ctx, crate::agent::router::TRIVIAL_CTX);
         assert!(!soma.route_reason.is_empty());
+        assert!(
+            soma.cache_hits + soma.cache_misses > 0,
+            "fase 13: o eval tem que contar o cache do mapa"
+        );
     }
 
     #[test]

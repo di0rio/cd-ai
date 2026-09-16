@@ -1,6 +1,6 @@
 "use client";
 
-import { type ReactNode, useState } from "react";
+import { memo, type ReactNode, useState } from "react";
 import { Icon } from "./icons";
 
 interface CodeBlockProps {
@@ -89,7 +89,7 @@ function parseInline(text: string): ReactNode {
   });
 }
 
-export function Markdown({ content }: { content: string }) {
+export const Markdown = memo(function Markdown({ content }: { content: string }) {
   const lines = content.split("\n");
   const blocks: ReactNode[] = [];
   let i = 0;
@@ -190,4 +190,4 @@ export function Markdown({ content }: { content: string }) {
   }
 
   return <div className="prose max-w-none">{blocks}</div>;
-}
+});

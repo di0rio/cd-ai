@@ -47,6 +47,8 @@ A suíte é propositalmente pequena. 20–50 tarefas é o alvo do SPEC §26, nã
 
 Cada JSON traz taxa de sucesso, e por tarefa: iterações, tokens, tempo, retries, falhas de
 formato de tool call, edições rejeitadas, turnos nativos vs. texto, **skills selecionadas**
-(Fase 11) e **rota do modelo** (`modelCategory`, `routedNumCtx`, `routeReason` — Fase 12).
+(Fase 11), **rota do modelo** (`modelCategory`, `routedNumCtx`, `routeReason` — Fase 12) e
+**custo de contexto** (`contextMs`, `cacheHits`, `cacheMisses` — Fase 13).
 A taxa oficial da baseline está em [`docs/audit/fase-6-baseline.md`](../docs/audit/fase-6-baseline.md).
 A prova de latência trivial da Fase 12 está em [`docs/audit/fase-12-router.md`](../docs/audit/fase-12-router.md).
+A prova de otimização da Fase 13 está em [`docs/audit/fase-13-otimizacao.md`](../docs/audit/fase-13-otimizacao.md).
