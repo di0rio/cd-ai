@@ -577,12 +577,14 @@ mod tests {
         assert!(loaded.iter().all(|item| item.is_ok()));
 
         eprintln!("phase13 reads: sequential={sequential:?} parallel={parallel:?}");
+        // Ceiling, not a microbenchmark: Phase 13 was ~2.1 s before the linear redactor.
+        // Shared CI/VMs land around 50–250 ms; 500 ms still flags a regression to the old path.
         assert!(
-            sequential.as_millis() < 200,
+            sequential.as_millis() < 500,
             "sequential reads after linear redact: {sequential:?}"
         );
         assert!(
-            parallel.as_millis() < 200,
+            parallel.as_millis() < 500,
             "parallel reads hung: {parallel:?}"
         );
     }

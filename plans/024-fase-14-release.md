@@ -86,14 +86,14 @@ assinatura                                             → docs, sem segredo no 
 
 ## Critérios de pronto
 
-- [ ] `plans/024-fase-14-release.md` existe; linha 024 em `plans/README.md` = DONE
-- [ ] `tauri.conf.json` tem metadados Linux + `mainBinaryName` + CLI/evals nos `files`
-- [ ] `bun scripts/build-linux-release.ts` documentado; CI 22.04 existe
-- [ ] README/handoff/`docs/release.md` descrevem instalação limpa e plataformas “depois”
-- [ ] Audit com o que esta VM/CI comprovou e o que falta numa máquina nua
-- [ ] `bun run verify` exit 0
-- [ ] Eval scripted 3/3
-- [ ] PR aberto
+- [x] `plans/024-fase-14-release.md` existe; linha 024 em `plans/README.md` = DONE
+- [x] `tauri.conf.json` tem metadados Linux + `mainBinaryName` + CLI/evals nos `files`
+- [x] `bun scripts/build-linux-release.ts` documentado; CI 22.04 existe
+- [x] README/handoff/`docs/release.md` descrevem instalação limpa e plataformas “depois”
+- [x] Audit com o que esta VM/CI comprovou e o que falta numa máquina nua
+- [x] `bun run verify` exit 0
+- [x] Eval scripted 3/3
+- [x] PR aberto
 
 ## STOP conditions
 
