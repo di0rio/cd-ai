@@ -22,7 +22,7 @@ O snapshot **não** passa pelo sandbox do `run_command` (o git dir está fora do
 cargo run -q -p cd-ai-cli -- eval --scripted
 ```
 
-A suíte não cresceu (planos 016 D3 / 018 D10 / 019 D10). Taxa scripted esperada: **100% (3/3)** — sem regressão. O baseline do shadow é best-effort: falha de `git` entra em `state.errors` e a tarefa continua.
+A suíte não cresceu (planos 016 D3 / 018 D10 / 019 D10). Taxa scripted medida em 2026-09-16: **100% (3/3)** — sem regressão. O baseline do shadow é best-effort: falha de `git` entra em `state.errors` e a tarefa continua.
 
 ## Como testar rollback à mão
 
