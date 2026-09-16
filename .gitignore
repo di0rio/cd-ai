@@ -12,3 +12,5 @@ evals/results/*
 !evals/results/.gitkeep
 !evals/results/*-baseline.json
 dist/
+
+graphify-out
