@@ -13,9 +13,15 @@ concurrency:
   group: linux-release-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  CARGO_BUILD_JOBS: "2"
+
 jobs:
   linux-x86_64:
     runs-on: ubuntu-22.04
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
 
@@ -29,6 +35,28 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      - run: bun install --frozen-lockfile
+
+      # Do not run `bun run verify` here: clippy --workspace --all-targets compiles the
+      # Tauri/WebKit crate in debug on a 7 GiB runner and the hosted agent lost
+      # communication (CPU/RAM). Core+CLI cover the gate; the desktop crate is
+      # type-checked by the release `tauri build` below. Local `bun run verify` is unchanged.
+      - name: Verify frontend and release metadata
+        run: |
+          bun run check
+          bun run --cwd apps/desktop typecheck
+          bun run --cwd apps/desktop test
+          bun scripts/check-release-metadata.ts
+          cargo fmt --all --check
+
+      - name: Clippy and test agent-core + CLI
+        run: |
+          cargo clippy -p agent-core -p cd-ai-cli --all-targets -- -D warnings
+          cargo test -p agent-core -p cd-ai-cli
+
+      - name: Eval scripted
+        run: cargo run -q -p cd-ai-cli -- eval --scripted --out evals/results/scripted-ci.json
+
       - name: Install Tauri Linux dependencies
         run: |
           sudo apt-get update
@@ -41,13 +69,6 @@ jobs:
             libssl-dev \
             file \
             build-essential
-
-      - run: bun install --frozen-lockfile
-
-      - run: bun run verify
-
-      - name: Eval scripted
-        run: cargo run -q -p cd-ai-cli -- eval --scripted --out evals/results/scripted-ci.json
 
       - name: Build .deb and AppImage
         run: bun scripts/build-linux-release.ts
