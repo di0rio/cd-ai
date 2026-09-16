@@ -11,9 +11,11 @@ use ts_rs::TS;
 
 use crate::events::{ToolEvent, ToolEventMessage, timestamp};
 use crate::permissions::{
-    ApprovalAction, ApprovalRequest, ApprovalResponse, PermissionDecision, PermissionManager,
+    ApprovalAction, ApprovalRequest, ApprovalResponse, PermissionDecision, PermissionKind,
+    PermissionManager, PermissionMode, Policy, policy,
 };
 use crate::redactor::SecretFileView;
+use crate::sandbox::{SandboxCapabilities, status as sandbox_status};
 use crate::tools::cancel::CancelToken;
 use crate::workspace::Workspace;
 use crate::workspace::WorkspaceError;
@@ -361,6 +363,8 @@ pub struct ToolEngine {
     pub workspace: Workspace,
     task_id: String,
     permissions: PermissionManager,
+    mode: PermissionMode,
+    caps: SandboxCapabilities,
     sequence: u64,
     request_id: u64,
     command_next_id: u64,
@@ -369,15 +373,39 @@ pub struct ToolEngine {
 
 impl ToolEngine {
     pub fn new(workspace: Workspace, task_id: impl Into<String>) -> Self {
+        Self::with_mode(workspace, task_id, PermissionMode::Ask)
+    }
+
+    pub fn with_mode(
+        workspace: Workspace,
+        task_id: impl Into<String>,
+        mode: PermissionMode,
+    ) -> Self {
         Self {
             workspace,
             task_id: task_id.into(),
             permissions: PermissionManager::default(),
+            mode,
+            caps: sandbox_status().capabilities(),
             sequence: 0,
             request_id: 0,
             command_next_id: 0,
             cancel: CancelToken::default(),
         }
+    }
+
+    pub fn mode(&self) -> PermissionMode {
+        self.mode
+    }
+
+    pub fn sandbox_caps(&self) -> SandboxCapabilities {
+        self.caps
+    }
+
+    /// Test seam: pretend the host has (or lacks) a sandbox without probing the kernel.
+    #[cfg(test)]
+    pub(crate) fn set_sandbox_caps(&mut self, caps: SandboxCapabilities) {
+        self.caps = caps;
     }
 
     /// Shares the task's token, so cancelling it also stops whatever the engine is running.
@@ -431,6 +459,22 @@ impl ToolEngine {
                 );
                 PermissionDecision::Denied
             }
+        }
+    }
+
+    /// SPEC §20.4: Auto never opens a prompt; Ask always shows the exact action, never a model
+    /// summary. The policy does not read tool output (SPEC §20.5).
+    pub fn authorize(
+        &mut self,
+        events: EventSink,
+        responder: Responder,
+        kind: PermissionKind,
+        action: ApprovalAction,
+    ) -> PermissionDecision {
+        match policy(self.mode, &kind, self.caps) {
+            Policy::Auto => PermissionDecision::Auto,
+            Policy::Deny => PermissionDecision::Denied,
+            Policy::Ask => self.ask_approval(events, responder, action),
         }
     }
 

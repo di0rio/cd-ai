@@ -1,8 +1,8 @@
 //! Preferences that outlive one run: `<data_dir>/settings.json`, next to `tasks/` (plan 015, D8).
 //!
 //! What is kept here is the user's own choice, never a catalogue. A model name is configuration and
-//! no code depends on it (decision 0002, rule 5), so this file stores a plain string and nothing
-//! reads meaning into it.
+//! no code depends on it (decision 0002, rule 5), so this file stores a plain string. The permission
+//! mode is ASK / AUTO / FULL ACCESS; FULL ACCESS is only honoured when the OS sandbox is ready.
 //!
 //! Reading never fails: a missing, unreadable or corrupt file all mean "nothing chosen yet". A
 //! preference is a convenience, and losing one must never keep the app from opening.
@@ -16,6 +16,7 @@ use ts_rs::TS;
 use crate::agent::storage::{
     StorageError, data_dir, format_error, io_error, redacted_json, write_atomic,
 };
+use crate::permissions::PermissionMode;
 
 const SETTINGS_FILE: &str = "settings.json";
 
@@ -25,6 +26,8 @@ const SETTINGS_FILE: &str = "settings.json";
 pub struct Settings {
     /// Model the user last picked in the UI; `None` until they pick one.
     pub model: Option<String>,
+    /// ASK / AUTO / FULL ACCESS (SPEC §20.4). Default ASK.
+    pub permission_mode: PermissionMode,
 }
 
 /// Reads and writes `settings.json` in the app data directory. The path is built here, from the
@@ -86,6 +89,7 @@ mod tests {
         store
             .save(&Settings {
                 model: Some("modelo-x".to_string()),
+                ..Default::default()
             })
             .unwrap();
 
@@ -112,6 +116,7 @@ mod tests {
         assert!(!store.path().exists());
         assert_eq!(store.load(), Settings::default());
         assert_eq!(store.load().model, None);
+        assert_eq!(store.load().permission_mode, PermissionMode::Ask);
     }
 
     #[test]
@@ -129,6 +134,7 @@ mod tests {
         store
             .save(&Settings {
                 model: Some("modelo-y".to_string()),
+                ..Default::default()
             })
             .unwrap();
         assert_eq!(store.load().model.as_deref(), Some("modelo-y"));
@@ -141,6 +147,7 @@ mod tests {
             store
                 .save(&Settings {
                     model: Some(name.to_string()),
+                    ..Default::default()
                 })
                 .unwrap();
         }
@@ -161,9 +168,31 @@ mod tests {
         store
             .save(&Settings {
                 model: Some(token.to_string()),
+                ..Default::default()
             })
             .unwrap();
         let text = fs::read_to_string(store.path()).unwrap();
         assert!(!text.contains(token));
+    }
+
+    #[test]
+    fn permission_mode_round_trips_and_old_files_default_to_ask() {
+        let (dir, store) = store();
+        store
+            .save(&Settings {
+                permission_mode: PermissionMode::Auto,
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(
+            SettingsStore::open(dir.path())
+                .unwrap()
+                .load()
+                .permission_mode,
+            PermissionMode::Auto
+        );
+
+        fs::write(store.path(), "{\"model\":null}").unwrap();
+        assert_eq!(store.load().permission_mode, PermissionMode::Ask);
     }
 }
