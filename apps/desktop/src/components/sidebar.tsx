@@ -1,7 +1,7 @@
 import type { Task, TaskStatus } from "@/lib/session";
 import { CoreStatus } from "./core-status";
 import { Icon } from "./icons";
-import { OllamaIndicator } from "./ollama-status";
+import { OllamaIndicator, type OllamaView } from "./ollama-status";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 
 const STATUS: Record<TaskStatus, { label: string; dot: string }> = {
@@ -24,6 +24,7 @@ type SidebarProps = {
   onSelect: (id: string) => void;
   onOpenWorkspace: () => void;
   onNewTask: () => void;
+  ollama: OllamaView;
 };
 
 const rowButton =
@@ -38,6 +39,7 @@ export function Sidebar({
   onSelect,
   onOpenWorkspace,
   onNewTask,
+  ollama,
 }: SidebarProps) {
   const newTask = (
     <button
@@ -134,7 +136,7 @@ export function Sidebar({
         </nav>
 
         <div className="space-y-1 border-t border-line px-4 py-3 text-xs text-ink-faint">
-          <OllamaIndicator />
+          <OllamaIndicator view={ollama} />
           <CoreStatus />
         </div>
       </div>
