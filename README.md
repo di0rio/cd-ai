@@ -57,12 +57,15 @@ cargo run -p cd-ai-cli -- --version
 Com o Ollama rodando, o `task` resolve uma tarefa de ponta a ponta no terminal:
 
 ```bash
-cargo run -p cd-ai-cli -- task --model <modelo> [--workspace <pasta>] "<pedido>"
+cargo run -p cd-ai-cli -- task --model <modelo> [--workspace <pasta>] [--mode ask|auto|full-access] "<pedido>"
 ```
 
-Cada escrita e cada comando que não seja leitura pedem aprovação no terminal (`Aprovar? [s/N]`). Sem
-terminal interativo a ação é negada — não existe aprovação automática. Uma tarefa interrompida volta
-com `--resume <id>`, e o Ctrl+C cancela a tarefa e os processos filhos.
+Cada escrita e cada comando que não seja leitura pedem aprovação no terminal (`Aprovar? [s/N]`),
+no modo padrão ASK. Sem terminal interativo a ação é negada — não existe `--yes`.
+`--mode auto` edita sozinho e, com sandbox Linux, também corre comandos de escrita.
+`--mode full-access` só existe com sandbox ativo (Linux). Rede, destrutivo e secrets sempre
+pedem aprovação. Uma tarefa interrompida volta com `--resume <id>`, e o Ctrl+C cancela a
+tarefa e os processos filhos.
 
 A suíte de eval (Fase 6) é outro comando, headless, sobre cópias das fixtures:
 

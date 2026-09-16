@@ -17,7 +17,7 @@ A máquina de desenvolvimento roda Windows 11 sem WSL. O alvo do primeiro releas
 - Paths sempre via APIs de path (`std::path`), sem assumir separador nem letra de drive.
 - Validação de workspace cobre os casos de Windows (letras de drive, UNC, junctions) e de Linux (symlinks).
 - Execução de comandos passa por um módulo de plataforma: o core não chama `cmd`, `powershell` ou `bash` diretamente.
-- Até a Fase 7 não existe sandbox: **todo comando fora das classes `read`/`validate` exige aprovação**, em qualquer modo de permissão.
+- **Fase 7 (2026-09-16):** no Linux, `run_command` entra em sandbox (Landlock + user/net namespace). Rede bloqueada por padrão; só um comando da classe `network` **aprovado** ganha rede. Windows/macOS continuam sem sandbox de SO: FULL ACCESS indisponível, e comando `write` em AUTO pergunta.
 
 ## Esclarecimento (2026-09-11)
 
@@ -26,5 +26,5 @@ A máquina de desenvolvimento roda Windows 11 sem WSL. O alvo do primeiro releas
 
 ## Consequências
 
-- Testes de sandbox e pacotes Linux só rodam a partir da Fase 7.
+- Testes de sandbox Linux rodam na Fase 7 (`crates/agent-core/src/sandbox.rs`). No Windows/macOS o probe reporta indisponível e a policy rebaixa FULL ACCESS para ASK.
 - CI local precisa rodar os testes de path em ambas as plataformas quando o Linux estiver disponível.
