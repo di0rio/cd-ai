@@ -197,21 +197,18 @@ pub fn list_directory(
     if !metadata.is_dir() {
         return Err(ToolError::NotADirectory);
     }
-    let mut names: Vec<String> = Vec::new();
-    for entry in fs::read_dir(&canonical).map_err(|error| ToolError::Io(error.to_string()))? {
-        let entry = entry.map_err(|error| ToolError::Io(error.to_string()))?;
-        let metadata =
-            fs::symlink_metadata(entry.path()).map_err(|error| ToolError::Io(error.to_string()))?;
-        // A symlink is reported with both booleans false so the agent cannot walk through it.
-        names.push(entry.file_name().to_string_lossy().into_owned());
-        let _ = metadata;
-    }
+    let mut names: Vec<String> = fs::read_dir(&canonical)
+        .map_err(|error| ToolError::Io(error.to_string()))?
+        .flatten()
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .collect();
     names.sort();
 
     let entries: Vec<DirEntry> = names
         .into_iter()
         .map(|name| {
             let path = canonical.join(&name);
+            // A symlink is reported with both booleans false so the agent cannot walk through it.
             let metadata = fs::symlink_metadata(&path);
             let (is_dir, is_file, size) = match metadata {
                 Ok(metadata) => {
@@ -587,5 +584,27 @@ mod tests {
             parallel.as_millis() < 500,
             "parallel reads hung: {parallel:?}"
         );
+    }
+
+    #[test]
+    fn huge_file_is_refused_instead_of_loaded() {
+        let dir = tempdir().unwrap();
+        let file = std::fs::File::create(dir.path().join("grande.log")).unwrap();
+        // Sparse: costs no disk, but reads as MAX_FILE_BYTES + 1 bytes.
+        file.set_len(crate::tools::MAX_FILE_BYTES + 1).unwrap();
+        let mut engine = boot(dir.path());
+
+        let err = read_file(
+            &mut engine,
+            ReadFileArgs {
+                path: "grande.log".into(),
+                start_line: None,
+                end_line: None,
+            },
+            &mut no_events(),
+            &mut grant(),
+        )
+        .unwrap_err();
+        assert!(matches!(err, ToolError::Io(ref message) if message.contains("grande demais")));
     }
 }
