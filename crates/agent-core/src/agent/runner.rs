@@ -2,8 +2,8 @@
 //!
 //! Everything here is synchronous and runs on one dedicated thread (D1). The loop owns the task
 //! state, persists it on every iteration (D8), and stops for a reason it can always name (D7).
-//! It never produces `completed`: without the Verifier a finished task is `completed_unvalidated`
-//! with evidence (D11).
+//! A task is `completed` only when the Verifier has evidence (plan 018); otherwise a clean
+//! finish is `completed_unvalidated`.
 
 use std::cell::Cell;
 use std::collections::{HashMap, VecDeque};
@@ -26,13 +26,17 @@ use crate::agent::tool_calls::{
     TOOL_NAMES, outcome_detail, outcome_output, redacted_input, render_outcome, signature,
     to_request, to_request_from_text, tool_specs,
 };
+use crate::agent::verify::{
+    Review, Verdict, VerifyInput, command_failure_reason, correction_message,
+    is_successful_validate, judge_files, parse_review, review_prompt,
+};
 use crate::events::{ToolEvent, ToolEventMessage};
 use crate::ollama::{ChatEvent, ChatMessage, ModelFunctionCall, ModelToolCall};
 use crate::permissions::ApprovalRequest;
 use crate::redactor;
 use crate::tool_call::parse_text_tool_calls;
 use crate::tools::cancel::CancelToken;
-use crate::tools::{Responder, ToolEngine, ToolRequest};
+use crate::tools::{Responder, RunCommandArgs, ToolEngine, ToolOutput, ToolRequest};
 use crate::workspace::Workspace;
 
 /// What a resumed task is told, as a user message (D9).
@@ -46,6 +50,8 @@ const SAME_CONTENT_WRITES: usize = 3;
 /// and one-line stubs are legitimately written to several paths in a row. A false positive costs
 /// the user a task that was going fine, so the bar is deliberately high.
 const LOOP_CONTENT_MIN_CHARS: usize = 200;
+/// Wall budget for a validation command the Verifier launches itself (plan 018).
+const VERIFY_COMMAND_TIMEOUT_MS: u64 = 60_000;
 
 /// Everything the loop needs besides the model and the responder.
 pub struct TaskContext<'a> {
@@ -200,8 +206,7 @@ pub fn run_task(
     state.finish(status, reason.clone());
     let report = TaskReport {
         summary: redact(&final_text),
-        // Always false in phase 5: the Verifier is phase 8 (D11).
-        validated: false,
+        validated: status == TaskStatus::Completed,
         evidence: state.commands.clone(),
         files_changed: state
             .files_changed
@@ -253,6 +258,8 @@ fn run_loop(
     let mut repeated_write: Option<RepeatedWrite> = None;
     // Command ids are per engine, so this maps them to their record in the state.
     let mut command_records: HashMap<u64, usize> = HashMap::new();
+    let mut ledger = VerifyLedger::default();
+    let mut correction_attempts = 0_u32;
 
     let stop = loop {
         // 1. Cancellation and the task deadline, before anything else (D6, D7).
@@ -356,10 +363,32 @@ fn run_loop(
         let _ = ctx.store.append_transcript(&state.id, &assistant);
         messages.push(assistant);
 
-        // 7. No tool calls: the model says it is done (D11).
+        // 7. No tool calls: the model says it is done. The Verifier decides whether that is
+        // evidence (plan 018) or whether the model has to go back and fix.
         if turn.calls.is_empty() {
-            let _ = ctx.store.save_state(state);
-            break StopReason::Finished;
+            match after_model_finished(
+                ctx,
+                state,
+                messages,
+                emitter,
+                engine,
+                model,
+                &mut timed_responder,
+                &mut command_records,
+                &mut ledger,
+                &mut correction_attempts,
+                &blocked_ms,
+            ) {
+                Some(reason) => {
+                    let _ = ctx.store.save_state(state);
+                    break reason;
+                }
+                None => {
+                    state.touch();
+                    let _ = ctx.store.save_state(state);
+                    continue;
+                }
+            }
         }
 
         // 8. Run each call.
@@ -450,7 +479,7 @@ fn run_loop(
             let blocked_before = blocked_ms.get();
             let outcome = {
                 let mut sink = |event: ToolEventMessage| {
-                    apply_tool_event(state, &event.event, &mut command_records);
+                    apply_tool_event(state, &event.event, &mut command_records, &mut ledger);
                     // The UI needs to know it is waiting on a human before the prompt shows up.
                     if matches!(event.event, ToolEvent::ApprovalRequired { .. }) {
                         state.status = TaskStatus::WaitingApproval;
@@ -631,6 +660,7 @@ fn apply_tool_event(
     state: &mut TaskState,
     event: &ToolEvent,
     command_records: &mut HashMap<u64, usize>,
+    ledger: &mut VerifyLedger,
 ) {
     match event {
         ToolEvent::FileRead { path, .. } => {
@@ -639,18 +669,24 @@ fn apply_tool_event(
             }
         }
         ToolEvent::FileChanged {
-            path, hash_after, ..
-        } => match state
-            .files_changed
-            .iter_mut()
-            .find(|change| &change.path == path)
-        {
-            Some(change) => change.hash_after = hash_after.clone(),
-            None => state.files_changed.push(FileChange {
-                path: path.clone(),
-                hash_after: hash_after.clone(),
-            }),
-        },
+            path,
+            diff,
+            hash_after,
+            ..
+        } => {
+            ledger.file_changed(path.clone(), diff.clone());
+            match state
+                .files_changed
+                .iter_mut()
+                .find(|change| &change.path == path)
+            {
+                Some(change) => change.hash_after = hash_after.clone(),
+                None => state.files_changed.push(FileChange {
+                    path: path.clone(),
+                    hash_after: hash_after.clone(),
+                }),
+            }
+        }
         ToolEvent::CommandStarted { id, argv, .. } => {
             command_records.insert(*id, state.commands.len());
             state.commands.push(CommandRecord {
@@ -670,6 +706,7 @@ fn apply_tool_event(
             {
                 record.exit_code = *exit_code;
                 record.duration_ms = *duration_ms;
+                ledger.command_finished(&record.argv, *exit_code);
             }
         }
         ToolEvent::ToolFailed { message, .. } => state.errors.push(message.clone()),
@@ -780,10 +817,239 @@ fn unstartable(task_id: &str, workspace: &str, problem: String) -> TaskState {
     state
 }
 
-/// The status each stop reason lands on. `Finished` is the only success, and it is never
-/// `completed` (D11).
+/// Diffs and successful validate commands since the last edit (plan 018, D3).
+#[derive(Debug, Default)]
+struct VerifyLedger {
+    passed_since_edit: Vec<Vec<String>>,
+    diffs: HashMap<String, String>,
+}
+
+impl VerifyLedger {
+    fn file_changed(&mut self, path: String, diff: String) {
+        self.passed_since_edit.clear();
+        self.diffs.insert(path, diff);
+    }
+
+    fn command_finished(&mut self, argv: &[String], exit_code: Option<i32>) {
+        if is_successful_validate(argv, exit_code)
+            && !self.passed_since_edit.iter().any(|seen| seen == argv)
+        {
+            self.passed_since_edit.push(argv.to_vec());
+        }
+    }
+}
+
+/// What happens after the model answers without tools. `None` = keep looping (correction);
+/// `Some` = stop with that reason.
+#[allow(clippy::too_many_arguments)]
+fn after_model_finished(
+    ctx: &TaskContext<'_>,
+    state: &mut TaskState,
+    messages: &mut Vec<ChatMessage>,
+    emitter: &mut Emitter<'_>,
+    engine: &mut ToolEngine,
+    model: &mut dyn ChatModel,
+    responder: Responder<'_>,
+    command_records: &mut HashMap<u64, usize>,
+    ledger: &mut VerifyLedger,
+    correction_attempts: &mut u32,
+    blocked_ms: &Cell<u64>,
+) -> Option<StopReason> {
+    let mut verdict = judge_files(&VerifyInput {
+        workspace: &ctx.workspace,
+        request: &state.request,
+        files_changed: &state.files_changed,
+        diffs: &ledger.diffs,
+        passed_validate_since_edit: &ledger.passed_since_edit,
+    });
+
+    let pending = match &verdict {
+        Verdict::Run { argv } => Some(argv.clone()),
+        _ => None,
+    };
+    if let Some(argv) = pending {
+        match run_pending_validation(
+            ctx,
+            state,
+            emitter,
+            engine,
+            responder,
+            command_records,
+            ledger,
+            blocked_ms,
+            argv,
+        ) {
+            Err(reason) => return Some(reason),
+            Ok(ran) => verdict = ran,
+        }
+    }
+
+    match verdict {
+        Verdict::Pass { evidence } => {
+            if ctx.limits.llm_review {
+                match run_llm_review(ctx, state, model, &evidence, &ledger.diffs) {
+                    Ok(Review::ChangesRequired { reasons }) => {
+                        return send_correction(
+                            ctx,
+                            state,
+                            messages,
+                            emitter,
+                            correction_attempts,
+                            &reasons,
+                        );
+                    }
+                    Ok(Review::Pass | Review::Skip) => {}
+                    Err(StopReason::Cancelled) => return Some(StopReason::Cancelled),
+                    Err(_) => {}
+                }
+            }
+            Some(StopReason::Verified)
+        }
+        Verdict::Fail { reasons } => {
+            send_correction(ctx, state, messages, emitter, correction_attempts, &reasons)
+        }
+        Verdict::Unvalidated { .. } => Some(StopReason::Finished),
+        Verdict::Run { .. } => Some(StopReason::Finished),
+    }
+}
+
+fn send_correction(
+    ctx: &TaskContext<'_>,
+    state: &TaskState,
+    messages: &mut Vec<ChatMessage>,
+    emitter: &mut Emitter<'_>,
+    correction_attempts: &mut u32,
+    reasons: &[String],
+) -> Option<StopReason> {
+    if *correction_attempts >= ctx.limits.max_correction_retries {
+        return Some(StopReason::Finished);
+    }
+    *correction_attempts += 1;
+    let text = correction_message(
+        *correction_attempts,
+        ctx.limits.max_correction_retries,
+        reasons,
+    );
+    let steered = message("user", &text);
+    let _ = ctx.store.append_transcript(&state.id, &steered);
+    messages.push(steered);
+    emitter.emit(AgentEvent::UserMessage {
+        text: redact(&text),
+    });
+    None
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_pending_validation(
+    ctx: &TaskContext<'_>,
+    state: &mut TaskState,
+    emitter: &mut Emitter<'_>,
+    engine: &mut ToolEngine,
+    responder: Responder<'_>,
+    command_records: &mut HashMap<u64, usize>,
+    ledger: &mut VerifyLedger,
+    blocked_ms: &Cell<u64>,
+    argv_list: Vec<Vec<String>>,
+) -> Result<Verdict, StopReason> {
+    let mut evidence = Vec::new();
+    for argv in argv_list {
+        if ctx.cancel.is_cancelled() {
+            return Err(StopReason::Cancelled);
+        }
+        let started_tool = Instant::now();
+        let blocked_before = blocked_ms.get();
+        let outcome = {
+            let mut sink = |event: ToolEventMessage| {
+                apply_tool_event(state, &event.event, command_records, ledger);
+                if matches!(event.event, ToolEvent::ApprovalRequired { .. }) {
+                    state.status = TaskStatus::WaitingApproval;
+                    emitter.emit(AgentEvent::StatusChanged {
+                        status: TaskStatus::WaitingApproval,
+                        reason: None,
+                    });
+                }
+                let decided = matches!(
+                    event.event,
+                    ToolEvent::ApprovalGranted { .. } | ToolEvent::ApprovalDenied { .. }
+                );
+                emitter.emit(AgentEvent::Tool(event.event));
+                if decided {
+                    state.status = TaskStatus::Running;
+                    emitter.emit(AgentEvent::StatusChanged {
+                        status: TaskStatus::Running,
+                        reason: None,
+                    });
+                }
+            };
+            engine.run_tool(
+                ToolRequest::RunCommand(RunCommandArgs {
+                    argv: argv.clone(),
+                    cwd: None,
+                    timeout_ms: Some(VERIFY_COMMAND_TIMEOUT_MS),
+                }),
+                &mut sink,
+                responder,
+            )
+        };
+        let waited = blocked_ms.get() - blocked_before;
+        state.metrics.tool_ms += (started_tool.elapsed().as_millis() as u64).saturating_sub(waited);
+        state.metrics.approval_wait_ms += waited;
+
+        let (exit_code, output) = match &outcome.data {
+            Some(ToolOutput::RunCommand(result)) => (result.exit_code, result.output.clone()),
+            _ => (None, outcome_detail(&outcome)),
+        };
+        if exit_code == Some(0) {
+            evidence.push(format!("{}: exit 0", argv.join(" ")));
+            continue;
+        }
+        return Ok(Verdict::Fail {
+            reasons: vec![command_failure_reason(&argv, exit_code, &output)],
+        });
+    }
+    Ok(Verdict::Pass { evidence })
+}
+
+fn run_llm_review(
+    ctx: &TaskContext<'_>,
+    state: &mut TaskState,
+    model: &mut dyn ChatModel,
+    evidence: &[String],
+    diffs: &HashMap<String, String>,
+) -> Result<Review, StopReason> {
+    let prompt = review_prompt(&state.request, &state.files_changed, diffs, evidence);
+    let messages = vec![message("user", &prompt)];
+    let mut attempt = 0_u32;
+    let reply = loop {
+        let result = {
+            let mut ignore = |_event: ChatEvent| {};
+            model.turn(&messages, &[], &mut ignore, &ctx.cancel)
+        };
+        match result {
+            Ok(reply) => break reply,
+            Err(ModelError::Cancelled) => return Err(StopReason::Cancelled),
+            Err(error) => {
+                let message = error.to_string();
+                state.errors.push(redact(&message));
+                if attempt < ctx.limits.max_model_retries {
+                    attempt += 1;
+                    state.retries += 1;
+                    continue;
+                }
+                return Ok(Review::Skip);
+            }
+        }
+    };
+    state.metrics.prompt_tokens += reply.prompt_tokens;
+    state.metrics.gen_tokens += reply.gen_tokens;
+    state.metrics.model_ms += reply.prompt_ms + reply.gen_ms;
+    Ok(parse_review(&reply.content))
+}
+
+/// The status each stop reason lands on. `Verified` is the only `completed` (plan 018).
 fn status_for(reason: &StopReason) -> TaskStatus {
     match reason {
+        StopReason::Verified => TaskStatus::Completed,
         StopReason::Finished => TaskStatus::CompletedUnvalidated,
         StopReason::Cancelled | StopReason::Interrupted => TaskStatus::Cancelled,
         StopReason::MaxIterations
@@ -902,6 +1168,18 @@ mod tests {
         ApprovalResponse::Granted
     }
 
+    fn soma_harness() -> Harness {
+        let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../evals/fixtures/soma");
+        let package = fs::read_to_string(fixture.join("package.json")).unwrap();
+        let soma = fs::read_to_string(fixture.join("src/soma.ts")).unwrap();
+        let tests = fs::read_to_string(fixture.join("src/soma.test.ts")).unwrap();
+        harness(&[
+            ("package.json", &package),
+            ("src/soma.ts", &soma),
+            ("src/soma.test.ts", &tests),
+        ])
+    }
+
     fn deny(_: ApprovalRequest) -> ApprovalResponse {
         ApprovalResponse::Denied {
             reason: Some("não agora".to_string()),
@@ -951,7 +1229,10 @@ mod tests {
                 _ => None,
             })
             .expect("taskFinished");
-        assert!(!finished.0.validated, "a fase 5 nunca valida (D11)");
+        assert!(
+            !finished.0.validated,
+            "sem arquivos alterados não há o que validar"
+        );
         assert_eq!(finished.0.summary, "arrumei nada, estava ok");
         assert_eq!(finished.1, TaskStatus::CompletedUnvalidated);
 
@@ -1512,9 +1793,9 @@ mod tests {
         )));
     }
 
-    /// SPEC §34 Phase 5 exit: the loop reads, edits and runs tests on the soma fixture.
+    /// SPEC §34 Phase 5/8 exit: the loop reads, edits and runs tests on the soma fixture.
     /// The model is scripted — this environment has no Ollama — but the tools, permissions,
-    /// evidence and `completed_unvalidated` path are the real ones.
+    /// evidence and `completed` path are the real ones.
     #[test]
     fn soma_fixture_is_fixed_and_its_tests_run() {
         let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../evals/fixtures/soma");
@@ -1545,9 +1826,7 @@ mod tests {
                 "run_command",
                 serde_json::json!({ "argv": ["bun", "test"] }),
             )]),
-            ScriptedModel::text(
-                "Corrigi `soma` para somar e rodei os testes. Não validado por um Verifier.",
-            ),
+            ScriptedModel::text("Corrigi `soma` para somar e rodei os testes."),
         ]);
         let (state, events) = run(
             harness.context(),
@@ -1556,8 +1835,8 @@ mod tests {
             &mut grant,
         );
 
-        assert_eq!(state.status, TaskStatus::CompletedUnvalidated);
-        assert_eq!(state.stop_reason, Some(StopReason::Finished));
+        assert_eq!(state.status, TaskStatus::Completed);
+        assert_eq!(state.stop_reason, Some(StopReason::Verified));
         let content = fs::read_to_string(harness.workspace.root().join("src/soma.ts")).unwrap();
         assert!(content.contains("a + b"), "{content}");
         assert!(!content.contains("a - b"), "{content}");
@@ -1579,7 +1858,10 @@ mod tests {
                 _ => None,
             })
             .expect("taskFinished");
-        assert!(!report.validated, "a fase 5 nunca valida (D11)");
+        assert!(
+            report.validated,
+            "o Verifier tem evidência (bun test exit 0)"
+        );
         assert_eq!(report.files_changed, vec!["src/soma.ts"]);
         assert_eq!(report.evidence[0].exit_code, Some(0));
     }
@@ -2176,6 +2458,156 @@ name = \"x\"
         assert!(
             events.is_empty(),
             "uma tarefa que nem começou não emite nada"
+        );
+    }
+
+    #[test]
+    fn a_correct_edit_is_completed_even_when_the_model_skips_tests() {
+        let harness = soma_harness();
+        let mut model = ScriptedModel::new(vec![
+            ScriptedModel::calls(&[("read_file", serde_json::json!({ "path": "src/soma.ts" }))]),
+            ScriptedModel::calls(&[(
+                "edit_file",
+                serde_json::json!({
+                    "path": "src/soma.ts",
+                    "old_text": "a - b",
+                    "new_text": "a + b",
+                }),
+            )]),
+            ScriptedModel::text("corrigi a soma"),
+        ]);
+        let (state, events) = run(
+            harness.context(),
+            &mut model,
+            start("O teste de soma falha. Corrija."),
+            &mut grant,
+        );
+
+        assert_eq!(state.status, TaskStatus::Completed);
+        assert_eq!(state.stop_reason, Some(StopReason::Verified));
+        assert!(
+            state.commands.iter().any(|command| {
+                command.exit_code == Some(0) && command.argv.iter().any(|token| token == "test")
+            }),
+            "o Verifier tem de rodar os testes que o modelo esqueceu: {:?}",
+            state.commands
+        );
+        let report = events
+            .iter()
+            .find_map(|message| match &message.event {
+                AgentEvent::TaskFinished { report, .. } => Some(report.clone()),
+                _ => None,
+            })
+            .expect("taskFinished");
+        assert!(report.validated);
+    }
+
+    #[test]
+    fn a_failed_check_is_sent_back_until_the_model_fixes_it() {
+        let harness = soma_harness();
+        let mut model = ScriptedModel::new(vec![
+            ScriptedModel::calls(&[("read_file", serde_json::json!({ "path": "src/soma.ts" }))]),
+            ScriptedModel::calls(&[(
+                "edit_file",
+                serde_json::json!({
+                    "path": "src/soma.ts",
+                    "old_text": "a - b",
+                    "new_text": "a * b",
+                }),
+            )]),
+            ScriptedModel::text("acho que terminei"),
+            ScriptedModel::calls(&[(
+                "edit_file",
+                serde_json::json!({
+                    "path": "src/soma.ts",
+                    "old_text": "a * b",
+                    "new_text": "a + b",
+                }),
+            )]),
+            ScriptedModel::text("agora os testes passam"),
+        ]);
+        let (state, events) = run(
+            harness.context(),
+            &mut model,
+            start("O teste de soma falha. Corrija."),
+            &mut grant,
+        );
+
+        assert_eq!(state.status, TaskStatus::Completed);
+        assert_eq!(state.stop_reason, Some(StopReason::Verified));
+        let content = fs::read_to_string(harness.workspace.root().join("src/soma.ts")).unwrap();
+        assert!(content.contains("a + b"), "{content}");
+        assert!(!content.contains("a * b"), "{content}");
+        assert!(
+            events.iter().any(|message| matches!(
+                &message.event,
+                AgentEvent::UserMessage { text } if text.contains("verificação determinística falhou")
+            )),
+            "o ciclo de correção tem de aparecer na conversa"
+        );
+    }
+
+    #[test]
+    fn exhausted_corrections_finish_unvalidated() {
+        let harness = soma_harness();
+        let mut model = ScriptedModel::new(vec![
+            ScriptedModel::calls(&[(
+                "edit_file",
+                serde_json::json!({
+                    "path": "src/soma.ts",
+                    "old_text": "a - b",
+                    "new_text": "a * b",
+                }),
+            )]),
+            ScriptedModel::text("pronto"),
+        ]);
+        let mut ctx = harness.context();
+        ctx.limits.max_correction_retries = 1;
+        ctx.limits.llm_review = false;
+        let (state, _) = run(ctx, &mut model, start("corrija a soma"), &mut grant);
+
+        assert_eq!(state.status, TaskStatus::CompletedUnvalidated);
+        assert_eq!(state.stop_reason, Some(StopReason::Finished));
+        let content = fs::read_to_string(harness.workspace.root().join("src/soma.ts")).unwrap();
+        assert!(content.contains("a * b"), "{content}");
+    }
+
+    #[test]
+    fn llm_review_can_send_the_model_back() {
+        let harness = soma_harness();
+        let mut model = ScriptedModel::new(vec![
+            ScriptedModel::calls(&[("read_file", serde_json::json!({ "path": "src/soma.ts" }))]),
+            ScriptedModel::calls(&[(
+                "edit_file",
+                serde_json::json!({
+                    "path": "src/soma.ts",
+                    "old_text": "a - b",
+                    "new_text": "a + b",
+                }),
+            )]),
+            ScriptedModel::calls(&[(
+                "run_command",
+                serde_json::json!({ "argv": ["bun", "test"] }),
+            )]),
+            ScriptedModel::text("corrigi"),
+            // Consumed by the isolated review turn, not by the coder loop.
+            ScriptedModel::text("CHANGES_REQUIRED\n- falta documentar o caso zero"),
+            ScriptedModel::text("não vou mudar o código; os testes já passam"),
+        ]);
+        let (state, events) = run(
+            harness.context(),
+            &mut model,
+            start("corrija a soma"),
+            &mut grant,
+        );
+
+        assert_eq!(state.status, TaskStatus::Completed);
+        assert!(
+            events.iter().any(|message| matches!(
+                &message.event,
+                AgentEvent::UserMessage { text } if text.contains("falta documentar")
+            )),
+            "o CHANGES_REQUIRED do review vira correção"
         );
     }
 }

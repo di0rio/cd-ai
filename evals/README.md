@@ -8,6 +8,10 @@ A pasta `fixtures/` é o repositório de teste (o SPEC chama isso de `repos/`; o
 ficou o da Fase 5). `tasks/` descreve o pedido, o timeout e o script de dry-run. `results/`
 guarda os JSON de cada execução.
 
+A partir da Fase 8 o agente pode terminar `completed` quando o Verifier tem evidência (comando
+`validate` exit 0 depois da última edição). O **sucesso da suíte** continua sendo o exit do
+check automático, não esse status.
+
 ## Como rodar
 
 Na raiz do repositório, com o binário da CLI:

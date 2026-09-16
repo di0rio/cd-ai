@@ -690,7 +690,7 @@ fn resolve_start(
 
 fn exit_code(state: &TaskState) -> u8 {
     match state.status {
-        TaskStatus::CompletedUnvalidated => 0,
+        TaskStatus::Completed | TaskStatus::CompletedUnvalidated => 0,
         TaskStatus::Cancelled => 130,
         // `run_task` never returns the two live statuses; if it ever did, it did not deliver.
         TaskStatus::Failed | TaskStatus::Running | TaskStatus::WaitingApproval => 1,
@@ -841,6 +841,7 @@ fn format_argv(argv: &[String]) -> String {
 
 fn status_label(status: TaskStatus) -> &'static str {
     match status {
+        TaskStatus::Completed => "concluída",
         TaskStatus::CompletedUnvalidated => "concluída (não validada)",
         TaskStatus::Failed => "falhou",
         TaskStatus::Cancelled => "cancelada",
@@ -852,6 +853,7 @@ fn status_label(status: TaskStatus) -> &'static str {
 fn reason_label(reason: &StopReason) -> String {
     match reason {
         StopReason::Finished => "o modelo respondeu sem chamar tools".to_string(),
+        StopReason::Verified => "os checks de validação passaram".to_string(),
         StopReason::MaxIterations => "limite de iterações".to_string(),
         StopReason::TaskTimeout => "tempo limite da tarefa".to_string(),
         StopReason::LoopDetected { detail } => format!("loop detectado: {detail}"),
@@ -1066,6 +1068,8 @@ mod tests {
         let mut state = TaskState::new("task_1", "C:/p", "pedido", "qwen3", TASK_CTX);
         state.status = TaskStatus::CompletedUnvalidated;
         assert_eq!(exit_code(&state), 0);
+        state.status = TaskStatus::Completed;
+        assert_eq!(exit_code(&state), 0);
         state.status = TaskStatus::Cancelled;
         assert_eq!(exit_code(&state), 130);
         state.status = TaskStatus::Failed;
@@ -1087,7 +1091,12 @@ mod tests {
             "sem resposta"
         );
         assert!(!reason_label(&StopReason::Finished).is_empty());
+        assert_eq!(
+            reason_label(&StopReason::Verified),
+            "os checks de validação passaram"
+        );
         assert_eq!(status_label(TaskStatus::Failed), "falhou");
+        assert_eq!(status_label(TaskStatus::Completed), "concluída");
         assert_eq!(class_label(&CommandClass::Validate), "validação");
         assert_eq!(
             format_argv(&["bun".to_string(), "test".to_string()]),

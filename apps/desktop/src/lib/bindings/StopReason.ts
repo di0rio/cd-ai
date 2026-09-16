@@ -3,4 +3,4 @@
 /**
  * Why the loop stopped. Every terminal status carries one (SPEC §11.1).
  */
-export type StopReason = { "kind": "finished" } | { "kind": "maxIterations" } | { "kind": "taskTimeout" } | { "kind": "loopDetected", detail: string, } | { "kind": "invalidToolCalls" } | { "kind": "modelError", message: string, } | { "kind": "contextExhausted" } | { "kind": "cancelled" } | { "kind": "interrupted" };
+export type StopReason = { "kind": "finished" } | { "kind": "verified" } | { "kind": "maxIterations" } | { "kind": "taskTimeout" } | { "kind": "loopDetected", detail: string, } | { "kind": "invalidToolCalls" } | { "kind": "modelError", message: string, } | { "kind": "contextExhausted" } | { "kind": "cancelled" } | { "kind": "interrupted" };
