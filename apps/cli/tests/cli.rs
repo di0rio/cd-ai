@@ -281,6 +281,27 @@ fn help_mentions_permission_mode() {
 }
 
 #[test]
+fn help_mentions_history_and_rollback() {
+    let text = stdout(&run_cli(&["--help"]));
+    assert!(text.contains("cd-ai history"), "{text}");
+    assert!(text.contains("cd-ai rollback"), "{text}");
+    assert!(text.contains("--force"), "{text}");
+}
+
+#[test]
+fn history_unknown_flag_exits_2() {
+    let output = run_cli(&["history", "--bogus"]);
+    assert_eq!(output.status.code(), Some(2));
+}
+
+#[test]
+fn rollback_without_id_exits_2() {
+    let output = run_cli(&["rollback"]);
+    assert_eq!(output.status.code(), Some(2));
+    assert!(stderr(&output).contains("faltou o id da tarefa"));
+}
+
+#[test]
 fn help_mentions_eval() {
     for flag in ["--help", "-h"] {
         let text = stdout(&run_cli(&[flag]));

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-workspace-history"
+description = "Enables the workspace_history command without any pre-configured scope."
+commands.allow = ["workspace_history"]
+
+[[permission]]
+identifier = "deny-workspace-history"
+description = "Denies the workspace_history command without any pre-configured scope."
+commands.deny = ["workspace_history"]

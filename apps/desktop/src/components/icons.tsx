@@ -48,6 +48,7 @@ const paths = {
       <path d="M5.5 7V5.25a2.5 2.5 0 0 1 5 0V7" />
     </>
   ),
+  undo: <path d="M4.5 8H11a2.5 2.5 0 1 1 0 5H9.5M4.5 8l2.5-2.5M4.5 8 7 10.5" />,
   gitBranch: (
     <>
       <circle cx="5.5" cy="3" r="2" />

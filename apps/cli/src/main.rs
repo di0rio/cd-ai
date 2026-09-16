@@ -19,11 +19,14 @@ use agent_core::permissions::{
 use agent_core::sandbox;
 use agent_core::tools::cancel::CancelToken;
 use agent_core::workspace::Workspace;
+use agent_core::{RollbackResult, rollback_task};
 
 const USAGE: &str = "uso: cd-ai [--version | --help]
      cd-ai chat --model <nome> [--ctx <n>] <prompt>
      cd-ai task --model <nome> [--ctx <n>] [--workspace <pasta>] [--max-iterations <n>] [--mode ask|auto|full-access] [--continue] <pedido…>
      cd-ai task --resume <id> --model <nome> [--ctx <n>] [--workspace <pasta>] [--mode ask|auto|full-access]
+     cd-ai history [--workspace <pasta>]
+     cd-ai rollback <id> [--workspace <pasta>] [--force]
      cd-ai eval --model <nome> [--suite <pasta>] [--task <id>] [--out <arquivo>] [--ctx <n>]
      cd-ai eval --scripted [--suite <pasta>] [--task <id>] [--out <arquivo>] [--ctx <n>]
 
@@ -31,6 +34,9 @@ const USAGE: &str = "uso: cd-ai [--version | --help]
 arquivos alterados, comandos e resumo), nunca a conversa inteira.
 --mode: ASK (padrão) pergunta; AUTO edita sozinho e, com sandbox, escreve sozinho; FULL ACCESS
 exige sandbox Linux completo. Rede, destrutivo e secrets sempre pedem aprovação.
+history: lista as tarefas do workspace, mais recentes primeiro.
+rollback: reverte só o que o agente escreveu; mudanças do usuário no mesmo arquivo são
+protegidas, a menos que --force. Não toca no git do projeto.
 eval: corre a suíte em evals/ sobre cópias descartáveis e aprova sozinho. --scripted não fala com
 o Ollama.";
 
@@ -56,6 +62,8 @@ async fn main() -> ExitCode {
         }
         Some("chat") => chat(args).await,
         Some("task") => task(args).await,
+        Some("history") => history(args),
+        Some("rollback") => rollback(args),
         Some("eval") => eval_cmd(args).await,
         Some(other) => {
             eprintln!("argumento desconhecido: {other}\n{USAGE}");
@@ -539,6 +547,187 @@ fn parse_number(args: &mut impl Iterator<Item = String>, flag: &str) -> Result<u
             eprintln!("{flag} exige um número: {value}\n{USAGE}");
             Err(ExitCode::from(2))
         }
+    }
+}
+
+fn open_store_and_workspace(
+    workspace: &str,
+) -> Result<(TaskStore, agent_core::workspace::Workspace), ExitCode> {
+    let workspace = match Workspace::open(workspace) {
+        Ok(workspace) => workspace,
+        Err(error) => {
+            eprintln!("{error}");
+            return Err(ExitCode::from(1));
+        }
+    };
+    let store = match TaskStore::open_default() {
+        Ok(store) => store,
+        Err(error) => {
+            eprintln!("{error}");
+            return Err(ExitCode::from(1));
+        }
+    };
+    Ok((store, workspace))
+}
+
+fn parse_workspace_flag(
+    args: impl Iterator<Item = String>,
+) -> Result<(String, Vec<String>), ExitCode> {
+    let mut workspace = ".".to_string();
+    let mut rest = Vec::new();
+    let mut args = args;
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--workspace" => {
+                let Some(value) = flag_value(&mut args, "--workspace", "uma pasta") else {
+                    return Err(ExitCode::from(2));
+                };
+                workspace = value;
+            }
+            "--" => {
+                rest.extend(args);
+                break;
+            }
+            other if other.starts_with('-') => {
+                eprintln!("flag desconhecida: {other}\n{USAGE}");
+                return Err(ExitCode::from(2));
+            }
+            other => rest.push(other.to_string()),
+        }
+    }
+    Ok((workspace, rest))
+}
+
+fn history(args: impl Iterator<Item = String>) -> ExitCode {
+    let (workspace, rest) = match parse_workspace_flag(args) {
+        Ok(parsed) => parsed,
+        Err(code) => return code,
+    };
+    if !rest.is_empty() {
+        eprintln!("history não aceita argumentos posicionais\n{USAGE}");
+        return ExitCode::from(2);
+    }
+    let (store, workspace) = match open_store_and_workspace(&workspace) {
+        Ok(pair) => pair,
+        Err(code) => return code,
+    };
+    let key = workspace_key(&workspace);
+    let entries = match store.history(&key) {
+        Ok(entries) => entries,
+        Err(error) => {
+            eprintln!("{error}");
+            return ExitCode::from(1);
+        }
+    };
+    if entries.is_empty() {
+        println!("nenhuma tarefa neste workspace");
+        return ExitCode::SUCCESS;
+    }
+    for entry in entries {
+        let files = if entry.files_changed.is_empty() {
+            "nenhum arquivo".to_string()
+        } else {
+            entry.files_changed.join(", ")
+        };
+        let checkpoint = entry
+            .checkpoint
+            .as_deref()
+            .map(|sha| &sha[..sha.len().min(8)])
+            .unwrap_or("sem checkpoint");
+        let rolled = if entry.rolled_back {
+            " · revertida"
+        } else {
+            ""
+        };
+        println!(
+            "{}  {}  {}{rolled}\n  {} · {} comando(s) · checkpoint {checkpoint}",
+            entry.summary.id,
+            status_label(entry.summary.status),
+            entry.summary.title,
+            files,
+            entry.command_count
+        );
+    }
+    ExitCode::SUCCESS
+}
+
+fn rollback(args: impl Iterator<Item = String>) -> ExitCode {
+    let mut workspace = ".".to_string();
+    let mut force = false;
+    let mut id = None;
+    let mut args = args;
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--workspace" => {
+                let Some(value) = flag_value(&mut args, "--workspace", "uma pasta") else {
+                    return ExitCode::from(2);
+                };
+                workspace = value;
+            }
+            "--force" => force = true,
+            "--" => {
+                if id.is_none() {
+                    id = args.next();
+                }
+                break;
+            }
+            other if other.starts_with('-') => {
+                eprintln!("flag desconhecida: {other}\n{USAGE}");
+                return ExitCode::from(2);
+            }
+            other => {
+                if id.is_some() {
+                    eprintln!("rollback aceita um único id\n{USAGE}");
+                    return ExitCode::from(2);
+                }
+                id = Some(other.to_string());
+            }
+        }
+    }
+    let Some(id) = id else {
+        eprintln!("faltou o id da tarefa\n{USAGE}");
+        return ExitCode::from(2);
+    };
+    let (store, workspace) = match open_store_and_workspace(&workspace) {
+        Ok(pair) => pair,
+        Err(code) => return code,
+    };
+    match rollback_task(&store, &workspace, &id, force) {
+        Ok(result) => {
+            print_rollback(&result);
+            if result.skipped.is_empty() {
+                ExitCode::SUCCESS
+            } else {
+                ExitCode::from(1)
+            }
+        }
+        Err(error) => {
+            eprintln!("{error}");
+            ExitCode::from(1)
+        }
+    }
+}
+
+fn print_rollback(result: &RollbackResult) {
+    if result.restored.is_empty() && result.skipped.is_empty() && result.already_clean.is_empty() {
+        println!("nada a reverter (a tarefa não escreveu arquivos)");
+        return;
+    }
+    for path in &result.restored {
+        println!("revertido: {path}");
+    }
+    for path in &result.already_clean {
+        println!("já estava no checkpoint: {path}");
+    }
+    for skip in &result.skipped {
+        eprintln!(
+            "protegido (mudança do usuário): {} — {}",
+            skip.path, skip.reason
+        );
+        if !skip.diff.is_empty() {
+            eprintln!("{}", skip.diff);
+        }
+        eprintln!("use --force para sobrescrever este arquivo");
     }
 }
 

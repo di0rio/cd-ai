@@ -1,4 +1,5 @@
 pub mod agent;
+pub mod checkpoint;
 pub mod eval;
 pub mod events;
 pub mod ollama;
@@ -11,6 +12,11 @@ pub mod workspace;
 
 use serde::Serialize;
 use ts_rs::TS;
+
+pub use agent::state::{RollbackResult, RollbackSkip};
+pub use checkpoint::{
+    CheckpointError, ShadowRepo, baseline_commit, record_checkpoint, rollback_task,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
 #[ts(export)]

@@ -13,8 +13,10 @@ import {
   listTasks,
   openWorkspace,
   type PermissionMode,
+  type RollbackResult,
   respondApproval,
   resumeTask,
+  rollbackTask,
   type SandboxStatus,
   setPermissionMode,
   setPreferredModel,
@@ -55,6 +57,7 @@ export function AppShell() {
   const [runningId, setRunningId] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
   const [taskError, setTaskError] = useState<string | null>(null);
+  const [rollingBack, setRollingBack] = useState(false);
 
   // Tasks whose conversation is already in memory, so a replay from disk never runs twice.
   const replayed = useRef(new Set<string>());
@@ -287,6 +290,33 @@ export function AppShell() {
     }
   };
 
+  const handleRollback = async (force: boolean) => {
+    if (!task) return;
+    setTaskError(null);
+    setRollingBack(true);
+    try {
+      const result: RollbackResult = await rollbackTask(task.id, force);
+      const at = new Date().toISOString().replace(/\.\d+Z$/, "Z");
+      setTasks((previous) =>
+        previous.map((candidate) =>
+          candidate.id === task.id
+            ? applyAgentEvent(candidate, {
+                taskId: task.id,
+                sequence: 0,
+                at,
+                event: "rollbackCompleted",
+                data: { restored: result.restored, skipped: result.skipped },
+              })
+            : candidate,
+        ),
+      );
+    } catch (error) {
+      setTaskError(String(error));
+    } finally {
+      setRollingBack(false);
+    }
+  };
+
   // The answer only carries the decision; what it authorises is decided and enforced in Rust.
   const handleApproval = async (granted: boolean, reason?: string) => {
     const pending = task?.pendingApproval;
@@ -364,6 +394,29 @@ export function AppShell() {
                 onApprovalDecision={demo ? undefined : handleApproval}
                 // One task per workspace (D5): no offer to resume while another one holds the slot.
                 onResume={demo ? ignore : running ? undefined : handleResume}
+                onRollback={
+                  demo
+                    ? () => {
+                        setTasks((previous) =>
+                          previous.map((candidate) =>
+                            candidate.id === task.id
+                              ? {
+                                  ...candidate,
+                                  rolledBack: true,
+                                  events: [
+                                    ...candidate.events,
+                                    { kind: "rollback" as const, restored: ["apps/cli/src/main.rs"], skipped: [] },
+                                  ],
+                                }
+                              : candidate,
+                          ),
+                        );
+                      }
+                    : running || task.status === "running" || task.status === "waiting_approval"
+                      ? undefined
+                      : handleRollback
+                }
+                rollingBack={rollingBack}
               />
             ) : (
               <EmptyWorkspace workspace={workspace} error={workspaceError} onOpen={handleOpenWorkspace} />

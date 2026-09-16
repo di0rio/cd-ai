@@ -20,8 +20,9 @@ pub use prompt::{estimate_tokens, system_prompt, trim_for_budget};
 pub use runner::{RESUME_NOTE, TaskContext, TaskStart, run_task, workspace_key};
 pub use settings::{Settings, SettingsStore};
 pub use state::{
-    AgentLimits, CommandRecord, FileChange, StopReason, TaskMetrics, TaskReport, TaskState,
-    TaskStatus, TaskSummary,
+    AgentLimits, Checkpoint, CheckpointKind, CommandRecord, FileChange, RollbackResult,
+    RollbackSkip, StopReason, TaskHistoryEntry, TaskMetrics, TaskReport, TaskState, TaskStatus,
+    TaskSummary,
 };
 pub use storage::{DATA_DIR_ENV, StorageError, TaskStore, data_dir};
 pub use tool_calls::{MAX_TOOL_RESULT_CHARS, TOOL_NAMES, render_outcome, tool_specs};

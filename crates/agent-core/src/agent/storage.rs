@@ -22,7 +22,7 @@ use serde::Serialize;
 use serde_json::Value;
 
 use crate::agent::events::AgentEventMessage;
-use crate::agent::state::{StopReason, TaskState, TaskStatus, TaskSummary};
+use crate::agent::state::{StopReason, TaskHistoryEntry, TaskState, TaskStatus, TaskSummary};
 use crate::ollama::ChatMessage;
 use crate::redactor;
 
@@ -101,20 +101,27 @@ fn data_dir_from(get: impl Fn(&str) -> Option<OsString>) -> Result<PathBuf, Stor
 /// Reads and writes tasks under `<data_dir>/tasks`. The UI and the CLI share one store.
 #[derive(Debug, Clone)]
 pub struct TaskStore {
+    data_dir: PathBuf,
     root: PathBuf,
 }
 
 impl TaskStore {
     /// `data_dir` is the app data directory; tasks go into `<data_dir>/tasks`.
     pub fn open(data_dir: impl AsRef<Path>) -> Result<Self, StorageError> {
-        let root = data_dir.as_ref().join(TASKS_DIR);
+        let data_dir = data_dir.as_ref().to_path_buf();
+        let root = data_dir.join(TASKS_DIR);
         fs::create_dir_all(&root).map_err(io_error)?;
-        Ok(Self { root })
+        Ok(Self { data_dir, root })
     }
 
     /// Opens the store at the real data directory (or at `CD_AI_DATA_DIR`).
     pub fn open_default() -> Result<Self, StorageError> {
         Self::open(data_dir()?)
+    }
+
+    /// The app data directory this store was opened on (parent of `tasks/`).
+    pub fn data_dir(&self) -> &Path {
+        &self.data_dir
     }
 
     /// The `tasks` directory itself.
@@ -201,6 +208,28 @@ impl TaskStore {
                 .then_with(|| right_id.cmp(left_id))
         });
         Ok(summaries.into_iter().map(|(_, summary)| summary).collect())
+    }
+
+    /// Richer list for the history surface (plan 019): same filter and order as `list`.
+    pub fn history(&self, workspace: &str) -> Result<Vec<TaskHistoryEntry>, StorageError> {
+        let mut entries: Vec<(String, TaskHistoryEntry)> = Vec::new();
+        for id in self.task_ids()? {
+            let Ok(state) = self.load_state(&id) else {
+                continue;
+            };
+            if state.workspace != workspace {
+                continue;
+            }
+            entries.push((id, state.history_entry()));
+        }
+        entries.sort_by(|(left_id, left), (right_id, right)| {
+            right
+                .summary
+                .updated_at
+                .cmp(&left.summary.updated_at)
+                .then_with(|| right_id.cmp(left_id))
+        });
+        Ok(entries.into_iter().map(|(_, entry)| entry).collect())
     }
 
     /// A task still marked `running` or `waiting_approval` means the app died on it: mark it
@@ -527,6 +556,27 @@ mod tests {
 
         let events = store.load_events("task_1").unwrap();
         assert_eq!(events.len(), 1);
+    }
+
+    #[test]
+    fn history_includes_files_and_checkpoint() {
+        let (_dir, store) = store();
+        let mut current = state("task_1", "C:/a");
+        current.files_changed.push(crate::agent::state::FileChange {
+            path: "src/a.rs".to_string(),
+            hash_after: "abc".to_string(),
+        });
+        current.checkpoints.push(crate::agent::state::Checkpoint {
+            commit: "deadbeef".to_string(),
+            kind: crate::agent::state::CheckpointKind::Baseline,
+            created_at: "2026-09-16T00:00:00Z".to_string(),
+        });
+        store.save_state(&current).unwrap();
+        let history = store.history("C:/a").unwrap();
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].files_changed, vec!["src/a.rs"]);
+        assert_eq!(history[0].checkpoint.as_deref(), Some("deadbeef"));
+        assert!(!history[0].rolled_back);
     }
 
     #[test]

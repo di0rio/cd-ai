@@ -94,6 +94,11 @@ export function applyAgentEvent(task: Task, message: AgentEventMessage): Task {
       });
     }
 
+    case "rollbackCompleted": {
+      const { restored, skipped } = message.data;
+      return append({ ...task, rolledBack: true }, { kind: "rollback", restored, skipped });
+    }
+
     // A search is the only exploration with no tool event of its own, so the phase — and only
     // the phase, never a row — is read off the call itself.
     case "toolCallRequested":

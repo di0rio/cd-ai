@@ -73,6 +73,14 @@ Escrita em 2026-09-16 sobre o `main` com as Fases 0–7 fechadas (PR #4).
 |------|--------|-----------|---------|------------|--------|
 | 018 | Fase 8 — Verifier e ciclo de correção (checks determinísticos, review LLM opcional, `completed`) | P1 | M | 017 | DONE |
 
+### Geração 7
+
+Escrita em 2026-09-16 sobre o `main` com as Fases 0–8 fechadas (PR #5).
+
+| Plano | Título | Prioridade | Esforço | Depende de | Status |
+|------|--------|-----------|---------|------------|--------|
+| 019 | Fase 9 — Checkpoints, Git e histórico (shadow repo, rollback seguro, tools de git, histórico por workspace) | P1 | L | 018 | DONE |
+
 Valores de status: TODO | IN PROGRESS | DONE | BLOCKED (com motivo de uma linha) | REJECTED (com justificativa de uma linha).
 
 ## Notas de dependência
@@ -114,6 +122,10 @@ Valores de status: TODO | IN PROGRESS | DONE | BLOCKED (com motivo de uma linha)
 ### Geração 6
 
 - **018 depois do 017.** O Verifier chama `run_command` já classificado e sandboxed. Não liga shell. `completed` só com evidência (validate exit 0 após a última edição). A suíte de eval não cresce.
+
+### Geração 7
+
+- **019 depois do 018.** O shadow git vive no diretório de dados do app, não no workspace. Rollback compara `hash_after` com o disco e restaura do baseline; não usa o `.git` do utilizador. A suíte de eval não cresce.
 
 ## Achados considerados e descartados
 
