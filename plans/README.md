@@ -113,6 +113,14 @@ Escrita em 2026-09-16 sobre o `main` com as Fases 0–12 fechadas (PR #12).
 |------|--------|-----------|---------|------------|--------|
 | 023 | Fase 13 — Otimização (medir, depois contexto/cache/leituras/redactor/UI) | P1 | M | 022 | DONE |
 
+### Geração 12
+
+Escrita em 2026-09-16 sobre o `main` com as Fases 0–13 fechadas (PR #13).
+
+| Plano | Título | Prioridade | Esforço | Depende de | Status |
+|------|--------|-----------|---------|------------|--------|
+| 024 | Fase 14 — Release Linux x86_64 (`.deb`, AppImage, instalação limpa) | P1 | M | 023 | DONE |
+
 Valores de status: TODO | IN PROGRESS | DONE | BLOCKED (com motivo de uma linha) | REJECTED (com justificativa de uma linha).
 
 ## Notas de dependência
@@ -175,9 +183,9 @@ Valores de status: TODO | IN PROGRESS | DONE | BLOCKED (com motivo de uma linha)
 
 - **023 depois do 022.** Medir primeiro. Entropia linear, um walk por assemble, leituras paralelas, métricas, UI coalescida. Sem tokenizer, sem watcher, sem suíte maior.
 
-### Geração 10
+### Geração 12
 
-- **022 depois do 021.** O router é puro e vive no Rust. FAST não edita se houver CODER distinto. Trajetórias nascem desligadas. A suíte de eval não cresce — a evidência é 3/3 + testes de rota/custo + JSON com categoria.
+- **024 depois do 023.** Empacota Linux x86_64 (`.deb` + AppImage). GUI `cd-ai-desktop`, CLI `cd-ai`. Sem Windows/macOS/Flatpak/RPM neste release. A suíte não cresce — a evidência é 3/3 + pacote + `cd-ai eval --scripted` no binário instalado.
 
 ## Achados considerados e descartados
 
