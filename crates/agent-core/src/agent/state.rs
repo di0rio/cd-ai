@@ -171,6 +171,18 @@ pub struct TaskMetrics {
     #[serde(default)]
     #[ts(type = "number")]
     pub estimated_prompt_tokens: u64,
+    /// Wall time spent assembling context (map, profile, skills, prompt). Plan 023.
+    #[serde(default)]
+    #[ts(type = "number")]
+    pub context_ms: u64,
+    /// Repo-map cache hits (disk or in-memory reuse). Plan 023.
+    #[serde(default)]
+    #[ts(type = "number")]
+    pub cache_hits: u64,
+    /// Repo-map rebuilds that parsed at least one file. Plan 023.
+    #[serde(default)]
+    #[ts(type = "number")]
+    pub cache_misses: u64,
 }
 
 /// Everything about a task that survives a restart. Written to `tasks/<id>/state.json`.

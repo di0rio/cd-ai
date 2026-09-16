@@ -18,4 +18,16 @@ approvalWaitMs: number,
  * Sum of `chars/4` estimates at each model turn (plan 020). The provider's own
  * `prompt_tokens` stays in `prompt_tokens`; ScriptedModel leaves that at 0.
  */
-estimatedPromptTokens: number, };
+estimatedPromptTokens: number, 
+/**
+ * Wall time spent assembling context (map, profile, skills, prompt). Plan 023.
+ */
+contextMs: number, 
+/**
+ * Repo-map cache hits (disk or in-memory reuse). Plan 023.
+ */
+cacheHits: number, 
+/**
+ * Repo-map rebuilds that parsed at least one file. Plan 023.
+ */
+cacheMisses: number, };

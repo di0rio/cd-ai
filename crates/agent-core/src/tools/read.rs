@@ -35,39 +35,62 @@ pub fn read_file(
         });
     }
 
-    let content = read_utf8_lossy(&canonical)?;
+    let result = read_resolved(
+        &canonical,
+        display_path(&engine.workspace, &canonical),
+        &args,
+        secret_kind,
+    )?;
+    engine.emit(
+        events,
+        crate::events::ToolEvent::FileRead {
+            path: result.path.clone(),
+            start_line: result.start_line,
+            line_count: read_line_count(&result),
+            total_lines: result.total_lines,
+            truncated: result.is_truncated,
+            redacted: result.redacted,
+        },
+    );
+
+    Ok((decision, result))
+}
+
+fn read_line_count(result: &ReadFileResult) -> u64 {
+    if result.text.is_empty() {
+        0
+    } else {
+        result
+            .end_line
+            .saturating_sub(result.start_line)
+            .saturating_add(1)
+    }
+}
+
+/// Path-resolved read used by the sequential tool and by parallel batches (plan 023).
+pub(crate) fn read_resolved(
+    canonical: &Path,
+    relative: String,
+    args: &ReadFileArgs,
+    secret_kind: Option<redactor::SecretKind>,
+) -> Result<ReadFileResult, ToolError> {
+    let content = read_utf8_lossy(canonical)?;
     let total_lines = content.lines().count() as u64;
 
     if let Some(kind) = secret_kind {
-        // Even approved, a secret file returns only the anonymous view (design §6.4).
         let view = redactor::secret_file_view(&kind, &content);
-        engine.emit(
-            events,
-            crate::events::ToolEvent::FileRead {
-                path: display_path(&engine.workspace, &canonical),
-                start_line: 0,
-                line_count: 0,
-                total_lines,
-                truncated: false,
-                redacted: total_lines as usize,
-            },
-        );
-        return Ok((
-            decision,
-            ReadFileResult {
-                path: display_path(&engine.workspace, &canonical),
-                text: String::new(),
-                start_line: 0,
-                end_line: 0,
-                total_lines,
-                is_truncated: false,
-                redacted: total_lines as usize,
-                secret: Some(view),
-            },
-        ));
+        return Ok(ReadFileResult {
+            path: relative,
+            text: String::new(),
+            start_line: 0,
+            end_line: 0,
+            total_lines,
+            is_truncated: false,
+            redacted: total_lines as usize,
+            secret: Some(view),
+        });
     }
 
-    // Normal read: 1-indexed lines, optional window, hard caps (design §2.1).
     let start_line = args.start_line.unwrap_or(1).max(1);
     let mut end_line = args.end_line.unwrap_or(u64::MAX);
     if end_line < start_line {
@@ -105,34 +128,55 @@ pub fn read_file(
     let redacted = redactor::redact(&text);
     let redacted_count = redacted.count();
     let is_truncated = lines_in(&text) < lines_in(&content);
-
-    engine.emit(
-        events,
-        crate::events::ToolEvent::FileRead {
-            path: display_path(&engine.workspace, &canonical),
-            start_line,
-            line_count: delivered,
-            total_lines,
-            truncated: is_truncated,
-            redacted: redacted_count,
-        },
-    );
-
     let end_line = start_line + delivered.saturating_sub(1);
 
-    Ok((
-        decision,
-        ReadFileResult {
-            path: display_path(&engine.workspace, &canonical),
-            text: redacted.text,
-            start_line,
-            end_line,
-            total_lines,
-            is_truncated,
-            redacted: redacted_count,
-            secret: None,
-        },
-    ))
+    Ok(ReadFileResult {
+        path: relative,
+        text: redacted.text,
+        start_line,
+        end_line,
+        total_lines,
+        is_truncated,
+        redacted: redacted_count,
+        secret: None,
+    })
+}
+
+/// Independent non-secret reads, in request order. The caller still authorizes and emits.
+pub(crate) fn read_many(
+    workspace: &crate::workspace::Workspace,
+    args: Vec<ReadFileArgs>,
+) -> Vec<Result<ReadFileResult, ToolError>> {
+    if args.len() < 2 {
+        return args
+            .into_iter()
+            .map(|item| read_one(workspace, item))
+            .collect();
+    }
+    std::thread::scope(|scope| {
+        let mut handles = Vec::with_capacity(args.len());
+        for item in args {
+            handles.push(scope.spawn(move || read_one(workspace, item)));
+        }
+        handles
+            .into_iter()
+            .map(|handle| handle.join().unwrap())
+            .collect()
+    })
+}
+
+fn read_one(
+    workspace: &crate::workspace::Workspace,
+    args: ReadFileArgs,
+) -> Result<ReadFileResult, ToolError> {
+    let canonical = workspace.resolve(&args.path)?;
+    let secret_kind = redactor::detect_path_secret(&canonical);
+    read_resolved(
+        &canonical,
+        display_path(workspace, &canonical),
+        &args,
+        secret_kind,
+    )
 }
 
 fn lines_in(text: &str) -> usize {
@@ -481,5 +525,65 @@ mod tests {
             .collect();
         assert!(kinds.contains(&"readFile"));
         assert!(kinds.contains(&"fileRead"), "{kinds:?}");
+    }
+
+    /// Phase 13 baseline: independent reads in one turn are sequential today. The numbers
+    /// here justify (or reject) a parallel batch in the loop.
+    #[test]
+    fn measure_sequential_vs_parallel_independent_reads() {
+        use std::time::Instant;
+
+        let dir = tempdir().unwrap();
+        let paths: Vec<String> = (0..16)
+            .map(|i| {
+                let name = format!("f{i:02}.txt");
+                // 64 KiB each: large enough for I/O to show, small enough for the test.
+                std::fs::write(dir.path().join(&name), vec![b'x'; 64 * 1024]).unwrap();
+                name
+            })
+            .collect();
+
+        let mut engine = boot(dir.path());
+        let started = Instant::now();
+        for name in &paths {
+            let _ = read_file(
+                &mut engine,
+                ReadFileArgs {
+                    path: name.clone(),
+                    start_line: None,
+                    end_line: None,
+                },
+                &mut no_events(),
+                &mut grant(),
+            )
+            .unwrap();
+        }
+        let sequential = started.elapsed();
+
+        let started = Instant::now();
+        let loaded = crate::tools::read::read_many(
+            &engine.workspace,
+            paths
+                .iter()
+                .map(|name| ReadFileArgs {
+                    path: name.clone(),
+                    start_line: None,
+                    end_line: None,
+                })
+                .collect(),
+        );
+        let parallel = started.elapsed();
+        assert_eq!(loaded.len(), 16);
+        assert!(loaded.iter().all(|item| item.is_ok()));
+
+        eprintln!("phase13 reads: sequential={sequential:?} parallel={parallel:?}");
+        assert!(
+            sequential.as_millis() < 200,
+            "sequential reads after linear redact: {sequential:?}"
+        );
+        assert!(
+            parallel.as_millis() < 200,
+            "parallel reads hung: {parallel:?}"
+        );
     }
 }

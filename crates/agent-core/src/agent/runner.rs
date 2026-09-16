@@ -5,7 +5,7 @@
 //! A task is `completed` only when the Verifier has evidence (plan 018); otherwise a clean
 //! finish is `completed_unvalidated`.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -16,6 +16,7 @@ use crate::agent::context::{assemble, assemble_new, is_exhausted, prepare_messag
 use crate::agent::events::{AgentEvent, AgentEventMessage};
 use crate::agent::model::{ChatModel, ModelError, ModelReply};
 use crate::agent::prompt::{inherited_context, wrap_untrusted_tool_result};
+use crate::agent::repo_map::RepoMap;
 use crate::agent::role::{
     AgentRole, MAX_EXPLORER_ITERATIONS, TaskKind, coder_handoff_message, explorer_refusal, permits,
     tool_specs_for,
@@ -42,7 +43,7 @@ use crate::permissions::{ApprovalRequest, CommandClass, classify};
 use crate::redactor;
 use crate::tool_call::parse_text_tool_calls;
 use crate::tools::cancel::CancelToken;
-use crate::tools::{Responder, RunCommandArgs, ToolEngine, ToolOutput, ToolRequest};
+use crate::tools::{ReadFileArgs, Responder, RunCommandArgs, ToolEngine, ToolOutput, ToolRequest};
 use crate::workspace::Workspace;
 
 /// What a resumed task is told, as a user message (D9).
@@ -77,6 +78,9 @@ pub struct TaskContext<'a> {
     pub inventory: ModelInventory,
     /// Opt-in local trajectories (SPEC §25). Off by default.
     pub trajectories: bool,
+    /// Last indexed map. Reused until an edit, write or command dirties the workspace (plan 023).
+    last_map: RefCell<Option<RepoMap>>,
+    index_dirty: Cell<bool>,
 }
 
 impl<'a> TaskContext<'a> {
@@ -91,6 +95,8 @@ impl<'a> TaskContext<'a> {
             assignment: ModelAssignment::default(),
             inventory: ModelInventory::default(),
             trajectories: false,
+            last_map: RefCell::new(None),
+            index_dirty: Cell::new(true),
         }
     }
 }
@@ -152,6 +158,7 @@ pub fn run_task(
             };
             let mut state = TaskState::new(&id, &key, &request, &model_name, num_ctx);
             state.continues = continues;
+            let started = Instant::now();
             let mut assembled = assemble_new(
                 &ctx.workspace,
                 Some(ctx.store.data_dir()),
@@ -159,6 +166,8 @@ pub fn run_task(
                 num_ctx,
                 inherited.as_deref(),
             );
+            record_context_metrics(&mut state, &assembled.map, started, true);
+            remember_map(&ctx, &assembled.map);
             let decision = route(&RouteInput {
                 kind: assembled.kind,
                 default_model: &model_name,
@@ -174,13 +183,18 @@ pub fn run_task(
             state.model_category = decision.category;
             state.route_reason = decision.reason.clone();
             if decision.num_ctx != num_ctx {
-                assembled = assemble_new(
+                let started = Instant::now();
+                assembled = assemble(
                     &ctx.workspace,
                     Some(ctx.store.data_dir()),
                     &request,
                     decision.num_ctx,
                     inherited.as_deref(),
+                    assembled.role,
+                    None,
+                    Some(assembled.map),
                 );
+                record_context_metrics(&mut state, &assembled.map, started, false);
                 state.role = assembled.role;
                 state.task_kind = assembled.kind;
             }
@@ -538,195 +552,216 @@ fn run_loop(
             }
         }
 
-        // 8. Run each call.
-        for call in turn.calls {
-            if ctx.cancel.is_cancelled() {
-                return (StopReason::Cancelled, final_text);
+        // 8. Run each call. Independent non-secret reads in the same turn share I/O (plan 023).
+        if let Some(batch) = independent_read_batch(&turn.calls, &ctx.workspace, state.role) {
+            if let Some(reason) = execute_read_batch(
+                ctx,
+                state,
+                messages,
+                emitter,
+                engine,
+                &mut timed_responder,
+                &mut seen_signatures,
+                &mut command_records,
+                &mut ledger,
+                &blocked_ms,
+                &turn.calls,
+                batch,
+            ) {
+                let _ = ctx.store.save_state(state);
+                break reason;
             }
-            emitter.emit(AgentEvent::ToolCallRequested {
-                tool: call.name.clone(),
-                input: redacted_input(&call.input),
-            });
+        } else {
+            for call in turn.calls {
+                if ctx.cancel.is_cancelled() {
+                    return (StopReason::Cancelled, final_text);
+                }
+                emitter.emit(AgentEvent::ToolCallRequested {
+                    tool: call.name.clone(),
+                    input: redacted_input(&call.input),
+                });
 
-            let request = match call.request {
-                Ok(request) => request,
-                // A malformed call is answered with the reason, so the model can repair it
-                // (SPEC §4.3). Three in a row and the task gives up (D7).
-                Err(problem) => {
-                    consecutive_invalid += 1;
-                    maybe_escalate(ctx, state, messages, emitter, model);
-                    state.errors.push(redact(&problem));
+                let request = match call.request {
+                    Ok(request) => request,
+                    // A malformed call is answered with the reason, so the model can repair it
+                    // (SPEC §4.3). Three in a row and the task gives up (D7).
+                    Err(problem) => {
+                        consecutive_invalid += 1;
+                        maybe_escalate(ctx, state, messages, emitter, model);
+                        state.errors.push(redact(&problem));
+                        emitter.emit(AgentEvent::ToolCallFinished {
+                            tool: call.name.clone(),
+                            ok: false,
+                            detail: redact(&problem),
+                            output: None,
+                        });
+                        push_tool_result(
+                            ctx,
+                            state,
+                            messages,
+                            &call.name,
+                            &format!("erro: {problem}"),
+                        );
+                        if consecutive_invalid >= ctx.limits.max_invalid_tool_calls {
+                            let _ = ctx.store.save_state(state);
+                            return (StopReason::InvalidToolCalls, final_text);
+                        }
+                        continue;
+                    }
+                };
+                consecutive_invalid = 0;
+
+                if !permits(state.role, &request) {
+                    let problem = explorer_refusal(&call.name);
                     emitter.emit(AgentEvent::ToolCallFinished {
                         tool: call.name.clone(),
                         ok: false,
-                        detail: redact(&problem),
+                        detail: problem.clone(),
                         output: None,
                     });
-                    push_tool_result(
-                        ctx,
-                        state,
-                        messages,
-                        &call.name,
-                        &format!("erro: {problem}"),
-                    );
-                    if consecutive_invalid >= ctx.limits.max_invalid_tool_calls {
-                        let _ = ctx.store.save_state(state);
-                        return (StopReason::InvalidToolCalls, final_text);
-                    }
+                    push_tool_result(ctx, state, messages, &call.name, &problem);
                     continue;
                 }
-            };
-            consecutive_invalid = 0;
 
-            if !permits(state.role, &request) {
-                let problem = explorer_refusal(&call.name);
-                emitter.emit(AgentEvent::ToolCallFinished {
-                    tool: call.name.clone(),
-                    ok: false,
-                    detail: problem.clone(),
-                    output: None,
-                });
-                push_tool_result(ctx, state, messages, &call.name, &problem);
-                continue;
-            }
-
-            // Loop detection before running: the third identical call is not executed (D7).
-            let signature = signature(&request);
-            let repeats = seen_signatures.entry(signature).or_insert(0);
-            *repeats += 1;
-            if *repeats >= LOOP_REPEATS {
-                let detail = format!(
-                    "{} com os mesmos argumentos {} vezes",
-                    call.name, LOOP_REPEATS
-                );
-                let _ = ctx.store.save_state(state);
-                return (StopReason::LoopDetected { detail }, final_text);
-            }
-
-            // Rewriting the same content under another name is not progress, and the exact
-            // signature never catches it: one byte of path is enough to look like a new call. Only
-            // a run of consecutive writes counts — any other tool in between is a change in the
-            // project, so the run resets — and only content long enough that writing it twice
-            // cannot be a legitimate stub (D7).
-            if let ToolRequest::WriteFile(args) = &request {
-                let content = normalize_content(&args.content);
-                let mut run = match repeated_write.take() {
-                    Some(previous) if previous.content == content => previous,
-                    _ => RepeatedWrite {
-                        content,
-                        paths: Vec::new(),
-                    },
-                };
-                run.paths.push(args.path.clone());
-                if run.paths.len() >= SAME_CONTENT_WRITES
-                    && run.content.chars().count() >= LOOP_CONTENT_MIN_CHARS
-                {
+                // Loop detection before running: the third identical call is not executed (D7).
+                let signature = signature(&request);
+                let repeats = seen_signatures.entry(signature).or_insert(0);
+                *repeats += 1;
+                if *repeats >= LOOP_REPEATS {
                     let detail = format!(
-                        "tentou gravar o mesmo conteúdo {} vezes seguidas, mudando só o caminho ({}); \
-                         nada mudou no projeto entre as tentativas",
-                        run.paths.len(),
-                        run.paths.join(", ")
+                        "{} com os mesmos argumentos {} vezes",
+                        call.name, LOOP_REPEATS
                     );
                     let _ = ctx.store.save_state(state);
                     return (StopReason::LoopDetected { detail }, final_text);
                 }
-                repeated_write = Some(run);
-            } else {
-                repeated_write = None;
-            }
 
-            if let ToolRequest::RunCommand(args) = &request
-                && classify(&args.argv) == CommandClass::Destructive
-            {
-                let message = format!("cd-ai before-destructive {}", state.id);
-                take_snapshot(
-                    shadow.as_ref(),
-                    state,
-                    emitter,
-                    CheckpointKind::BeforeDestructive,
-                    &message,
-                    None,
-                );
-            }
-
-            let started_tool = Instant::now();
-            let blocked_before = blocked_ms.get();
-            let outcome = {
-                let mut sink = |event: ToolEventMessage| {
-                    apply_tool_event(state, &event.event, &mut command_records, &mut ledger);
-                    // The UI needs to know it is waiting on a human before the prompt shows up.
-                    if matches!(event.event, ToolEvent::ApprovalRequired { .. }) {
-                        state.status = TaskStatus::WaitingApproval;
-                        emitter.emit(AgentEvent::StatusChanged {
-                            status: TaskStatus::WaitingApproval,
-                            reason: None,
-                        });
+                // Rewriting the same content under another name is not progress, and the exact
+                // signature never catches it: one byte of path is enough to look like a new call. Only
+                // a run of consecutive writes counts — any other tool in between is a change in the
+                // project, so the run resets — and only content long enough that writing it twice
+                // cannot be a legitimate stub (D7).
+                if let ToolRequest::WriteFile(args) = &request {
+                    let content = normalize_content(&args.content);
+                    let mut run = match repeated_write.take() {
+                        Some(previous) if previous.content == content => previous,
+                        _ => RepeatedWrite {
+                            content,
+                            paths: Vec::new(),
+                        },
+                    };
+                    run.paths.push(args.path.clone());
+                    if run.paths.len() >= SAME_CONTENT_WRITES
+                        && run.content.chars().count() >= LOOP_CONTENT_MIN_CHARS
+                    {
+                        let detail = format!(
+                            "tentou gravar o mesmo conteúdo {} vezes seguidas, mudando só o caminho ({}); \
+                         nada mudou no projeto entre as tentativas",
+                            run.paths.len(),
+                            run.paths.join(", ")
+                        );
+                        let _ = ctx.store.save_state(state);
+                        return (StopReason::LoopDetected { detail }, final_text);
                     }
-                    let decided = matches!(
-                        event.event,
-                        ToolEvent::ApprovalGranted { .. } | ToolEvent::ApprovalDenied { .. }
-                    );
-                    emitter.emit(AgentEvent::Tool(event.event));
-                    if decided {
-                        state.status = TaskStatus::Running;
-                        emitter.emit(AgentEvent::StatusChanged {
-                            status: TaskStatus::Running,
-                            reason: None,
-                        });
-                    }
-                };
-                engine.run_tool(request, &mut sink, &mut timed_responder)
-            };
-            // `tool_ms` is what the tool cost; the human's part of the wall clock is its own number.
-            let waited = blocked_ms.get() - blocked_before;
-            state.metrics.tool_ms +=
-                (started_tool.elapsed().as_millis() as u64).saturating_sub(waited);
-            state.metrics.approval_wait_ms += waited;
+                    repeated_write = Some(run);
+                } else {
+                    repeated_write = None;
+                }
 
-            let detail = outcome_detail(&outcome);
-            emitter.emit(AgentEvent::ToolCallFinished {
-                tool: call.name.clone(),
-                ok: outcome.ok,
-                detail: redact(&detail),
-                output: outcome_output(&outcome).map(|text| redact(&text)),
-            });
-            push_tool_result(ctx, state, messages, &call.name, &render_outcome(&outcome));
-
-            // The same error over and over is a loop too (D7).
-            if outcome.ok {
-                last_error = None;
-                error_repeats = 0;
-                let paths = match &outcome.data {
-                    Some(ToolOutput::EditFile(result)) => Some(vec![result.path.clone()]),
-                    Some(ToolOutput::WriteFile(result)) => Some(vec![result.path.clone()]),
-                    _ => None,
-                };
-                if let Some(paths) = paths {
-                    let message = format!("cd-ai after-write {}", state.id);
+                if let ToolRequest::RunCommand(args) = &request
+                    && classify(&args.argv) == CommandClass::Destructive
+                {
+                    let message = format!("cd-ai before-destructive {}", state.id);
                     take_snapshot(
                         shadow.as_ref(),
                         state,
                         emitter,
-                        CheckpointKind::AfterWrite,
+                        CheckpointKind::BeforeDestructive,
                         &message,
-                        Some(paths.as_slice()),
+                        None,
                     );
                 }
-            } else {
-                if last_error.as_deref() == Some(detail.as_str()) {
-                    error_repeats += 1;
+
+                let started_tool = Instant::now();
+                let blocked_before = blocked_ms.get();
+                mark_index_dirty(ctx, &request);
+                let outcome = {
+                    let mut sink = |event: ToolEventMessage| {
+                        apply_tool_event(state, &event.event, &mut command_records, &mut ledger);
+                        // The UI needs to know it is waiting on a human before the prompt shows up.
+                        if matches!(event.event, ToolEvent::ApprovalRequired { .. }) {
+                            state.status = TaskStatus::WaitingApproval;
+                            emitter.emit(AgentEvent::StatusChanged {
+                                status: TaskStatus::WaitingApproval,
+                                reason: None,
+                            });
+                        }
+                        let decided = matches!(
+                            event.event,
+                            ToolEvent::ApprovalGranted { .. } | ToolEvent::ApprovalDenied { .. }
+                        );
+                        emitter.emit(AgentEvent::Tool(event.event));
+                        if decided {
+                            state.status = TaskStatus::Running;
+                            emitter.emit(AgentEvent::StatusChanged {
+                                status: TaskStatus::Running,
+                                reason: None,
+                            });
+                        }
+                    };
+                    engine.run_tool(request, &mut sink, &mut timed_responder)
+                };
+                // `tool_ms` is what the tool cost; the human's part of the wall clock is its own number.
+                let waited = blocked_ms.get() - blocked_before;
+                state.metrics.tool_ms +=
+                    (started_tool.elapsed().as_millis() as u64).saturating_sub(waited);
+                state.metrics.approval_wait_ms += waited;
+
+                let detail = outcome_detail(&outcome);
+                emitter.emit(AgentEvent::ToolCallFinished {
+                    tool: call.name.clone(),
+                    ok: outcome.ok,
+                    detail: redact(&detail),
+                    output: outcome_output(&outcome).map(|text| redact(&text)),
+                });
+                push_tool_result(ctx, state, messages, &call.name, &render_outcome(&outcome));
+
+                // The same error over and over is a loop too (D7).
+                if outcome.ok {
+                    last_error = None;
+                    error_repeats = 0;
+                    let paths = match &outcome.data {
+                        Some(ToolOutput::EditFile(result)) => Some(vec![result.path.clone()]),
+                        Some(ToolOutput::WriteFile(result)) => Some(vec![result.path.clone()]),
+                        _ => None,
+                    };
+                    if let Some(paths) = paths {
+                        let message = format!("cd-ai after-write {}", state.id);
+                        take_snapshot(
+                            shadow.as_ref(),
+                            state,
+                            emitter,
+                            CheckpointKind::AfterWrite,
+                            &message,
+                            Some(paths.as_slice()),
+                        );
+                    }
                 } else {
-                    error_repeats = 1;
-                    last_error = Some(detail.clone());
-                }
-                if error_repeats >= LOOP_REPEATS {
-                    let _ = ctx.store.save_state(state);
-                    return (
-                        StopReason::LoopDetected {
-                            detail: format!("o mesmo erro {LOOP_REPEATS} vezes: {detail}"),
-                        },
-                        final_text,
-                    );
+                    if last_error.as_deref() == Some(detail.as_str()) {
+                        error_repeats += 1;
+                    } else {
+                        error_repeats = 1;
+                        last_error = Some(detail.clone());
+                    }
+                    if error_repeats >= LOOP_REPEATS {
+                        let _ = ctx.store.save_state(state);
+                        return (
+                            StopReason::LoopDetected {
+                                detail: format!("o mesmo erro {LOOP_REPEATS} vezes: {detail}"),
+                            },
+                            final_text,
+                        );
+                    }
                 }
             }
         }
@@ -958,7 +993,11 @@ fn forward_chat_event(emitter: &mut Emitter<'_>, event: ChatEvent) {
     }
 }
 
-fn refresh_system_prompt(ctx: &TaskContext<'_>, state: &TaskState, messages: &mut [ChatMessage]) {
+fn refresh_system_prompt(
+    ctx: &TaskContext<'_>,
+    state: &mut TaskState,
+    messages: &mut [ChatMessage],
+) {
     let Some(system) = messages.first_mut() else {
         return;
     };
@@ -969,6 +1008,13 @@ fn refresh_system_prompt(ctx: &TaskContext<'_>, state: &TaskState, messages: &mu
         Some(previous_id) => inherit(ctx.store, previous_id, &state.workspace).ok(),
         None => None,
     };
+    let reuse = !ctx.index_dirty.get();
+    let prepared = if reuse {
+        ctx.last_map.borrow().clone()
+    } else {
+        None
+    };
+    let started = Instant::now();
     let assembled = assemble(
         &ctx.workspace,
         Some(ctx.store.data_dir()),
@@ -977,8 +1023,125 @@ fn refresh_system_prompt(ctx: &TaskContext<'_>, state: &TaskState, messages: &mu
         inherited.as_deref(),
         state.role,
         Some(&state.selected_skills),
+        prepared,
     );
+    record_context_metrics(state, &assembled.map, started, !reuse);
+    remember_map(ctx, &assembled.map);
     system.content = assembled.system;
+}
+
+fn remember_map(ctx: &TaskContext<'_>, map: &RepoMap) {
+    *ctx.last_map.borrow_mut() = Some(map.clone());
+    ctx.index_dirty.set(false);
+}
+
+fn record_context_metrics(state: &mut TaskState, map: &RepoMap, started: Instant, indexed: bool) {
+    state.metrics.context_ms += started.elapsed().as_millis() as u64;
+    if indexed && map.from_cache {
+        state.metrics.cache_hits += 1;
+    } else if indexed {
+        state.metrics.cache_misses += 1;
+    } else {
+        state.metrics.cache_hits += 1;
+    }
+}
+
+fn mark_index_dirty(ctx: &TaskContext<'_>, request: &ToolRequest) {
+    if matches!(
+        request,
+        ToolRequest::EditFile(_) | ToolRequest::WriteFile(_) | ToolRequest::RunCommand(_)
+    ) {
+        ctx.index_dirty.set(true);
+    }
+}
+
+fn independent_read_batch(
+    calls: &[PendingCall],
+    workspace: &Workspace,
+    role: AgentRole,
+) -> Option<Vec<ReadFileArgs>> {
+    if calls.len() < 2 {
+        return None;
+    }
+    let mut args = Vec::with_capacity(calls.len());
+    for call in calls {
+        let Ok(ToolRequest::ReadFile(item)) = &call.request else {
+            return None;
+        };
+        if !permits(role, call.request.as_ref().ok()?) {
+            return None;
+        }
+        let canonical = workspace.resolve(&item.path).ok()?;
+        if redactor::detect_path_secret(&canonical).is_some() {
+            return None;
+        }
+        args.push(item.clone());
+    }
+    Some(args)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn execute_read_batch(
+    ctx: &TaskContext<'_>,
+    state: &mut TaskState,
+    messages: &mut Vec<ChatMessage>,
+    emitter: &mut Emitter<'_>,
+    engine: &mut ToolEngine,
+    responder: &mut dyn FnMut(
+        crate::permissions::ApprovalRequest,
+    ) -> crate::permissions::ApprovalResponse,
+    seen_signatures: &mut HashMap<String, u32>,
+    command_records: &mut HashMap<u64, usize>,
+    ledger: &mut VerifyLedger,
+    blocked_ms: &Cell<u64>,
+    calls: &[PendingCall],
+    batch: Vec<ReadFileArgs>,
+) -> Option<StopReason> {
+    for call in calls {
+        let Ok(request) = &call.request else {
+            return None;
+        };
+        let signature = signature(request);
+        let repeats = seen_signatures.entry(signature).or_insert(0);
+        *repeats += 1;
+        if *repeats >= LOOP_REPEATS {
+            return Some(StopReason::LoopDetected {
+                detail: format!(
+                    "{} com os mesmos argumentos {LOOP_REPEATS} vezes",
+                    call.name
+                ),
+            });
+        }
+        emitter.emit(AgentEvent::ToolCallRequested {
+            tool: call.name.clone(),
+            input: redacted_input(&call.input),
+        });
+    }
+
+    let started_tool = Instant::now();
+    let blocked_before = blocked_ms.get();
+    let outcomes = {
+        let mut sink = |event: ToolEventMessage| {
+            apply_tool_event(state, &event.event, command_records, ledger);
+            emitter.emit(AgentEvent::Tool(event.event));
+        };
+        engine.run_read_batch(batch, &mut sink, responder)
+    };
+    let waited = blocked_ms.get() - blocked_before;
+    state.metrics.tool_ms += (started_tool.elapsed().as_millis() as u64).saturating_sub(waited);
+    state.metrics.approval_wait_ms += waited;
+
+    for (call, outcome) in calls.iter().zip(outcomes) {
+        let detail = outcome_detail(&outcome);
+        emitter.emit(AgentEvent::ToolCallFinished {
+            tool: call.name.clone(),
+            ok: outcome.ok,
+            detail: redact(&detail),
+            output: outcome_output(&outcome).map(|text| redact(&text)),
+        });
+        push_tool_result(ctx, state, messages, &call.name, &render_outcome(&outcome));
+    }
+    None
 }
 
 fn switch_to_coder(

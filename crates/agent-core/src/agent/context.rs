@@ -63,6 +63,7 @@ pub struct PrepareResult {
 
 /// Builds the system prompt: role + profile + skills + repo map + optional inherited report,
 /// each clipped to its section budget.
+#[allow(clippy::too_many_arguments)]
 pub fn assemble(
     workspace: &Workspace,
     data_dir: Option<&std::path::Path>,
@@ -71,21 +72,33 @@ pub fn assemble(
     inherited: Option<&str>,
     role: AgentRole,
     selected: Option<&[SelectedSkill]>,
+    prepared_map: Option<RepoMap>,
 ) -> AssembledPrompt {
-    let map = load_repo_map(workspace, data_dir, request);
+    let map = match prepared_map {
+        Some(map) => map,
+        None => load_repo_map(workspace, data_dir, request),
+    };
     let kind = classify_task(request, map.indexed);
     let budgets = SectionBudgets::from_num_ctx(num_ctx);
 
-    let profile = workspace_profile(workspace);
-    let profile_text = match cached_profile_render(workspace, data_dir) {
-        Some(text) => text,
-        None => {
-            let rendered = profile.render();
-            if let Some(dir) = data_dir {
-                store_profile_render(workspace, dir, &rendered);
+    let cached_profile = cached_profile_render(workspace, data_dir);
+    let (profile_text, languages, frameworks) = if let Some(text) = cached_profile.as_ref()
+        && selected.is_some()
+    {
+        (text.clone(), Vec::new(), Vec::new())
+    } else {
+        let profile = workspace_profile(workspace);
+        let text = match cached_profile {
+            Some(text) => text,
+            None => {
+                let rendered = profile.render();
+                if let Some(dir) = data_dir {
+                    store_profile_render(workspace, dir, &rendered);
+                }
+                rendered
             }
-            rendered
-        }
+        };
+        (text, profile.languages, profile.frameworks)
     };
 
     let paths: Vec<String> = map.files.iter().map(|file| file.path.clone()).collect();
@@ -98,8 +111,8 @@ pub fn assemble(
         None => skills::route_builtin(&RouteInput {
             request,
             kind,
-            languages: &profile.languages,
-            frameworks: &profile.frameworks,
+            languages: &languages,
+            frameworks: &frameworks,
             paths: &paths,
             budget_chars: budgets.skills_chars,
         }),
@@ -183,10 +196,19 @@ pub fn assemble_new(
     num_ctx: u32,
     inherited: Option<&str>,
 ) -> AssembledPrompt {
-    let probe = load_repo_map(workspace, data_dir, request);
-    let kind = classify_task(request, probe.indexed);
+    let map = load_repo_map(workspace, data_dir, request);
+    let kind = classify_task(request, map.indexed);
     let role = starting_role(kind);
-    let mut assembled = assemble(workspace, data_dir, request, num_ctx, inherited, role, None);
+    let mut assembled = assemble(
+        workspace,
+        data_dir,
+        request,
+        num_ctx,
+        inherited,
+        role,
+        None,
+        Some(map),
+    );
     assembled.kind = kind;
     assembled.role = role;
     assembled
@@ -783,5 +805,63 @@ mod tests {
         );
         assert!(!assembled.system.contains("staging"));
         assert_eq!(assembled.memory_ids, vec!["mem_1".to_string()]);
+    }
+
+    /// Phase 13 baseline: `assemble_new` must not walk the tree twice. The probe and the
+    /// prompt share one index; a second walk shows up as ~2× `assemble` on a 200-file tree.
+    #[test]
+    fn assemble_new_is_not_twice_as_expensive_as_assemble() {
+        use std::time::Instant;
+
+        let dir = tempfile::tempdir().unwrap();
+        for i in 0..200 {
+            let path = dir.path().join(format!("src/f{i:03}.ts"));
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(&path, format!("export function f{i}() {{ return {i}; }}\n")).unwrap();
+        }
+        let workspace = Workspace::open(dir.path()).unwrap();
+        let data = tempfile::tempdir().unwrap();
+        // Warm the on-disk cache so both calls pay the same walk-and-stat cost.
+        let _ = assemble(
+            &workspace,
+            Some(data.path()),
+            "corrija src/f042.ts",
+            8_192,
+            None,
+            AgentRole::Coder,
+            None,
+            None,
+        );
+
+        let started = Instant::now();
+        let _ = assemble(
+            &workspace,
+            Some(data.path()),
+            "corrija src/f042.ts",
+            8_192,
+            None,
+            AgentRole::Coder,
+            None,
+            None,
+        );
+        let assemble_ms = started.elapsed();
+
+        let started = Instant::now();
+        let assembled = assemble_new(
+            &workspace,
+            Some(data.path()),
+            "corrija src/f042.ts",
+            8_192,
+            None,
+        );
+        let new_ms = started.elapsed();
+        assert_eq!(assembled.kind, TaskKind::Trivial);
+
+        eprintln!("phase13 assemble: assemble={assemble_ms:?} assemble_new={new_ms:?}");
+        assert!(
+            new_ms.as_nanos() < assemble_ms.as_nanos().saturating_mul(3) / 2
+                || new_ms.as_millis() < 20,
+            "assemble_new walked twice: assemble={assemble_ms:?} assemble_new={new_ms:?}"
+        );
     }
 }
