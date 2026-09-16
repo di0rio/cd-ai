@@ -13,4 +13,9 @@ toolMs: number,
  * Time the task sat blocked on an approval prompt. Absent from states written before this
  * field existed, hence the default.
  */
-approvalWaitMs: number, };
+approvalWaitMs: number, 
+/**
+ * Sum of `chars/4` estimates at each model turn (plan 020). The provider's own
+ * `prompt_tokens` stays in `prompt_tokens`; ScriptedModel leaves that at 0.
+ */
+estimatedPromptTokens: number, };
