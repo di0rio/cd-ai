@@ -144,6 +144,9 @@ pub struct EvalTaskResult {
     pub text_tool_call_turns: u32,
     pub rejected_edits: u32,
     pub files_changed: Vec<String>,
+    /// Skill names the router loaded for this task (plan 021). Empty when none matched.
+    #[serde(default)]
+    pub selected_skills: Vec<String>,
     pub error: Option<String>,
 }
 
@@ -342,6 +345,7 @@ fn run_one(
             text_tool_call_turns: 0,
             rejected_edits: 0,
             files_changed: Vec::new(),
+            selected_skills: Vec::new(),
             error: Some(error.to_string()),
         },
     }
@@ -445,6 +449,11 @@ fn run_one_inner(
             .iter()
             .map(|change| change.path.clone())
             .collect(),
+        selected_skills: state
+            .selected_skills
+            .iter()
+            .map(|skill| skill.name.clone())
+            .collect(),
         error: check_error.filter(|_| !check_ok),
     })
 }
@@ -469,6 +478,7 @@ fn skipped_result(id: &str, reason: &str) -> EvalTaskResult {
         text_tool_call_turns: 0,
         rejected_edits: 0,
         files_changed: Vec::new(),
+        selected_skills: Vec::new(),
         error: Some(reason.to_string()),
     }
 }
@@ -779,6 +789,12 @@ mod tests {
             soma.estimated_prompt_tokens > 0,
             "o context manager tem que medir o prompt mesmo no scripted"
         );
+        assert!(
+            soma.selected_skills.iter().any(|name| name == "testing"),
+            "eval por skill: soma deve carregar testing: {:?}",
+            soma.selected_skills
+        );
+        assert!(soma.selected_skills.iter().any(|name| name == "typescript"));
     }
 
     #[test]

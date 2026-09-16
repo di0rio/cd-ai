@@ -16,6 +16,7 @@ pub mod storage;
 pub mod tool_calls;
 pub mod verify;
 
+pub use crate::skills::SelectedSkill;
 pub use events::{AgentEvent, AgentEventMessage};
 pub use model::{ChatModel, ModelError, ModelReply, OllamaModel, ScriptedModel};
 pub use profile::{WorkspaceProfile, workspace_profile};

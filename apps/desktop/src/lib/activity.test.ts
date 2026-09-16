@@ -588,6 +588,9 @@ describe("applyAgentEvent", () => {
       { event: "contextBudgetCut", data: { section: "repo_map", tokensBefore: 400, tokensAfter: 200 } },
       { event: "contextCompacted", data: { estimatedTokens: 800, reason: "histórico condensado" } },
       { event: "roleChanged", data: { role: "coder", reason: "exploração concluída" } },
+      { event: "skillsDetected", data: { names: ["typescript"] } },
+      { event: "skillLoaded", data: { name: "typescript", reason: "language:ts" } },
+      { event: "skillSkipped", data: { name: "security", reason: "score 0" } },
       { event: "retrying", data: { attempt: 2, reason: "timeout" } },
       { event: "checkpointCreated", data: { commit: "abc123", kind: "baseline" } },
     ] as AgentEventBody[]) {
