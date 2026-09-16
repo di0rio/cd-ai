@@ -638,6 +638,129 @@ impl ToolEngine {
         }
     }
 
+    /// Independent non-secret `read_file` calls, I/O in parallel, events and results in request order.
+    pub fn run_read_batch(
+        &mut self,
+        args: Vec<ReadFileArgs>,
+        events: EventSink,
+        responder: Responder,
+    ) -> Vec<ToolOutcome> {
+        if args.len() < 2 {
+            return args
+                .into_iter()
+                .map(|item| self.run_tool(ToolRequest::ReadFile(item), events, responder))
+                .collect();
+        }
+        if self.cancel.is_cancelled() {
+            return args
+                .iter()
+                .map(|_| ToolOutcome::err(ToolError::Cancelled))
+                .collect();
+        }
+
+        let mut prepared: Vec<(u64, ReadFileArgs, PermissionDecision)> =
+            Vec::with_capacity(args.len());
+        for item in args {
+            self.request_id += 1;
+            let request_id = self.request_id;
+            self.emit(
+                events,
+                ToolEvent::ToolStarted {
+                    tool: "readFile".to_string(),
+                    request_id,
+                },
+            );
+            let decision = self.authorize(
+                events,
+                responder,
+                PermissionKind::ReadFile { secret: false },
+                ApprovalAction::ReadFile {
+                    path: item.path.clone(),
+                },
+            );
+            if decision == PermissionDecision::Denied {
+                self.emit_failed(
+                    events,
+                    "readFile",
+                    request_id,
+                    "leitura de arquivo de secret negada".to_string(),
+                );
+                prepared.push((request_id, item, decision));
+                continue;
+            }
+            prepared.push((request_id, item, decision));
+        }
+
+        let to_read: Vec<ReadFileArgs> = prepared
+            .iter()
+            .filter(|(_, _, decision)| *decision != PermissionDecision::Denied)
+            .map(|(_, item, _)| item.clone())
+            .collect();
+        let started = Instant::now();
+        let mut loaded = read::read_many(&self.workspace, to_read).into_iter();
+        let duration_ms = started.elapsed().as_millis() as u64;
+
+        let mut outcomes = Vec::with_capacity(prepared.len());
+        for (request_id, item, decision) in prepared {
+            if decision == PermissionDecision::Denied {
+                outcomes.push(ToolOutcome::err(ToolError::PermissionDenied {
+                    reason: "leitura de arquivo de secret negada".to_string(),
+                }));
+                continue;
+            }
+            match loaded.next() {
+                Some(Ok(result)) => {
+                    let truncated = result.is_truncated.then(|| Truncation {
+                        shown: result.end_line as usize,
+                        total: result.total_lines,
+                        how_to_get_more: "read_file com startLine/endLine".to_string(),
+                    });
+                    self.emit(
+                        events,
+                        ToolEvent::FileRead {
+                            path: result.path.clone(),
+                            start_line: result.start_line,
+                            line_count: if result.text.is_empty() {
+                                0
+                            } else {
+                                result
+                                    .end_line
+                                    .saturating_sub(result.start_line)
+                                    .saturating_add(1)
+                            },
+                            total_lines: result.total_lines,
+                            truncated: result.is_truncated,
+                            redacted: result.redacted,
+                        },
+                    );
+                    self.emit_done(
+                        events,
+                        "readFile",
+                        request_id,
+                        duration_ms,
+                        decision,
+                        truncated.is_some(),
+                    );
+                    outcomes.push(ToolOutcome::ok(ToolOutput::ReadFile(result), truncated));
+                }
+                Some(Err(error)) => {
+                    self.emit_failed(events, "readFile", request_id, error.to_string());
+                    outcomes.push(ToolOutcome::err(error));
+                }
+                None => {
+                    self.emit_failed(
+                        events,
+                        "readFile",
+                        request_id,
+                        format!("falha ao ler {}", item.path),
+                    );
+                    outcomes.push(ToolOutcome::err(ToolError::Io(item.path)));
+                }
+            }
+        }
+        outcomes
+    }
+
     fn invoke(
         &mut self,
         request: ToolRequest,
