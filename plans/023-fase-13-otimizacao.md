@@ -102,7 +102,7 @@ secret / edit / write / command        → sequencial
 - [x] Eval JSON com `contextMs` / `cacheHits` / `cacheMisses`
 - [x] Eval scripted 3/3; audit com before/after
 - [x] `bun run verify` exit 0
-- [ ] PR aberto
+- [x] PR aberto
 
 ## STOP conditions
 
