@@ -196,6 +196,11 @@ Nuances determinísticas:
 - `git checkout` com `--` → `destructive`; `git checkout -b` → `write`.
 - Flags são lidas nos tokens que começam com `-`; uma flag composta (`-rf`) conta para ambas.
 - Ordem de avaliação: `unknown` é o resultado do match; nada cai em "default permissivo".
+- `read` só vale enquanto o comando só lê: `find -delete` → `destructive`; `find -exec/-execdir/-ok/-okdir` e `rg --pre` → `unknown`; `find -fprint*/-fls` e `git diff/log/show --output` → `write`; `git branch` só é `read` quando lista (renomear, copiar, criar ou apagar → `write`; `-D`/`--delete --force` → `destructive`); `git remote` só é `read` sem subcomando ou com `get-url` (`show`/`update`/`prune` → `network`).
+- Flags longas contam como as curtas: `rm --recursive` e `git clean --force` → `destructive`; `git checkout -f/--force` → `destructive`.
+- Validadores que reescrevem arquivos são `write`: `cargo fmt` sem `--check`, `cargo clippy --fix`, `biome check/lint --write/--fix`. Python só valida por `-m pytest`, `-m unittest` e `manage.py test`.
+- `read`/`validate` exigem `argv[0]` sem separador de caminho (`./ls`, `target/debug/cargo` → `unknown`).
+- Em `run_command` (não em `classify`, que não conhece o workspace): um comando `read`/`validate`/`write` cujo argumento (ou valor de `--flag=valor`, ou o caminho depois de `:` como em `HEAD:.env`) resolve fora do workspace ou num arquivo de secret vira `unknown` e pede aprovação — o sandbox só restringe escrita.
 - Compostos: se qualquer token é metacaractere → classe da parte mais perigosa que o mesmo argv sugere; na dúvida, `unknown` (mantém a regra do SPEC §20.2 para quando a Fase 7 executar shells — e na Fase 4 `run_command` os recusa com `CompoundCommand` de qualquer forma).
 
 Uso: a classe entra na tabela de permissão (§5) e no evento `command.started`/`completed`. A detecção de comandos `validate` do workspace (§13.1) é cache por workspace e fica pronta na Fase 5; na Fase 4, `validate` cobre a lista de prefixos de test/lint/typecheck/build acima.

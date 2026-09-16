@@ -30,6 +30,8 @@ pub const MAX_OUTPUT_BYTES: usize = 64 * 1024;
 pub const MAX_LIST_ENTRIES: usize = 500;
 pub const MAX_REWRITE_BYTES: usize = 8 * 1024;
 pub const DEFAULT_COMMAND_TIMEOUT_MS: u64 = 30_000;
+/// Files are loaded whole; past this a read would cost the app its memory, not the model a window.
+pub const MAX_FILE_BYTES: u64 = 16 * 1024 * 1024;
 
 /// How the model asks for a tool run (design §2). Paths are always workspace-relative or absolute
 /// and go through `Workspace::resolve` — no raw path is ever used directly.
@@ -284,7 +286,10 @@ impl std::fmt::Display for ToolError {
             }
             Self::UnknownCommand => write!(f, "comando vazio ou desconhecido"),
             Self::PermissionDenied { reason } => write!(f, "permissão negada: {reason}"),
-            Self::SecretDenied => write!(f, "leitura de arquivo de secret negada"),
+            Self::SecretDenied => write!(
+                f,
+                "arquivo de secret: o agente não edita nem sobrescreve secrets"
+            ),
             Self::Cancelled => write!(f, "tarefa cancelada"),
             Self::Io(message) => write!(f, "erro de E/S: {message}"),
         }
@@ -878,8 +883,8 @@ pub fn display_path(workspace: &Workspace, path: &std::path::Path) -> String {
     path.display().to_string()
 }
 
-/// Reads a file as UTF-8 (lossy for the model window), classifying missing/dir paths first.
-pub fn read_utf8_lossy(path: &std::path::Path) -> Result<String, ToolError> {
+/// Reads a regular file whole, classifying missing/dir paths first and refusing huge files.
+pub fn read_bytes(path: &std::path::Path) -> Result<Vec<u8>, ToolError> {
     let metadata = std::fs::symlink_metadata(path).map_err(|error| match error.kind() {
         std::io::ErrorKind::NotFound => ToolError::NotFound,
         _ => ToolError::Io(error.to_string()),
@@ -887,8 +892,18 @@ pub fn read_utf8_lossy(path: &std::path::Path) -> Result<String, ToolError> {
     if !metadata.is_file() {
         return Err(ToolError::NotAFile);
     }
-    let bytes = std::fs::read(path).map_err(|error| ToolError::Io(error.to_string()))?;
-    Ok(String::from_utf8_lossy(&bytes).into_owned())
+    if metadata.len() > MAX_FILE_BYTES {
+        return Err(ToolError::Io(format!(
+            "arquivo grande demais ({} bytes, limite {MAX_FILE_BYTES}); use search",
+            metadata.len()
+        )));
+    }
+    std::fs::read(path).map_err(|error| ToolError::Io(error.to_string()))
+}
+
+/// Reads a file as UTF-8 (lossy for the model window).
+pub fn read_utf8_lossy(path: &std::path::Path) -> Result<String, ToolError> {
+    Ok(String::from_utf8_lossy(&read_bytes(path)?).into_owned())
 }
 
 /// SHA-256 hex of arbitrary bytes (design D5).
