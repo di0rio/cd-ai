@@ -22,7 +22,9 @@ Comandos que o Verifier dispara passam pelo `ToolEngine` (classificação, sandb
 cargo run -q -p cd-ai-cli -- eval --scripted
 ```
 
-As três tarefas scripted (soma, greet, dobro) editam, rodam `bun test` e agora terminam `completed` / `stopReason.kind = verified`. O sucesso do harness continua sendo o **exit do check** (plano 016 D3), não o status do agente. Taxa scripted: **100% (3/3)** — sem regressão, com completions validadas.
+As três tarefas scripted (soma, greet, dobro) editam, rodam `bun test` e agora terminam `completed` / `stopReason.kind = verified`. O sucesso do harness continua sendo o **exit do check** (plano 016 D3), não o status do agente. Taxa scripted: **100% (3/3)** — sem regressão, com completions validadas. Medido em `b1ef74a`.
+
+Gate `bun run verify`: exit 0 no mesmo commit (biome, typecheck, testes da UI, `cargo fmt`, clippy `-D warnings` no workspace, `cargo test --workspace` incluindo `cd-ai-desktop`).
 
 ## Caminho ao vivo (Ollama + CODER)
 
