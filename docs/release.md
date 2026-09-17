@@ -38,6 +38,8 @@ Saída em `dist/linux/`:
 
 Workflow: [`.github/workflows/linux-release.yml`](../.github/workflows/linux-release.yml) (PR, `workflow_dispatch`, tag `v*`). Tag `v0.1.0` publica os arquivos num GitHub Release.
 
+A CI **não** corre `bun run verify` nem `cargo test`: o runner de 7 GiB morreu ao compilar o harness de testes / sandbox. Lá: frontend + clippy da lib + `tauri build` em release + eval com a CLI empacotada. Na máquina de desenvolvimento o gate continua a ser `bun run verify`.
+
 ## Instalação limpa (sem Rust/Tauri)
 
 ### Debian / Ubuntu (`.deb`)
