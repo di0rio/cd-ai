@@ -13,11 +13,38 @@ concurrency:
   group: linux-release-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  CARGO_BUILD_JOBS: "1"
+  CARGO_PROFILE_DEV_DEBUG: "0"
+  CARGO_PROFILE_TEST_DEBUG: "0"
+
 jobs:
   linux-x86_64:
     runs-on: ubuntu-22.04
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
+
+      # Hosted runners have ~7 GiB. Debug clippy/test and the Tauri/WebKit link
+      # otherwise OOM the agent ("hosted runner lost communication").
+      - name: Enable swap
+        run: |
+          free -h
+          swapon --show || true
+          if swapon --show | grep -q .; then
+            echo "swap already enabled"
+            exit 0
+          fi
+          SWAPFILE=/mnt/swapfile
+          sudo rm -f "$SWAPFILE"
+          sudo fallocate -l 8G "$SWAPFILE" || sudo dd if=/dev/zero of="$SWAPFILE" bs=1M count=8192 status=none
+          sudo chmod 600 "$SWAPFILE"
+          sudo mkswap "$SWAPFILE"
+          sudo swapon "$SWAPFILE"
+          swapon --show
+          free -h
 
       - uses: oven-sh/setup-bun@v2
         with:
@@ -28,6 +55,25 @@ jobs:
           components: rustfmt, clippy
 
       - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: linux-release-v2
+
+      - run: bun install --frozen-lockfile
+
+      # Local gate remains `bun run verify` (includes desktop + cargo test).
+      # CI does not run `cargo test`: compiling the agent-core test harness
+      # (or the sandbox/netns tests) killed the hosted agent after ~46 min.
+      - name: Verify frontend and release metadata
+        run: |
+          bun run check
+          bun run --cwd apps/desktop typecheck
+          bun run --cwd apps/desktop test
+          bun scripts/check-release-metadata.ts
+          cargo fmt --all --check
+
+      - name: Clippy agent-core + CLI
+        timeout-minutes: 20
+        run: cargo clippy -p agent-core -p cd-ai-cli -- -D warnings
 
       - name: Install Tauri Linux dependencies
         run: |
@@ -42,15 +88,15 @@ jobs:
             file \
             build-essential
 
-      - run: bun install --frozen-lockfile
-
-      - run: bun run verify
-
-      - name: Eval scripted
-        run: cargo run -q -p cd-ai-cli -- eval --scripted --out evals/results/scripted-ci.json
-
       - name: Build .deb and AppImage
+        timeout-minutes: 40
         run: bun scripts/build-linux-release.ts
+
+      - name: Eval scripted with packaged CLI
+        timeout-minutes: 10
+        run: |
+          chmod +x dist/linux/cd-ai
+          dist/linux/cd-ai eval --scripted --suite evals --out evals/results/scripted-ci.json
 
       - uses: actions/upload-artifact@v4
         with:
