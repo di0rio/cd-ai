@@ -82,9 +82,9 @@ Review LLM (texto isolado): primeira linha `PASS` ou `CHANGES_REQUIRED`. Qualque
 - [x] Falha de verificação reentra no loop até o limite; no limite, unvalidated com as razões
 - [x] Review LLM não bloqueia o eval scripted (skip em resposta vazia)
 - [x] Falha determinística prevalece sobre `PASS` do LLM
-- [ ] `cd-ai eval --scripted` 3/3 e as tarefas scripted saem `completed`
-- [ ] `bun run verify` exit 0
-- [ ] PR aberto
+- [x] `cd-ai eval --scripted` 3/3 e as tarefas scripted saem `completed`
+- [x] `bun run verify` exit 0
+- [x] PR aberto
 
 ## STOP conditions
 
