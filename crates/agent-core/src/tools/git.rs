@@ -4,12 +4,12 @@
 //! never these tools' GIT_DIR.
 
 use std::io;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::time::{Duration, Instant};
 
 use crate::permissions::PermissionDecision;
 use crate::redactor;
-use crate::sandbox::{SandboxExec, constrain};
+use crate::sandbox::{self, SandboxExec};
 use crate::tools::cancel::CancelToken;
 use crate::tools::{
     EventSink, GitBranchArgs, GitBranchResult, GitDiffArgs, GitDiffResult, GitLogArgs, GitLogEntry,
@@ -50,6 +50,7 @@ pub fn git_diff(
     let mut argv = vec![
         "diff".to_string(),
         "--no-ext-diff".to_string(),
+        "--no-textconv".to_string(),
         "--no-color".to_string(),
     ];
     if let Some(path) = args.path {
@@ -138,10 +139,19 @@ fn run_user_git(
     if engine.cancel_token().is_cancelled() {
         return Err(ToolError::Cancelled);
     }
-    let mut command = Command::new("git");
+    let mut command = sandbox::command(
+        "git",
+        &SandboxExec {
+            workspace: engine.workspace.root().to_path_buf(),
+            allow_network: false,
+        },
+    )
+    .map_err(|error| ToolError::Io(format!("sandbox: {error}")))?;
     command
         .arg("-C")
         .arg(cwd)
+        // The repository's own config could name a program for `status` to run.
+        .args(["-c", "core.fsmonitor=false"])
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -153,13 +163,6 @@ fn run_user_git(
         .env("GIT_PAGER", "cat")
         .env("GIT_OPTIONAL_LOCKS", "0")
         .env("GIT_TERMINAL_PROMPT", "0");
-    constrain(
-        &mut command,
-        SandboxExec {
-            workspace: engine.workspace.root().to_path_buf(),
-            allow_network: false,
-        },
-    );
     let mut child = command.spawn().map_err(|error| match error.kind() {
         io::ErrorKind::NotFound => ToolError::Io("git não encontrado no PATH".to_string()),
         _ => ToolError::Io(format!("não foi possível executar git: {error}")),
@@ -273,6 +276,7 @@ mod tests {
     use crate::tools::{ToolEngine, ToolEventMessage, ToolRequest};
     use crate::workspace::Workspace;
     use std::fs;
+    use std::process::Command;
     use tempfile::tempdir;
 
     fn git_works() -> bool {

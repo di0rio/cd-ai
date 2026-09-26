@@ -85,6 +85,7 @@ impl Workspace {
                 }
             }
         }
+        let lexical = self.rebase_displayed_root(lexical);
         if !lexical.starts_with(&self.root) {
             return Err(outside());
         }
@@ -108,6 +109,22 @@ impl Workspace {
             .into_iter()
             .rev()
             .fold(canonical, |path, name| path.join(name)))
+    }
+
+    /// On Windows the canonical root is `\\?\C:\...` while the UI and the prompt show `C:\...`; an
+    /// absolute path copied from what the model was shown names the same folder.
+    fn rebase_displayed_root(&self, path: PathBuf) -> PathBuf {
+        let Some(shown) = self
+            .root
+            .to_str()
+            .and_then(|root| root.strip_prefix(r"\\?\"))
+        else {
+            return path;
+        };
+        match path.strip_prefix(shown) {
+            Ok(rest) => self.root.join(rest),
+            Err(_) => path,
+        }
     }
 
     pub fn info(&self) -> WorkspaceInfo {
@@ -243,6 +260,18 @@ mod tests {
         symlink(other.path().join("missing"), root.join("dangling")).unwrap();
         let result = ws.resolve("dangling");
         assert!(matches!(result, Err(WorkspaceError::OutsideWorkspace(_))));
+    }
+
+    #[test]
+    fn accepts_the_displayed_absolute_path() {
+        let dir = tempdir().unwrap();
+        let ws = Workspace::open(dir.path()).unwrap();
+        // The UI and the prompt show the root without the Windows verbatim prefix.
+        let shown = PathBuf::from(ws.info().root).join("novo.txt");
+        let p = ws
+            .resolve(&shown)
+            .expect("the root the user sees is inside");
+        assert_eq!(p, ws.root().join("novo.txt"));
     }
 
     #[test]

@@ -82,6 +82,15 @@ pub fn recognize(text: &str) -> Vec<SecretSpan> {
     spans.extend(jwt_spans(text));
     spans.extend(userinfo_spans(text));
     spans.extend(entropy_spans(text));
+    // The entropy scan works on bytes; widen every span to whole characters before slicing.
+    for span in &mut spans {
+        while !text.is_char_boundary(span.start) {
+            span.start -= 1;
+        }
+        while !text.is_char_boundary(span.end) {
+            span.end += 1;
+        }
+    }
 
     spans.sort_by_key(|s| (s.start, s.end));
     spans.into_iter().fold(Vec::new(), |mut merged, span| {
@@ -239,14 +248,11 @@ fn jwt_spans(text: &str) -> Vec<SecretSpan> {
             continue;
         };
         let second_dot = first_dot + 1 + second_dot;
-        let Some(third_dot) = bytes[second_dot + 1..]
+        // A token at the very end of the text has no terminator.
+        let end = bytes[second_dot + 1..]
             .iter()
             .position(|b| matches!(*b, b'.' | b' ' | b'\n' | b'\r'))
-        else {
-            index = start + 1;
-            continue;
-        };
-        let end = second_dot + 1 + third_dot;
+            .map_or(bytes.len(), |third_dot| second_dot + 1 + third_dot);
         let payload = &bytes[first_dot + 1..second_dot];
         if payload.len() > 1_000 || !payload.iter().all(|b| base64url_ok(*b)) {
             index = start + 1;
@@ -310,11 +316,12 @@ fn userinfo_spans(text: &str) -> Vec<SecretSpan> {
             index += 1;
             continue;
         }
-        let at = bytes[index + 3..]
+        // Userinfo ends at the authority: an `@` past a `/` or a space is someone's e-mail.
+        let authority_end = bytes[index + 3..]
             .iter()
-            .position(|b| *b == b'@')
+            .position(|b| matches!(*b, b'/' | b'?' | b'#' | b'@') || b.is_ascii_whitespace())
             .map(|p| p + index + 3);
-        let Some(at) = at else {
+        let Some(at) = authority_end.filter(|&p| bytes[p] == b'@') else {
             index += 3;
             continue;
         };
@@ -539,6 +546,65 @@ mod tests {
     use super::*;
 
     #[test]
+    fn redact_never_splits_a_multibyte_character() {
+        // Dense non-ASCII text has many distinct bytes, so an entropy window can start or end
+        // inside a character; slicing there would panic.
+        for (base, step) in [(0x100u32, 37usize), (0x4e00, 7), (0x1f300, 13)] {
+            let text: String = (base..base + 2_000)
+                .step_by(step)
+                .filter_map(char::from_u32)
+                .collect();
+            for skip in 0..4 {
+                let _ = redact(&format!("{}{text}", "a".repeat(skip)));
+            }
+        }
+        let mut seed = 0x2545_f491_u32;
+        let mut next = move || {
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            seed
+        };
+        for _ in 0..300 {
+            let text: String = (0..120)
+                .filter_map(|_| {
+                    let roll = next();
+                    match roll % 3 {
+                        0 => char::from_u32(0x21 + roll / 3 % 94),
+                        1 => char::from_u32(0xa0 + roll / 3 % 0x700),
+                        _ => char::from_u32(0x4e00 + roll / 3 % 0x5000),
+                    }
+                })
+                .collect();
+            let _ = redact(&text);
+        }
+        // A random token glued to accented text: the span edge lands next to (or inside) `é`.
+        let token = "q8Zr3LmX0vB7tYw2Kp9NcHs4JdF6gUe1RaT5oWiE";
+        for cut in 20..token.len() {
+            for tail in ["é", "éà", "ção", "日本語", "🙂x"] {
+                let _ = redact(&format!("{}{tail}{}", &token[..cut], &token[cut..]));
+                let _ = redact(&format!("{tail}{}{tail}", &token[..cut]));
+            }
+        }
+    }
+
+    #[test]
+    fn jwt_at_the_very_end_is_redacted() {
+        let jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U";
+        let redacted = redact(&format!("token={jwt}"));
+        assert!(!redacted.text.contains("dozjgNryP4J3"), "{}", redacted.text);
+    }
+
+    #[test]
+    fn userinfo_does_not_swallow_the_text_after_a_plain_url() {
+        let text = "clone https://github.com/x/y.git\nAuthor: Ana <ana@example.com>";
+        assert_eq!(redact(text).text, text);
+        let with_password = redact("https://user:hunter2@example.com/repo");
+        assert!(!with_password.text.contains("hunter2"));
+        assert!(with_password.text.ends_with("example.com/repo"));
+    }
+
+    #[test]
     fn path_detects_dotenv_variants() {
         for name in [".env", ".env.local", ".env.production"] {
             assert_eq!(
@@ -703,10 +769,15 @@ mod tests {
     fn entropy_scan_of_low_cardinality_source_is_bounded() {
         use std::time::Instant;
         let text = "x".repeat(64 * 1024);
-        let started = Instant::now();
-        let redacted = redact(&text);
-        let elapsed = started.elapsed();
-        assert_eq!(redacted.count(), 0);
+        // Best of three: the ceiling catches a quadratic scan, not a busy test runner.
+        let elapsed = (0..3)
+            .map(|_| {
+                let started = Instant::now();
+                assert_eq!(redact(&text).count(), 0);
+                started.elapsed()
+            })
+            .min()
+            .unwrap();
         assert!(
             elapsed.as_millis() < 50,
             "low-cardinality 64 KiB must stay cheap: {elapsed:?}"

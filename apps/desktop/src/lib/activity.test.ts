@@ -60,6 +60,24 @@ describe("applyToolEvent", () => {
     expect(next.events).toEqual([{ kind: "edit", path: "src/soma.ts", added: 2, removed: 1 }]);
   });
 
+  test("changed lines that look like a diff header still count", () => {
+    const next = applyToolEvent(
+      task(),
+      message({
+        event: "fileChanged",
+        data: {
+          path: "db/schema.sql",
+          diff: "--- before\n+++ after\n--- old comment\n+++ new comment\n",
+          fuzzy: false,
+          hashBefore: "aaa",
+          hashAfter: "bbb",
+        },
+      }),
+    );
+
+    expect(next.events).toEqual([{ kind: "edit", path: "db/schema.sql", added: 1, removed: 1 }]);
+  });
+
   test("commandStarted opens a running command and commandCompleted closes it by id", () => {
     const started = applyToolEvent(
       task(),
