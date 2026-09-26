@@ -308,6 +308,16 @@ fn rollback_one(
         .map_err(|error| CheckpointError::Io(error.to_string()))?;
     let current = read_optional(&canonical)?;
     let baseline_bytes = shadow.show(baseline, &change.path)?;
+    // No copy to restore from: deleting it would lose what the user had, even with `force`.
+    if baseline_bytes.is_none() && change.existed_before && current.is_some() {
+        return Ok(FileAction::Skipped(RollbackSkip {
+            path: change.path.clone(),
+            reason: "o arquivo já existia, mas o checkpoint não tem a versão anterior \
+                     (ignorado pelo git); nada foi apagado"
+                .to_string(),
+            diff: String::new(),
+        }));
+    }
 
     if current.as_deref() == baseline_bytes.as_deref() {
         return Ok(FileAction::AlreadyClean);
@@ -394,7 +404,11 @@ fn unified_diff(before: &str, after: &str) -> String {
         }
     }
     if out.len() > 8 * 1024 {
-        out.truncate(8 * 1024);
+        let mut end = 8 * 1024;
+        while !out.is_char_boundary(end) {
+            end -= 1;
+        }
+        out.truncate(end);
         out.push_str("\n… diff truncado\n");
     }
     out
@@ -452,6 +466,13 @@ fn storage_error(error: crate::agent::storage::StorageError) -> CheckpointError 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn long_diff_is_cut_on_a_char_boundary() {
+        let after = "ação ".repeat(4_000);
+        let diff = unified_diff("", &after);
+        assert!(diff.ends_with("diff truncado\n"));
+    }
     use crate::agent::state::{FileChange, TaskState};
     use crate::tools::sha256_hex;
     use tempfile::tempdir;
@@ -483,6 +504,7 @@ mod tests {
         FileChange {
             path: path.to_string(),
             hash_after: sha256_hex(content.as_bytes()),
+            ..Default::default()
         }
     }
 
@@ -593,6 +615,35 @@ mod tests {
             fs::read_to_string(workspace.root().join("a.txt")).unwrap(),
             "orig\n"
         );
+    }
+
+    #[test]
+    fn rollback_never_deletes_a_file_that_existed_outside_the_baseline() {
+        if !git_works() {
+            return;
+        }
+        let data = tempdir().unwrap();
+        let store = TaskStore::open(data.path()).unwrap();
+        let (_ws_dir, workspace) =
+            workspace_with(&[(".gitignore", "local.json\n"), ("local.json", "user\n")]);
+        let shadow = ShadowRepo::open(data.path(), &workspace).unwrap();
+        let baseline = shadow.snapshot("baseline").unwrap();
+
+        fs::write(workspace.root().join("local.json"), "agent\n").unwrap();
+        let id = prepare_task(
+            &store,
+            &workspace,
+            vec![FileChange {
+                existed_before: true,
+                ..change("local.json", "agent\n")
+            }],
+            &baseline,
+        );
+
+        let result = rollback_task(&store, &workspace, &id, true).unwrap();
+        assert!(result.restored.is_empty());
+        assert_eq!(result.skipped.len(), 1);
+        assert!(workspace.root().join("local.json").exists());
     }
 
     #[test]

@@ -22,6 +22,7 @@ pub fn edit_file(
     responder: Responder,
 ) -> Result<(PermissionDecision, EditFileResult), ToolError> {
     let canonical = engine.workspace.resolve(&args.path)?;
+    refuse_git_dir(&engine.workspace, &canonical)?;
     // The approval diff would disclose the secret, and EditNotFound-vs-success is an oracle for it.
     if redactor::detect_path_secret(&canonical).is_some() {
         return Err(ToolError::SecretDenied);
@@ -106,6 +107,7 @@ pub fn write_file(
         return Err(ToolError::Io("content vazio".to_string()));
     }
     let canonical = engine.workspace.resolve(&args.path)?;
+    refuse_git_dir(&engine.workspace, &canonical)?;
 
     let exists = fs_meta(&canonical)
         .map(|meta| meta.is_file())
@@ -178,6 +180,27 @@ pub fn write_file(
             size: args.content.len(),
         },
     ))
+}
+
+/// `.git/config` and `.git/hooks` name programs that git runs on its own, including during a
+/// `git status` that needs no approval; the agent changes the repository through git, not by hand.
+fn refuse_git_dir(
+    workspace: &crate::workspace::Workspace,
+    canonical: &Path,
+) -> Result<(), ToolError> {
+    let inside_git = canonical
+        .strip_prefix(workspace.root())
+        .map(|rest| {
+            rest.components()
+                .any(|part| part.as_os_str().eq_ignore_ascii_case(".git"))
+        })
+        .unwrap_or(false);
+    if inside_git {
+        return Err(ToolError::PermissionDenied {
+            reason: "o agente não altera arquivos dentro de .git".to_string(),
+        });
+    }
+    Ok(())
 }
 
 /// Returns `(start, end, old_block, new_block, fuzzy)` for the single replacement.
@@ -462,6 +485,43 @@ mod tests {
         request: crate::permissions::ApprovalRequest,
     ) -> crate::permissions::ApprovalResponse {
         panic!("approval must not be requested for {:?}", request.action);
+    }
+
+    #[test]
+    fn git_dir_is_never_written() {
+        let dir = tempdir().unwrap();
+        std::fs::create_dir(dir.path().join(".git")).unwrap();
+        std::fs::write(dir.path().join(".git").join("config"), "[core]\n").unwrap();
+        let mut engine = boot(dir.path());
+        let mut sink = |_: crate::events::ToolEventMessage| {};
+
+        let err = edit_file(
+            &mut engine,
+            EditFileArgs {
+                path: ".git/config".into(),
+                old_text: "[core]".into(),
+                new_text: "[core]\nfsmonitor = x".into(),
+            },
+            &mut sink,
+            &mut never_asked,
+        )
+        .unwrap_err();
+        assert!(matches!(err, ToolError::PermissionDenied { .. }));
+        for path in [".git/hooks/pre-commit", ".GIT/config", "sub/.git/config"] {
+            let err = write_file(
+                &mut engine,
+                WriteFileArgs {
+                    path: path.into(),
+                    content: "x".into(),
+                    if_exists: IfExists::Overwrite,
+                },
+                &mut sink,
+                &mut never_asked,
+            )
+            .unwrap_err();
+            assert!(matches!(err, ToolError::PermissionDenied { .. }), "{path}");
+        }
+        assert!(!dir.path().join(".git/hooks/pre-commit").exists());
     }
 
     #[test]

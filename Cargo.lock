@@ -27,6 +27,7 @@ dependencies = [
  "tree-sitter-rust",
  "tree-sitter-typescript",
  "ts-rs",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
