@@ -224,7 +224,9 @@ export function AppShell() {
         task && task.workspace === workspace?.name && task.status !== "running" && task.status !== "waiting_approval"
           ? task.id
           : undefined;
-      setRunningId(await startTask(text, model, NUM_CTX, handleEvent, continues));
+      // `runningId` follows the task's own events: the id this returns can arrive after
+      // `taskFinished` (a model that fails at once), and a task that never started emits nothing.
+      await startTask(text, model, NUM_CTX, handleEvent, continues);
     } catch (error) {
       setTaskError(String(error));
     } finally {
@@ -256,7 +258,7 @@ export function AppShell() {
     setTaskError(null);
     setStarting(true);
     try {
-      setRunningId(await resumeTask(task.id, task.model || model, NUM_CTX, handleEvent));
+      await resumeTask(task.id, task.model || model, NUM_CTX, handleEvent);
     } catch (error) {
       setTaskError(String(error));
     } finally {
@@ -388,7 +390,7 @@ export function AppShell() {
                 model={model}
                 permissionMode={permissionMode}
                 sandboxAvailable={demo || Boolean(sandbox?.available)}
-                sandboxDetail={sandbox?.detail ?? "sandbox só existe no Linux nesta versão"}
+                sandboxDetail={sandbox?.detail ?? "sandbox indisponível"}
                 onPermissionModeChange={handlePermissionMode}
                 onModelChange={live ? handleModelChange : setChosenModel}
                 onStart={live ? handleStart : noop}

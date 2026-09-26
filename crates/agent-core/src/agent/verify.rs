@@ -329,6 +329,7 @@ mod tests {
         FileChange {
             path: path.to_string(),
             hash_after: "abc".to_string(),
+            ..Default::default()
         }
     }
 

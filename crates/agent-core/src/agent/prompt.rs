@@ -242,6 +242,7 @@ mod tests {
         state.files_changed.push(crate::agent::state::FileChange {
             path: "src/soma.ts".to_string(),
             hash_after: "abc".to_string(),
+            ..Default::default()
         });
         state.commands.push(crate::agent::state::CommandRecord {
             argv: vec!["bun".to_string(), "test".to_string()],

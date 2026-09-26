@@ -3,4 +3,9 @@
 /**
  * One file the task changed, with the hash that proves the content afterwards.
  */
-export type FileChange = { path: string, hashAfter: string, };
+export type FileChange = { path: string, hashAfter: string, 
+/**
+ * The file was there before the task's first write to it. When the baseline has no copy (a
+ * gitignored file), rollback cannot restore it and must not delete it either.
+ */
+existedBefore: boolean, };

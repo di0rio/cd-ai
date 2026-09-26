@@ -565,6 +565,7 @@ mod tests {
         current.files_changed.push(crate::agent::state::FileChange {
             path: "src/a.rs".to_string(),
             hash_after: "abc".to_string(),
+            ..Default::default()
         });
         current.checkpoints.push(crate::agent::state::Checkpoint {
             commit: "deadbeef".to_string(),

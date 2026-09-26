@@ -1,16 +1,32 @@
 //! OS sandbox for `run_command` (SPEC §20.3, plan 017).
 //!
-//! Linux applies Landlock (filesystem) and, when the command is not an approved network
-//! class, a user+network namespace so the child has no route off the machine. Other
-//! platforms report the sandbox unavailable: FULL ACCESS stays off and write commands keep
-//! asking (D5/D6).
+//! - Linux: Landlock (filesystem) and, unless the command is an approved `network` one, a
+//!   user+network namespace so the child has no route off the machine.
+//! - macOS: `sandbox-exec` with a Seatbelt profile: writes only inside the workspace, the temp
+//!   dirs and the package caches, and no network.
+//! - Windows: an AppContainer, started through this same executable acting as launcher (see
+//!   [`init`]). The container reaches only what was granted to it by ACL: the workspace, the
+//!   package caches and, read-only, the toolchains on PATH. No network, not even loopback.
+//!
+//! Everywhere, the writable set leaves out what runs later *outside* the sandbox
+//! (`~/.cargo/bin`, `~/.rustup`, `~/.bun/bin`, a global npm prefix): a command must not plant a
+//! binary the user will execute next. A host without a working sandbox reports it unavailable:
+//! FULL ACCESS stays off and write commands keep asking (D5/D6).
 
-use std::path::{Path, PathBuf};
+use std::io;
+use std::path::PathBuf;
 use std::process::Command;
 use std::sync::OnceLock;
 
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
+
+#[cfg(target_os = "linux")]
+mod linux;
+#[cfg(target_os = "macos")]
+mod macos;
+#[cfg(windows)]
+mod windows;
 
 /// What the UI and the policy need to know. `available` is filesystem AND network block.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -56,6 +72,14 @@ pub struct SandboxExec {
     pub allow_network: bool,
 }
 
+/// Call first thing in `main`. On Windows, a process started as the sandbox launcher runs the
+/// command and exits here, and any other process registers its own executable as that launcher;
+/// without this call the Windows sandbox reports itself unavailable. No-op elsewhere.
+pub fn init() {
+    #[cfg(windows)]
+    windows::init();
+}
+
 /// Process-wide probe, so every engine sees the same answer.
 pub fn status() -> &'static SandboxStatus {
     static STATUS: OnceLock<SandboxStatus> = OnceLock::new();
@@ -79,396 +103,163 @@ fn probe() -> SandboxStatus {
     {
         linux::probe()
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(target_os = "macos")]
+    {
+        macos::probe()
+    }
+    #[cfg(windows)]
+    {
+        windows::probe()
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
     {
         SandboxStatus {
             available: false,
             filesystem: false,
             network_block: false,
-            platform: if cfg!(windows) { "windows" } else { "other" }.to_string(),
-            detail: "sandbox só existe no Linux nesta versão (Fase 7)".to_string(),
+            platform: "other".to_string(),
+            detail: "este sistema não tem sandbox no cd-ai".to_string(),
         }
     }
 }
 
-/// Installs the constraint on `command`. No-op when this host cannot isolate. Failures
-/// inside the child abort the spawn: the command must not run "unsandboxed by accident".
-pub fn constrain(command: &mut Command, exec: SandboxExec) {
+/// The command that spawns `program` under the sandbox; the caller adds the arguments, the cwd
+/// and the stdio. A plain command when this host cannot isolate. An error when it can but setting
+/// up the isolation failed: the command must never run "unsandboxed by accident".
+pub fn command(program: &str, exec: &SandboxExec) -> io::Result<Command> {
     #[cfg(target_os = "linux")]
-    linux::constrain(command, exec);
-    #[cfg(not(target_os = "linux"))]
-    let _ = (command, exec);
+    {
+        let mut command = Command::new(program);
+        linux::constrain(&mut command, exec.clone());
+        Ok(command)
+    }
+    #[cfg(target_os = "macos")]
+    {
+        Ok(macos::command(program, exec))
+    }
+    #[cfg(windows)]
+    {
+        windows::command(program, exec)
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
+    {
+        let _ = exec;
+        Ok(Command::new(program))
+    }
 }
 
-#[cfg(target_os = "linux")]
-mod linux {
-    use super::*;
-    use std::ffi::CString;
-    use std::io;
-    use std::os::unix::process::CommandExt;
-
-    const LANDLOCK_CREATE_RULESET_VERSION: u32 = 1 << 0;
-    const LANDLOCK_RULE_PATH_BENEATH: u32 = 1;
-
-    const FS_EXECUTE: u64 = 1 << 0;
-    const FS_WRITE_FILE: u64 = 1 << 1;
-    const FS_READ_FILE: u64 = 1 << 2;
-    const FS_READ_DIR: u64 = 1 << 3;
-    const FS_REMOVE_DIR: u64 = 1 << 4;
-    const FS_REMOVE_FILE: u64 = 1 << 5;
-    const FS_MAKE_CHAR: u64 = 1 << 6;
-    const FS_MAKE_DIR: u64 = 1 << 7;
-    const FS_MAKE_REG: u64 = 1 << 8;
-    const FS_MAKE_SOCK: u64 = 1 << 9;
-    const FS_MAKE_FIFO: u64 = 1 << 10;
-    const FS_MAKE_BLOCK: u64 = 1 << 11;
-    const FS_MAKE_SYM: u64 = 1 << 12;
-    const FS_REFER: u64 = 1 << 13;
-    const FS_TRUNCATE: u64 = 1 << 14;
-    const FS_IOCTL_DEV: u64 = 1 << 15;
-
-    const NET_BIND_TCP: u64 = 1 << 0;
-    const NET_CONNECT_TCP: u64 = 1 << 1;
-
-    const FS_READ: u64 = FS_EXECUTE | FS_READ_FILE | FS_READ_DIR;
-    const FS_WRITE: u64 = FS_WRITE_FILE
-        | FS_REMOVE_DIR
-        | FS_REMOVE_FILE
-        | FS_MAKE_CHAR
-        | FS_MAKE_DIR
-        | FS_MAKE_REG
-        | FS_MAKE_SOCK
-        | FS_MAKE_FIFO
-        | FS_MAKE_BLOCK
-        | FS_MAKE_SYM
-        | FS_REFER
-        | FS_TRUNCATE
-        | FS_IOCTL_DEV;
-
-    #[repr(C)]
-    struct RulesetAttr {
-        handled_access_fs: u64,
-        handled_access_net: u64,
-        scoped: u64,
+/// One-time host preparation that needs an administrator (`cd-ai sandbox-setup`). Only Windows
+/// has any: it lets the AppContainer list `C:\`, `C:\Users` and the other folders above the
+/// profile and above `extra`. Returns what was done, one line each.
+pub fn setup_host(extra: &[PathBuf]) -> Result<Vec<String>, String> {
+    #[cfg(windows)]
+    {
+        windows::setup(extra)
     }
-
-    #[repr(C)]
-    struct PathBeneath {
-        allowed_access: u64,
-        parent_fd: i32,
+    #[cfg(not(windows))]
+    {
+        let _ = extra;
+        Ok(vec!["nada a preparar neste sistema".to_string()])
     }
+}
 
-    static NETNS: OnceLock<bool> = OnceLock::new();
+/// The AppContainer launcher command even when the probe reports the host unprepared. Only for
+/// the end to end test; everything else goes through [`command`].
+#[cfg(windows)]
+#[doc(hidden)]
+pub fn contained_command(program: &str, exec: &SandboxExec) -> io::Result<Command> {
+    windows::contained_command(program, exec)
+}
 
-    pub fn net_namespace_available() -> bool {
-        *NETNS.get_or_init(probe_netns)
-    }
-
-    pub fn probe() -> SandboxStatus {
-        let abi = landlock_abi();
-        let filesystem = abi >= 1;
-        let netns = net_namespace_available();
-        let landlock_net = abi >= 4;
-        let network_block = netns || landlock_net;
-        let available = filesystem && network_block;
-        let mut parts = Vec::new();
-        if filesystem {
-            parts.push(format!("landlock fs (ABI {abi})"));
-        }
-        if netns {
-            parts.push("user/net namespace".to_string());
-        } else if landlock_net {
-            parts.push("landlock TCP deny".to_string());
-        }
-        let detail = if available {
-            parts.join(" + ")
-        } else if parts.is_empty() {
-            "este kernel não oferece Landlock nem user namespace".to_string()
-        } else {
-            format!(
-                "sandbox incompleto ({}); FULL ACCESS indisponível",
-                parts.join(" + ")
-            )
-        };
-        SandboxStatus {
-            available,
-            filesystem,
-            network_block,
-            platform: "linux".to_string(),
-            detail,
-        }
-    }
-
-    pub fn constrain(command: &mut Command, exec: SandboxExec) {
-        let snapshot = super::status().clone();
-        if !snapshot.filesystem && !snapshot.network_block {
-            return;
-        }
-        let write_roots = write_roots(&exec.workspace);
-        let isolate_net = snapshot.network_block && !exec.allow_network;
-        let use_netns = isolate_net && net_namespace_available();
-        let use_landlock_net = isolate_net && !use_netns;
-        let use_landlock_fs = snapshot.filesystem;
-        if !use_netns && !use_landlock_fs && !use_landlock_net {
-            return;
-        }
-
-        // pre_exec runs after fork, before exec. Not strictly async-signal-safe (opens files),
-        // which is how every practical Landlock wrapper does it.
-        unsafe {
-            command.pre_exec(move || {
-                if use_netns {
-                    enter_netns()?;
-                }
-                if use_landlock_fs || use_landlock_net {
-                    apply_landlock(&write_roots, use_landlock_net)?;
-                }
-                Ok(())
-            });
-        }
-    }
-
-    fn probe_netns() -> bool {
-        let mut command = tiny_true();
-        unsafe {
-            command.pre_exec(enter_netns);
-        }
-        command
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
-            .map(|status| status.success())
-            .unwrap_or(false)
-    }
-
-    fn tiny_true() -> Command {
-        for path in ["/usr/bin/true", "/bin/true"] {
-            if Path::new(path).exists() {
-                return Command::new(path);
-            }
-        }
-        Command::new("true")
-    }
-
-    fn enter_netns() -> io::Result<()> {
-        let uid = unsafe { libc::getuid() };
-        let gid = unsafe { libc::getgid() };
-        let rc = unsafe { libc::unshare(libc::CLONE_NEWUSER | libc::CLONE_NEWNET) };
-        if rc != 0 {
-            return Err(io::Error::last_os_error());
-        }
-        write_proc("/proc/self/setgroups", b"deny")?;
-        let uid_map = format!("{uid} {uid} 1\n");
-        let gid_map = format!("{gid} {gid} 1\n");
-        write_proc("/proc/self/uid_map", uid_map.as_bytes())?;
-        write_proc("/proc/self/gid_map", gid_map.as_bytes())?;
-        Ok(())
-    }
-
-    fn write_proc(path: &str, data: &[u8]) -> io::Result<()> {
-        let c_path = CString::new(path).map_err(io::Error::other)?;
-        let fd = unsafe { libc::open(c_path.as_ptr(), libc::O_WRONLY | libc::O_CLOEXEC) };
-        if fd < 0 {
-            return Err(io::Error::last_os_error());
-        }
-        let wrote = unsafe { libc::write(fd, data.as_ptr().cast(), data.len()) };
-        unsafe { libc::close(fd) };
-        if wrote < 0 || wrote as usize != data.len() {
-            return Err(io::Error::last_os_error());
-        }
-        Ok(())
-    }
-
-    fn landlock_abi() -> i64 {
-        let abi = unsafe {
-            libc::syscall(
-                libc::SYS_landlock_create_ruleset,
-                std::ptr::null::<RulesetAttr>(),
-                0usize,
-                LANDLOCK_CREATE_RULESET_VERSION,
-            )
-        };
-        if abi < 0 { 0 } else { abi }
-    }
-
-    fn apply_landlock(write_roots: &[PathBuf], deny_tcp: bool) -> io::Result<()> {
-        let abi = landlock_abi();
-        if abi < 1 {
-            return Err(io::Error::other("landlock indisponível"));
-        }
-        let mut handled_fs = FS_READ
-            | FS_WRITE_FILE
-            | FS_REMOVE_DIR
-            | FS_REMOVE_FILE
-            | FS_MAKE_CHAR
-            | FS_MAKE_DIR
-            | FS_MAKE_REG
-            | FS_MAKE_SOCK
-            | FS_MAKE_FIFO
-            | FS_MAKE_BLOCK
-            | FS_MAKE_SYM;
-        if abi >= 2 {
-            handled_fs |= FS_REFER;
-        }
-        if abi >= 3 {
-            handled_fs |= FS_TRUNCATE;
-        }
-        if abi >= 5 {
-            handled_fs |= FS_IOCTL_DEV;
-        }
-        let handled_net = if deny_tcp && abi >= 4 {
-            NET_BIND_TCP | NET_CONNECT_TCP
-        } else {
-            0
-        };
-
-        let attr = RulesetAttr {
-            handled_access_fs: handled_fs,
-            handled_access_net: handled_net,
-            scoped: 0,
-        };
-        let size = if abi >= 6 {
-            std::mem::size_of::<RulesetAttr>()
-        } else if abi >= 4 {
-            16
-        } else {
-            8
-        };
-        let fd = unsafe {
-            libc::syscall(
-                libc::SYS_landlock_create_ruleset,
-                &attr as *const RulesetAttr,
-                size,
-                0u32,
-            )
-        };
-        if fd < 0 {
-            return Err(io::Error::last_os_error());
-        }
-        let fd = fd as i32;
-
-        let result = (|| {
-            add_path(fd, Path::new("/"), FS_READ & handled_fs, handled_fs)?;
-            for root in write_roots {
-                add_path(fd, root, (FS_READ | FS_WRITE) & handled_fs, handled_fs)?;
-            }
-            for device in [
-                "/dev/null",
-                "/dev/zero",
-                "/dev/urandom",
-                "/dev/random",
-                "/dev/tty",
-            ] {
-                // Device files reject directory/execute bits (EINVAL on ABI 6). Git opens
-                // `/dev/null` O_RDWR, so the rule has to be file read/write (+ ioctl).
-                let _ = add_path(
-                    fd,
-                    Path::new(device),
-                    (FS_READ_FILE | FS_WRITE_FILE | FS_IOCTL_DEV) & handled_fs,
-                    handled_fs,
-                );
-            }
-            let rc = unsafe { libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) };
-            if rc != 0 {
-                return Err(io::Error::last_os_error());
-            }
-            let rc = unsafe { libc::syscall(libc::SYS_landlock_restrict_self, fd, 0u32) };
-            if rc < 0 {
-                return Err(io::Error::last_os_error());
-            }
-            Ok(())
-        })();
-        unsafe { libc::close(fd) };
-        result
-    }
-
-    fn add_path(ruleset: i32, path: &Path, allowed: u64, handled: u64) -> io::Result<()> {
-        if !path.exists() {
-            return Ok(());
-        }
-        let allowed = allowed & handled;
-        if allowed == 0 {
-            return Ok(());
-        }
-        let c_path = CString::new(path.to_string_lossy().as_bytes()).map_err(io::Error::other)?;
-        let parent_fd = unsafe { libc::open(c_path.as_ptr(), libc::O_PATH | libc::O_CLOEXEC) };
-        if parent_fd < 0 {
-            return Err(io::Error::last_os_error());
-        }
-        let rule = PathBeneath {
-            allowed_access: allowed,
-            parent_fd,
-        };
-        let rc = unsafe {
-            libc::syscall(
-                libc::SYS_landlock_add_rule,
-                ruleset,
-                LANDLOCK_RULE_PATH_BENEATH,
-                &rule as *const PathBeneath,
-                0u32,
-            )
-        };
-        unsafe { libc::close(parent_fd) };
-        if rc < 0 {
-            return Err(io::Error::last_os_error());
-        }
-        Ok(())
-    }
-
-    fn write_roots(workspace: &Path) -> Vec<PathBuf> {
-        let mut roots = vec![workspace.to_path_buf()];
-        for extra in [
-            std::env::temp_dir(),
-            PathBuf::from("/tmp"),
-            PathBuf::from("/var/tmp"),
+/// Package-manager caches a build or an install needs to write, when they exist. Only caches:
+/// never a directory whose contents run later outside the sandbox.
+#[cfg_attr(
+    not(any(target_os = "linux", target_os = "macos", windows)),
+    allow(dead_code)
+)]
+fn cache_roots() -> Vec<PathBuf> {
+    let home = home_dir();
+    let mut roots = Vec::new();
+    // Cargo's download cache and the lock files it takes even for an offline build.
+    if let Some(cargo) = cargo_home() {
+        for name in [
+            "registry",
+            "git",
+            ".package-cache",
+            ".package-cache-mutate",
+            ".global-cache",
         ] {
-            push_unique(&mut roots, extra);
+            roots.push(cargo.join(name));
         }
-        if let Ok(tmpdir) = std::env::var("TMPDIR") {
-            push_unique(&mut roots, PathBuf::from(tmpdir));
+    }
+    if let Some(home) = &home {
+        roots.push(home.join(".bun").join("install").join("cache"));
+        roots.push(home.join(".npm").join("_cacache"));
+        roots.push(home.join(".npm").join("_logs"));
+    }
+    if cfg!(windows) {
+        if let Some(local) = std::env::var_os("LOCALAPPDATA").map(PathBuf::from) {
+            roots.push(local.join("npm-cache"));
+            roots.push(local.join("pnpm").join("store"));
+            roots.push(local.join("go-build"));
+            roots.push(local.join("pip").join("cache"));
+            roots.push(local.join("uv").join("cache"));
         }
-        if let Ok(cache) = std::env::var("XDG_CACHE_HOME") {
-            push_unique(&mut roots, PathBuf::from(cache));
-        }
-        if let Ok(cargo) = std::env::var("CARGO_HOME") {
-            push_unique(&mut roots, PathBuf::from(cargo));
-        }
-        if let Some(home) = std::env::var_os("HOME") {
-            let home = PathBuf::from(home);
-            for rel in [
-                ".cache",
-                ".bun",
-                ".cargo",
-                ".rustup",
-                ".npm",
-                ".local/share",
-                ".local/state",
-            ] {
-                push_unique(&mut roots, home.join(rel));
+    } else if let Some(home) = &home {
+        let (cache_dir, pnpm_store) = if cfg!(target_os = "macos") {
+            (
+                home.join("Library").join("Caches"),
+                home.join("Library").join("pnpm").join("store"),
+            )
+        } else {
+            (
+                std::env::var_os("XDG_CACHE_HOME")
+                    .filter(|dir| !dir.is_empty())
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|| home.join(".cache")),
+                home.join(".local").join("share").join("pnpm").join("store"),
+            )
+        };
+        roots.push(pnpm_store);
+        // Each tool's own cache dir, but not the cache dir itself (no new one can be planted),
+        // and not the caches holding programs that run later: pre-commit hooks, the package
+        // managers corepack downloads.
+        if let Ok(entries) = std::fs::read_dir(&cache_dir) {
+            for entry in entries.flatten() {
+                let name = entry.file_name();
+                if RUNS_LATER.iter().any(|skip| name == *skip) {
+                    continue;
+                }
+                if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+                    roots.push(entry.path());
+                }
             }
         }
-        roots
     }
+    roots.retain(|root| root.exists());
+    roots
+}
 
-    fn push_unique(roots: &mut Vec<PathBuf>, path: PathBuf) {
-        if path.as_os_str().is_empty() {
-            return;
-        }
-        if roots.iter().any(|seen| seen == &path) {
-            return;
-        }
-        roots.push(path);
-    }
+/// Cache directories whose contents are executed later, outside the sandbox.
+const RUNS_LATER: &[&str] = &["pre-commit", "node", "pnpm"];
+
+fn home_dir() -> Option<PathBuf> {
+    let var = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
+    std::env::var_os(var)
+        .filter(|home| !home.is_empty())
+        .map(PathBuf::from)
+}
+
+fn cargo_home() -> Option<PathBuf> {
+    std::env::var_os("CARGO_HOME")
+        .filter(|dir| !dir.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| home_dir().map(|home| home.join(".cargo")))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::net::TcpListener;
-    use std::thread;
-    use std::time::Duration;
-    use tempfile::tempdir;
 
     #[test]
     fn status_names_the_platform() {
@@ -479,212 +270,34 @@ mod tests {
         assert_eq!(status.platform, "linux");
         #[cfg(windows)]
         {
+            assert_eq!(status.platform, "windows");
+            // Unit tests never call `init`, so there is no launcher to start the container.
             assert!(!status.available);
-            assert!(status.detail.contains("Linux"));
         }
     }
 
-    #[cfg(target_os = "linux")]
     #[test]
-    fn sandbox_blocks_tcp_to_a_local_listener() {
-        let status = status();
-        if !status.network_block {
-            eprintln!("skip: no network block on this host ({})", status.detail);
-            return;
-        }
-        if Command::new("python3")
-            .arg("-c")
-            .arg("print(1)")
-            .output()
-            .is_err()
-        {
-            eprintln!("skip: python3 missing");
-            return;
-        }
-
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let port = listener.local_addr().unwrap().port();
-        listener.set_nonblocking(true).unwrap();
-        let server = thread::spawn(move || {
-            let deadline = std::time::Instant::now() + Duration::from_secs(3);
-            while std::time::Instant::now() < deadline {
-                if listener.accept().is_ok() {
-                    return true;
-                }
-                thread::sleep(Duration::from_millis(20));
-            }
-            false
-        });
-
-        let dir = tempdir().unwrap();
-        let mut blocked = Command::new("python3");
-        blocked.args([
-            "-c",
-            &format!("import socket; socket.create_connection(('127.0.0.1', {port}), 1)"),
-        ]);
-        blocked.current_dir(dir.path());
-        constrain(
-            &mut blocked,
-            SandboxExec {
-                workspace: dir.path().to_path_buf(),
-                allow_network: false,
-            },
-        );
-        let blocked_out = blocked.output().expect("spawn sandboxed python");
-        assert!(
-            !blocked_out.status.success(),
-            "sandboxed connect must fail: {}",
-            String::from_utf8_lossy(&blocked_out.stderr)
-        );
-        assert!(
-            !server.join().unwrap(),
-            "the listener must not have accepted a sandboxed connection"
-        );
-    }
-
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn sandbox_allows_tcp_when_network_is_explicitly_released() {
-        let status = status();
-        if !status.network_block {
-            eprintln!("skip: no network block on this host ({})", status.detail);
-            return;
-        }
-        if Command::new("python3")
-            .arg("-c")
-            .arg("print(1)")
-            .output()
-            .is_err()
-        {
-            eprintln!("skip: python3 missing");
-            return;
-        }
-
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let port = listener.local_addr().unwrap().port();
-        let server = thread::spawn(move || {
-            let deadline = std::time::Instant::now() + Duration::from_secs(3);
-            listener.set_nonblocking(true).ok();
-            while std::time::Instant::now() < deadline {
-                if listener.accept().is_ok() {
-                    return true;
-                }
-                thread::sleep(Duration::from_millis(20));
-            }
-            false
-        });
-
-        let dir = tempdir().unwrap();
-        let mut allowed = Command::new("python3");
-        allowed.args([
-            "-c",
-            &format!("import socket; socket.create_connection(('127.0.0.1', {port}), 2)"),
-        ]);
-        allowed.current_dir(dir.path());
-        constrain(
-            &mut allowed,
-            SandboxExec {
-                workspace: dir.path().to_path_buf(),
-                allow_network: true,
-            },
-        );
-        let allowed_out = allowed.output().expect("spawn python with network");
-        assert!(
-            allowed_out.status.success(),
-            "approved network must connect: stderr={}",
-            String::from_utf8_lossy(&allowed_out.stderr)
-        );
-        assert!(server.join().unwrap(), "listener should have accepted");
-    }
-
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn sandbox_allows_writes_in_the_workspace_and_denies_home() {
-        let status = status();
-        if !status.filesystem {
-            eprintln!("skip: no landlock on this host ({})", status.detail);
-            return;
-        }
-
-        let workspace = tempdir().unwrap();
-        let inside = workspace.path().join("ok.txt");
-        let mut ok = Command::new("touch");
-        ok.arg(&inside);
-        ok.current_dir(workspace.path());
-        constrain(
-            &mut ok,
-            SandboxExec {
-                workspace: workspace.path().to_path_buf(),
-                allow_network: false,
-            },
-        );
-        let ok_out = ok.output().expect("touch inside workspace");
-        assert!(
-            ok_out.status.success(),
-            "workspace write must work: {}",
-            String::from_utf8_lossy(&ok_out.stderr)
-        );
-        assert!(inside.exists());
-
-        let Some(home) = std::env::var_os("HOME") else {
+    fn caches_never_include_what_runs_outside_the_sandbox() {
+        let roots = cache_roots();
+        let Some(home) = home_dir() else {
             return;
         };
-        let forbid = PathBuf::from(home).join(format!("cd-ai-fase7-forbid-{}", std::process::id()));
-        let _ = std::fs::create_dir_all(&forbid);
-        let target = forbid.join("nope.txt");
-        let mut denied = Command::new("touch");
-        denied.arg(&target);
-        denied.current_dir(workspace.path());
-        constrain(
-            &mut denied,
-            SandboxExec {
-                workspace: workspace.path().to_path_buf(),
-                allow_network: false,
-            },
-        );
-        let denied_out = denied.output().expect("touch outside workspace");
-        let _ = std::fs::remove_dir_all(&forbid);
-        assert!(
-            !denied_out.status.success(),
-            "write outside workspace/tmp/cache must fail"
-        );
-        assert!(!target.exists());
-    }
-
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn sandbox_allows_opening_dev_null_read_write() {
-        let status = status();
-        if !status.filesystem {
-            eprintln!("skip: no landlock on this host ({})", status.detail);
-            return;
+        let cargo = cargo_home().unwrap();
+        for forbidden in [
+            cargo.join("bin"),
+            cargo.join("config.toml"),
+            home.join(".rustup"),
+            home.join(".bun").join("bin"),
+            home.join(".npm").join("_npx"),
+            home.join(".local").join("share").join("pnpm"),
+            home.join(".local").join("bin"),
+            home.join(".cache").join("pre-commit"),
+            home.join(".cache").join("node").join("corepack"),
+        ] {
+            assert!(
+                !roots.iter().any(|root| forbidden.starts_with(root)),
+                "{forbidden:?} would be writable through {roots:?}"
+            );
         }
-        if Command::new("python3")
-            .arg("-c")
-            .arg("print(1)")
-            .output()
-            .is_err()
-        {
-            eprintln!("skip: python3 missing");
-            return;
-        }
-
-        let workspace = tempdir().unwrap();
-        let mut command = Command::new("python3");
-        command.args(["-c", "open('/dev/null', 'r+').close()"]);
-        command.current_dir(workspace.path());
-        constrain(
-            &mut command,
-            SandboxExec {
-                workspace: workspace.path().to_path_buf(),
-                allow_network: false,
-            },
-        );
-        let output = command.output().expect("open /dev/null in sandbox");
-        assert!(
-            output.status.success(),
-            "sandboxed /dev/null O_RDWR must work: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
     }
 }

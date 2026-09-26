@@ -309,7 +309,7 @@ async fn spawn_task(
         .map(|store| store.load())
         .unwrap_or_default();
     let permission_mode = settings.permission_mode;
-    let client = OllamaClient::new(&build_ollama_base())?;
+    let client = OllamaClient::new(&agent_core::ollama::base_url_from_env())?;
     let runtime = tauri::async_runtime::handle().inner().clone();
     let limits = AgentLimits::default();
     let turn_timeout = Duration::from_millis(limits.model_turn_timeout_ms);
@@ -651,7 +651,7 @@ async fn set_permission_mode(
 
 #[tauri::command]
 async fn ollama_status() -> agent_core::ollama::OllamaStatus {
-    match agent_core::ollama::OllamaClient::new(&build_ollama_base()) {
+    match agent_core::ollama::OllamaClient::new(&agent_core::ollama::base_url_from_env()) {
         Ok(client) => client.status().await,
         Err(error) => agent_core::ollama::OllamaStatus {
             reachable: false,
@@ -663,16 +663,6 @@ async fn ollama_status() -> agent_core::ollama::OllamaStatus {
     }
 }
 
-fn build_ollama_base() -> String {
-    let raw = std::env::var("OLLAMA_HOST")
-        .unwrap_or_else(|_| agent_core::ollama::DEFAULT_BASE_URL.to_string());
-    if raw.starts_with("http") {
-        raw
-    } else {
-        format!("http://{raw}")
-    }
-}
-
 #[tauri::command]
 fn chat(
     request: ChatRequest,
@@ -680,7 +670,7 @@ fn chat(
     tasks: tauri::State<'_, ChatTasks>,
     next_chat_id: tauri::State<'_, NextChatId>,
 ) -> Result<u64, String> {
-    let base = build_ollama_base();
+    let base = agent_core::ollama::base_url_from_env();
     let client = OllamaClient::new(&base).map_err(|error| error.to_string())?;
     let id = next_chat_id.0.fetch_add(1, Ordering::Relaxed);
 
