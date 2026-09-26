@@ -154,13 +154,3 @@ plans/              planos de implementação
 scripts/            scripts auxiliares (benchmark, release Linux)
 .github/workflows/  CI de pacotes Linux (Ubuntu 22.04)
 ```
-
-## Referências e inspiração
-
-- **Paseo** ([paseo.sh](https://paseo.sh/) · [github.com/getpaseo/paseo](https://github.com/getpaseo/paseo) · Apache 2.0) — control plane open source para coding agents. Anotado como referência em 2026-09-11:
-  - **Pegar:**
-    - *Worktree/git isolado por tarefa* — o agente roda num `git worktree` + branch próprios, sem tocar o diretório de trabalho. Casa com a **Fase 9** (shadow repo/rollback) do SPEC §34.
-    - *Superfície de UI de tarefas* — workspace, fase da tarefa, status (working/passed/ready to review), mudanças +/- e "resume in-progress". Concretiza a UI do SPEC §33 nas **Fases 5 e 9**.
-    - *Resume in-progress* — persistência/histórico por workspace pra retomar tarefas interrompidas (**Fases 5 e 9**).
-  - **Não pegar:** acesso remoto/mobile/web (o cd-ai é local-first e não faz rede, decisão 0005); multi-provedor/MCP/SDK (nosso core é Ollama local); voice.
-  - **Licença:** pra copiar código, manter a atribuição do Apache 2.0; pra pegar a ideia, não precisa nada.
