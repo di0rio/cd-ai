@@ -541,21 +541,27 @@ mod tests {
             .collect();
 
         let mut engine = boot(dir.path());
-        let started = Instant::now();
-        for name in &paths {
-            let _ = read_file(
-                &mut engine,
-                ReadFileArgs {
-                    path: name.clone(),
-                    start_line: None,
-                    end_line: None,
-                },
-                &mut no_events(),
-                &mut grant(),
-            )
+        // Best of two: the ceiling catches the old quadratic redactor, not a busy test runner.
+        let sequential = (0..2)
+            .map(|_| {
+                let started = Instant::now();
+                for name in &paths {
+                    let _ = read_file(
+                        &mut engine,
+                        ReadFileArgs {
+                            path: name.clone(),
+                            start_line: None,
+                            end_line: None,
+                        },
+                        &mut no_events(),
+                        &mut grant(),
+                    )
+                    .unwrap();
+                }
+                started.elapsed()
+            })
+            .min()
             .unwrap();
-        }
-        let sequential = started.elapsed();
 
         let started = Instant::now();
         let loaded = crate::tools::read::read_many(

@@ -292,7 +292,34 @@ pub fn classify(argv: &[String]) -> CommandClass {
     if qualified && matches!(class, CommandClass::Read | CommandClass::Validate) {
         return CommandClass::Unknown;
     }
+    if class == CommandClass::Validate && names_another_program(&basename, argv) {
+        return CommandClass::Unknown;
+    }
     class
+}
+
+/// A validator runs the workspace's own code; these options make it run whatever program the
+/// argv names instead (`cargo --config target.*.runner`, `go test -exec`, `make CC=...`).
+fn names_another_program(basename: &str, argv: &[String]) -> bool {
+    let any = |matches: &dyn Fn(&str) -> bool| argv.iter().skip(1).any(|token| matches(token));
+    match basename {
+        "cargo" => any(&|token| {
+            token == "--config" || token.starts_with("--config=") || token.starts_with("-Z")
+        }),
+        "go" => any(&|token| {
+            let flag = token.trim_start_matches('-');
+            token.starts_with('-')
+                && ["exec", "toolexec"]
+                    .iter()
+                    .any(|name| flag == *name || flag.starts_with(&format!("{name}=")))
+        }),
+        "make" | "just" => any(&|token| {
+            (!token.starts_with('-') && token.contains('='))
+                || token == "-E"
+                || token.starts_with("--eval")
+        }),
+        _ => false,
+    }
 }
 
 fn classify_find(argv: &[String]) -> CommandClass {
@@ -869,6 +896,35 @@ mod tests {
         ] {
             assert_eq!(classify(&argv), CommandClass::Unknown, "{argv:?}");
         }
+    }
+
+    #[test]
+    fn validators_told_to_run_another_program_are_unknown() {
+        for argv in [
+            cv(&[
+                "cargo",
+                "test",
+                "--config",
+                "target.x86_64-pc-windows-msvc.runner=['powershell','-EncodedCommand','ZQBjAGgAbwA=']",
+            ]),
+            cv(&["cargo", "build", "--config=build.rustc-wrapper='evil'"]),
+            cv(&["cargo", "check", "-Zunstable-options"]),
+            cv(&["go", "test", "-exec", "evil", "./..."]),
+            cv(&["go", "test", "-toolexec=evil", "./..."]),
+            cv(&["make", "test", "CC=evil"]),
+            cv(&["make", "check", "--eval", "x"]),
+            cv(&["just", "test", "SHELL=evil"]),
+        ] {
+            assert_eq!(classify(&argv), CommandClass::Unknown, "{argv:?}");
+        }
+        assert_eq!(
+            classify(&cv(&["cargo", "test", "--", "--nocapture"])),
+            CommandClass::Validate
+        );
+        assert_eq!(
+            classify(&cv(&["go", "test", "-v", "./..."])),
+            CommandClass::Validate
+        );
     }
 
     #[test]

@@ -4,6 +4,43 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 pub const DEFAULT_BASE_URL: &str = "http://127.0.0.1:11434";
+const DEFAULT_PORT: u16 = 11434;
+
+/// `OLLAMA_HOST` read the way the Ollama CLI reads it: scheme and port are optional, and the
+/// server's bind-all address (`0.0.0.0`, often set so other machines can reach it) is dialled
+/// through loopback.
+pub fn base_url_from_env() -> String {
+    base_url_from_host(std::env::var("OLLAMA_HOST").ok().as_deref())
+}
+
+fn base_url_from_host(raw: Option<&str>) -> String {
+    let raw = raw
+        .map(str::trim)
+        .filter(|raw| !raw.is_empty())
+        .unwrap_or(DEFAULT_BASE_URL);
+    let with_scheme = if raw.contains("://") {
+        raw.to_string()
+    } else {
+        format!("http://{raw}")
+    };
+    // Unparseable input goes through as is: `OllamaClient::new` reports it.
+    let Ok(mut url) = reqwest::Url::parse(&with_scheme) else {
+        return with_scheme;
+    };
+    match url.host_str() {
+        Some("0.0.0.0") => {
+            let _ = url.set_host(Some("127.0.0.1"));
+        }
+        Some("[::]") => {
+            let _ = url.set_host(Some("[::1]"));
+        }
+        _ => {}
+    }
+    if url.port().is_none() {
+        let _ = url.set_port(Some(DEFAULT_PORT));
+    }
+    url.as_str().trim_end_matches('/').to_string()
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
 #[ts(export)]
@@ -338,7 +375,7 @@ impl OllamaClient {
             reqwest::Url::parse(base_url).map_err(|_| "URL do Ollama inválida".to_string())?;
         let loopback = matches!(
             url.host_str(),
-            Some("127.0.0.1") | Some("localhost") | Some("::1")
+            Some("127.0.0.1") | Some("localhost") | Some("[::1]")
         );
         if url.scheme() != "http" || !loopback {
             return Err("o Ollama precisa estar nesta máquina (loopback)".to_string());
@@ -489,6 +526,24 @@ impl OllamaClient {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ollama_host_is_read_like_the_ollama_cli() {
+        for (raw, expected) in [
+            (None, DEFAULT_BASE_URL),
+            (Some(""), DEFAULT_BASE_URL),
+            (Some("0.0.0.0"), "http://127.0.0.1:11434"),
+            (Some("0.0.0.0:11500"), "http://127.0.0.1:11500"),
+            (Some("localhost"), "http://localhost:11434"),
+            (Some("http://127.0.0.1:11434/"), "http://127.0.0.1:11434"),
+            (Some("[::]:11434"), "http://[::1]:11434"),
+        ] {
+            let base = base_url_from_host(raw);
+            assert_eq!(base, expected, "{raw:?}");
+            assert!(OllamaClient::new(&base).is_ok(), "{raw:?}");
+        }
+        assert!(OllamaClient::new(&base_url_from_host(Some("10.0.0.5"))).is_err());
+    }
 
     fn parse_models(json: &str) -> Result<Vec<ModelInfo>, serde_json::Error> {
         let response: TagsResponse = serde_json::from_str(json)?;

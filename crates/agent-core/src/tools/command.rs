@@ -7,7 +7,7 @@ use crate::permissions::{
     ApprovalAction, CommandClass, PermissionDecision, PermissionKind, classify,
 };
 use crate::redactor;
-use crate::sandbox::{SandboxExec, constrain};
+use crate::sandbox::{self, SandboxExec};
 use crate::tools::cancel::CancelToken;
 use crate::tools::{
     CommandResult, DEFAULT_COMMAND_TIMEOUT_MS, EventSink, MAX_OUTPUT_BYTES, Responder,
@@ -93,7 +93,14 @@ pub fn run_command(
             .min(MAX_COMMAND_TIMEOUT_MS),
     );
     let started = Instant::now();
-    let mut command = Command::new(&argv[0]);
+    let mut command = sandbox::command(
+        &argv[0],
+        &SandboxExec {
+            workspace: engine.workspace.root().to_path_buf(),
+            allow_network,
+        },
+    )
+    .map_err(|error| ToolError::Io(format!("sandbox: {error}")))?;
     command
         .args(&argv[1..])
         .current_dir(&cwd)
@@ -101,13 +108,6 @@ pub fn run_command(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     platform_spawn_setup(&mut command);
-    constrain(
-        &mut command,
-        SandboxExec {
-            workspace: engine.workspace.root().to_path_buf(),
-            allow_network,
-        },
-    );
     let mut child = command
         .spawn()
         .map_err(|error| ToolError::Io(format!("não foi possível executar: {error}")))?;

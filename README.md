@@ -86,7 +86,7 @@ cargo run -p cd-ai-cli -- task --model <modelo> [--workspace <pasta>] [--mode as
 
 Cada escrita e cada comando que não seja leitura pedem aprovação no terminal (`Aprovar? [s/N]`),
 no modo padrão ASK. Sem terminal interativo a ação é negada — não existe `--yes`.
-`--mode auto` edita sozinho e, com sandbox Linux, também corre comandos de escrita.
+`--mode auto` edita sozinho e, com sandbox (Linux, macOS ou Windows), também corre comandos de escrita. No Windows o sandbox pede, uma vez, `cd-ai sandbox-setup` num terminal de administrador.
 `--mode full-access` só existe com sandbox ativo (Linux). Rede, destrutivo e secrets sempre
 pedem aprovação. Uma tarefa interrompida volta com `--resume <id>`, e o Ctrl+C cancela a
 tarefa e os processos filhos.

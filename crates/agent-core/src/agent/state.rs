@@ -92,6 +92,10 @@ impl Default for AgentLimits {
 pub struct FileChange {
     pub path: String,
     pub hash_after: String,
+    /// The file was there before the task's first write to it. When the baseline has no copy (a
+    /// gitignored file), rollback cannot restore it and must not delete it either.
+    #[serde(default)]
+    pub existed_before: bool,
 }
 
 /// One file the safe rollback refused to touch, with the diff the user needs to decide.
@@ -478,6 +482,7 @@ mod tests {
         state.files_changed.push(FileChange {
             path: "src/a.rs".to_string(),
             hash_after: "abc".to_string(),
+            ..Default::default()
         });
         state.commands.push(CommandRecord {
             argv: vec!["cargo".to_string(), "test".to_string()],

@@ -18,6 +18,11 @@ A máquina de desenvolvimento roda Windows 11 sem WSL. O alvo do primeiro releas
 - Validação de workspace cobre os casos de Windows (letras de drive, UNC, junctions) e de Linux (symlinks).
 - Execução de comandos passa por um módulo de plataforma: o core não chama `cmd`, `powershell` ou `bash` diretamente.
 - **Fase 7 (2026-09-16):** no Linux, `run_command` entra em sandbox (Landlock + user/net namespace). Rede bloqueada por padrão; só um comando da classe `network` **aprovado** ganha rede. Windows/macOS continuam sem sandbox de SO: FULL ACCESS indisponível, e comando `write` em AUTO pergunta.
+- **Sandbox nos três sistemas (2026-09-26):**
+  - Linux: as pastas graváveis são o workspace, os temporários e só os caches de pacote (`~/.cargo/registry`, `~/.cargo/git`, `~/.bun/install/cache`, `~/.npm/_cacache`, subpastas de `~/.cache`). Nada que rode depois fora do sandbox (`~/.cargo/bin`, `~/.rustup`, `~/.bun/bin`, `~/.local/share`, `~/.cache/pre-commit`, corepack).
+  - macOS: `sandbox-exec` (Seatbelt) com o mesmo conjunto gravável e `deny network*`.
+  - Windows: AppContainer, iniciado pelo próprio executável em modo launcher (`agent_core::sandbox::init()` no `main`). O container recebe por ACL o workspace (modificar), os caches (modificar) e, só leitura, as toolchains do PATH dentro do perfil. Sem rede, nem loopback. Um comando `network` aprovado roda fora do container (lá dentro ele perderia loopback, gerenciador de credenciais e `~/.ssh`).
+  - Windows exige um passo único de administrador, `cd-ai sandbox-setup`: git, Rust e Node resolvem o nome real de cada caminho listando as pastas-pai, e `C:\` e `C:\Users` não deixam nenhum AppContainer listá-las. O setup dá só a listagem dessas pastas (nunca o conteúdo). Sem ele o probe reporta indisponível e tudo continua como ASK.
 
 ## Esclarecimento (2026-09-11)
 
@@ -26,5 +31,5 @@ A máquina de desenvolvimento roda Windows 11 sem WSL. O alvo do primeiro releas
 
 ## Consequências
 
-- Testes de sandbox Linux rodam na Fase 7 (`crates/agent-core/src/sandbox.rs`). No Windows/macOS o probe reporta indisponível e a policy rebaixa FULL ACCESS para ASK.
+- Testes de sandbox: Linux em `crates/agent-core/src/sandbox/linux.rs`, macOS em `sandbox/macos.rs` (pulam quando `sandbox-exec` falta), Windows ponta a ponta em `crates/agent-core/tests/windows_sandbox.rs` (binário próprio, porque é também o launcher). Sem sandbox pronto, o probe reporta indisponível e a policy rebaixa FULL ACCESS para ASK.
 - CI local precisa rodar os testes de path em ambas as plataformas quando o Linux estiver disponível.

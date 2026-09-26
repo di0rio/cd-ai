@@ -345,7 +345,6 @@ fn run_loop(
     model: &mut dyn ChatModel,
     responder: Responder<'_>,
 ) -> (StopReason, String) {
-    let started = Instant::now();
     let task_timeout = Duration::from_millis(ctx.limits.task_timeout_ms);
 
     let shadow = match ShadowRepo::open(ctx.store.data_dir(), &ctx.workspace) {
@@ -367,6 +366,9 @@ fn run_loop(
         );
         let _ = ctx.store.save_state(state);
     }
+    // The baseline snapshot copies the whole workspace; on a big repo (or a slow Windows git) it
+    // would eat the deadline before the model is ever called.
+    let started = Instant::now();
 
     // A task parked on an approval prompt is spending the human's time, not the machine's, so it
     // must not spend the deadline either. The wait happens inside the caller's `Responder` (the CLI
@@ -923,6 +925,7 @@ fn apply_tool_event(
         ToolEvent::FileChanged {
             path,
             diff,
+            hash_before,
             hash_after,
             ..
         } => {
@@ -936,6 +939,8 @@ fn apply_tool_event(
                 None => state.files_changed.push(FileChange {
                     path: path.clone(),
                     hash_after: hash_after.clone(),
+                    // A new file's "before" is the empty content.
+                    existed_before: *hash_before != crate::tools::sha256_hex(b""),
                 }),
             }
         }
@@ -1941,15 +1946,25 @@ mod tests {
         )])]);
         let ctx = harness.context();
         let cancel = ctx.cancel.clone();
-        let watcher = std::thread::spawn(move || {
-            std::thread::sleep(Duration::from_millis(200));
-            cancel.cancel();
-        });
+        // Cancel only once the command is about to run: a fixed delay from the start races the
+        // baseline snapshot, which is slow on Windows.
+        let mut watcher = None;
+        let mut grant_then_cancel = |request: ApprovalRequest| {
+            let cancel = cancel.clone();
+            watcher = Some(std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_millis(200));
+                cancel.cancel();
+            }));
+            grant(request)
+        };
 
         let started = Instant::now();
-        let (state, events) = run(ctx, &mut model, start("durma"), &mut grant);
+        let (state, events) = run(ctx, &mut model, start("durma"), &mut grant_then_cancel);
         let elapsed = started.elapsed();
-        watcher.join().unwrap();
+        watcher
+            .expect("the command asks for approval")
+            .join()
+            .unwrap();
 
         assert!(
             elapsed < Duration::from_secs(3),

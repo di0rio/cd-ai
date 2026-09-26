@@ -35,18 +35,21 @@ const USAGE: &str = "uso: cd-ai [--version | --help]
      cd-ai memory stale <id> [--workspace <pasta>]
      cd-ai eval --model <nome> [--suite <pasta>] [--task <id>] [--out <arquivo>] [--ctx <n>]
      cd-ai eval --scripted [--suite <pasta>] [--task <id>] [--out <arquivo>] [--ctx <n>]
+     cd-ai sandbox-setup [--workspace <pasta>]
 
 --continue: a tarefa nova continua a última deste workspace e herda o relatório dela (pedido,
 arquivos alterados, comandos e resumo), nunca a conversa inteira.
 --mode: ASK (padrão) pergunta; AUTO edita sozinho e, com sandbox, escreve sozinho; FULL ACCESS
-exige sandbox Linux completo. Rede, destrutivo e secrets sempre pedem aprovação.
+exige sandbox completo (Linux, macOS ou Windows). Rede, destrutivo e secrets sempre pedem aprovação.
 --trajectories: grava JSONL local da tarefa (desligado por padrão; também em settings.json).
 history: lista as tarefas do workspace, mais recentes primeiro.
 rollback: reverte só o que o agente escreveu; mudanças do usuário no mesmo arquivo são
 protegidas, a menos que --force. Não toca no git do projeto.
 memory: regras e fatos do workspace, locais, editáveis; só os relevantes entram no prompt.
 eval: corre a suíte em evals/ sobre cópias descartáveis e aprova sozinho. --scripted não fala com
-o Ollama.";
+o Ollama.
+sandbox-setup: no Windows, uma vez, como administrador: deixa o sandbox listar C:\\ e C:\\Users
+(só a pasta, nunca o conteúdo). --workspace inclui as pastas acima de um projeto fora do perfil.";
 
 const DEFAULT_CTX: u32 = 8192;
 
@@ -56,6 +59,8 @@ const TASK_CTX: u32 = 16_384;
 
 #[tokio::main]
 async fn main() -> ExitCode {
+    // Before anything else: on Windows this process may be the sandbox launcher.
+    agent_core::sandbox::init();
     let mut args = std::env::args().skip(1);
 
     match args.next().as_deref() {
@@ -74,6 +79,7 @@ async fn main() -> ExitCode {
         Some("rollback") => rollback(args),
         Some("memory") => memory_cmd(args),
         Some("eval") => eval_cmd(args).await,
+        Some("sandbox-setup") => sandbox_setup(args),
         Some(other) => {
             eprintln!("argumento desconhecido: {other}\n{USAGE}");
             ExitCode::from(2)
@@ -81,16 +87,38 @@ async fn main() -> ExitCode {
     }
 }
 
-/// The Ollama base URL from `OLLAMA_HOST`, with the scheme filled in when it is missing.
+fn sandbox_setup(mut args: impl Iterator<Item = String>) -> ExitCode {
+    let mut extra = Vec::new();
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--workspace" => {
+                let Some(value) = flag_value(&mut args, "--workspace", "uma pasta") else {
+                    return ExitCode::from(2);
+                };
+                extra.push(std::path::PathBuf::from(value));
+            }
+            other => {
+                eprintln!("argumento desconhecido: {other}\n{USAGE}");
+                return ExitCode::from(2);
+            }
+        }
+    }
+    match agent_core::sandbox::setup_host(&extra) {
+        Ok(lines) => {
+            for line in lines {
+                println!("{line}");
+            }
+            ExitCode::SUCCESS
+        }
+        Err(report) => {
+            eprintln!("{report}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
 fn ollama_client() -> Result<OllamaClient, String> {
-    let raw = std::env::var("OLLAMA_HOST")
-        .unwrap_or_else(|_| agent_core::ollama::DEFAULT_BASE_URL.to_string());
-    let base = if raw.starts_with("http") {
-        raw
-    } else {
-        format!("http://{raw}")
-    };
-    OllamaClient::new(&base)
+    OllamaClient::new(&agent_core::ollama::base_url_from_env())
 }
 
 /// Reads the value that follows a flag, reporting the usage error when it is missing.

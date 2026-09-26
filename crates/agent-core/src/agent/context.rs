@@ -715,6 +715,7 @@ mod tests {
         let changed = vec![FileChange {
             path: "src/a.ts".to_string(),
             hash_after: "x".to_string(),
+            ..Default::default()
         }];
         let omitted = apply_hygiene(&mut messages, &changed);
         assert!(omitted >= 1);
@@ -754,6 +755,7 @@ mod tests {
         let changed = vec![FileChange {
             path: "f0.ts".to_string(),
             hash_after: "h".to_string(),
+            ..Default::default()
         }];
         let ok = compact_history(&mut messages, "pedido original", &changed, &[]);
         assert!(ok);

@@ -135,7 +135,7 @@ function Diff({ diff }: { diff: string }) {
           // biome-ignore lint/suspicious/noArrayIndexKey: a diff is a fixed list of lines, in order
           key={index}
           className={`block px-3 ${
-            line.startsWith("+++") || line.startsWith("---")
+            index < 2 && (line.startsWith("+++") || line.startsWith("---"))
               ? "text-ink-faint"
               : line.startsWith("+")
                 ? "bg-ok/10 text-ok"
