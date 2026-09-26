@@ -4,6 +4,9 @@ on:
   pull_request:
   workflow_dispatch:
   push:
+    # `main` too: without it nothing guards the branch between releases, since a merge
+    # commit is never itself checked by the pull_request run.
+    branches: [main]
     tags: ["v*"]
 
 permissions:
