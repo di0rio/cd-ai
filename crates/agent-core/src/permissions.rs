@@ -259,10 +259,13 @@ pub fn classify(argv: &[String]) -> CommandClass {
         "ls" | "cat" | "head" | "tail" | "less" | "grep" | "wc" | "file" | "stat" | "which"
         | "echo" => CommandClass::Read,
         "find" => classify_find(argv),
-        // `--pre` runs an arbitrary program on every file searched.
-        "rg" if argv
-            .iter()
-            .any(|token| token == "--pre" || token.starts_with("--pre=")) =>
+        // `--pre` runs an arbitrary program on every file searched, `--hostname-bin` one per
+        // hyperlink.
+        "rg" if argv.iter().any(|token| {
+            ["--pre", "--hostname-bin"]
+                .iter()
+                .any(|flag| token == flag || token.starts_with(&format!("{flag}=")))
+        }) =>
         {
             CommandClass::Unknown
         }
@@ -306,6 +309,10 @@ fn names_another_program(basename: &str, argv: &[String]) -> bool {
         "cargo" => any(&|token| {
             token == "--config" || token.starts_with("--config=") || token.starts_with("-Z")
         }),
+        // Runs every script through the named program instead of the system shell.
+        "npm" | "pnpm" | "yarn" | "bun" => {
+            any(&|token| token == "--script-shell" || token.starts_with("--script-shell="))
+        }
         "go" => any(&|token| {
             let flag = token.trim_start_matches('-');
             token.starts_with('-')
@@ -774,6 +781,14 @@ mod tests {
             cv(&["find", ".", "-ok", "rm", "{}", "+"]),
             cv(&["rg", "--pre", "sh", "x", "."]),
             cv(&["rg", "--pre=sh", "x", "."]),
+            cv(&[
+                "rg",
+                "--hostname-bin",
+                "./x",
+                "--hyperlink-format=default",
+                "y",
+            ]),
+            cv(&["rg", "--hostname-bin=./x", "y"]),
         ] {
             assert_eq!(classify(&argv), CommandClass::Unknown, "{argv:?}");
         }
@@ -914,6 +929,8 @@ mod tests {
             cv(&["make", "test", "CC=evil"]),
             cv(&["make", "check", "--eval", "x"]),
             cv(&["just", "test", "SHELL=evil"]),
+            cv(&["npm", "test", "--script-shell", "./evil.sh"]),
+            cv(&["pnpm", "run", "test", "--script-shell=./evil.sh"]),
         ] {
             assert_eq!(classify(&argv), CommandClass::Unknown, "{argv:?}");
         }

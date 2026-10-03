@@ -47,27 +47,38 @@ const ENTROPY_MIN_UNIQUE: u32 = 26;
 /// Detects a secret by file path (design §6.1). Never touches the content.
 pub fn detect_path_secret(path: &Path) -> Option<SecretKind> {
     let file_name = path.file_name()?.to_string_lossy();
-    let lower_name = file_name.to_lowercase();
+    // Windows opens `.env::$DATA`, `.env.` and `.env ` as `.env`: judge the name it will resolve to.
+    let file_name = file_name.split(':').next().unwrap_or_default();
+    let lower_name = file_name.trim_end_matches(['.', ' ']).to_lowercase();
 
     if lower_name == ".env" || lower_name.ends_with(".env") || lower_name.contains(".env.") {
         return Some(SecretKind::DotEnv);
     }
-    if lower_name.starts_with("id_")
-        && (lower_name.ends_with("rsa")
-            || lower_name.ends_with("ed25519")
-            || lower_name.ends_with("ecdsa"))
+    if lower_name == ".envrc" {
+        return Some(SecretKind::DotEnv);
+    }
+    if ["id_rsa", "id_dsa", "id_ecdsa", "id_ed25519"]
+        .iter()
+        .any(|key| lower_name.starts_with(key))
+        && !lower_name.ends_with(".pub")
     {
         return Some(SecretKind::PrivateKey);
     }
     if lower_name.contains("credential") || lower_name.contains("secret") {
         return Some(SecretKind::Credentials);
     }
-    if let Some(extension) = path.extension() {
-        match extension.to_string_lossy().to_lowercase().as_str() {
-            "pem" | "key" | "p12" | "pfx" | "cer" | "crt" => {
+    if matches!(
+        lower_name.as_str(),
+        ".npmrc" | ".netrc" | "_netrc" | ".pgpass" | ".pypirc" | ".htpasswd"
+    ) {
+        return Some(SecretKind::Credentials);
+    }
+    if let Some((_, extension)) = lower_name.rsplit_once('.') {
+        match extension {
+            "pem" | "key" | "p12" | "pfx" | "cer" | "crt" | "ppk" | "jks" | "keystore" | "p8" => {
                 return Some(SecretKind::PrivateKey);
             }
-            "kdbx" => return Some(SecretKind::Credentials),
+            "kdbx" | "tfstate" | "tfvars" => return Some(SecretKind::Credentials),
             _ => {}
         }
     }
@@ -81,6 +92,7 @@ pub fn recognize(text: &str) -> Vec<SecretSpan> {
     spans.extend(pem_spans(text));
     spans.extend(jwt_spans(text));
     spans.extend(userinfo_spans(text));
+    spans.extend(assignment_spans(text));
     spans.extend(entropy_spans(text));
     // The entropy scan works on bytes; widen every span to whole characters before slicing.
     for span in &mut spans {
@@ -135,34 +147,49 @@ fn fragment(kind: &SecretKind) -> &'static str {
 
 /// Rule 1: well-known token prefixes. Scans by byte slices, no regex.
 fn prefix_spans(text: &str) -> Vec<SecretSpan> {
-    const PREFIXES: &[(&str, SecretKind)] = &[
-        ("sk_live_", SecretKind::Credentials),
-        ("sk-", SecretKind::Credentials),
-        ("ghp_", SecretKind::Credentials),
-        ("gho_", SecretKind::Credentials),
-        ("ghu_", SecretKind::Credentials),
-        ("xoxb-", SecretKind::Credentials),
-        ("xoxp-", SecretKind::Credentials),
-        ("gsk_", SecretKind::Credentials),
-        ("rk_live_", SecretKind::Credentials),
-        ("AKIA", SecretKind::Credentials),
+    // `(prefix, shortest tail)`: the short or common prefixes (`ASIA`, `hf_`) need a real token behind them.
+    const PREFIXES: &[(&str, usize)] = &[
+        ("sk_live_", 0),
+        ("sk-", 0),
+        ("ghp_", 0),
+        ("gho_", 0),
+        ("ghu_", 0),
+        ("ghs_", 20),
+        ("ghr_", 20),
+        ("github_pat_", 20),
+        ("glpat-", 16),
+        ("xoxb-", 0),
+        ("xoxp-", 0),
+        ("xoxa-", 0),
+        ("xoxs-", 0),
+        ("xapp-", 0),
+        ("gsk_", 0),
+        ("rk_live_", 0),
+        ("AKIA", 0),
+        ("ASIA", 12),
+        ("AIza", 30),
+        ("npm_", 30),
+        ("hf_", 30),
+        ("shpat_", 20),
+        ("pypi-", 30),
     ];
     let bytes = text.as_bytes();
     let mut spans = Vec::new();
-    for (prefix, kind) in PREFIXES {
+    for (prefix, shortest) in PREFIXES {
         let pb = prefix.as_bytes();
         let mut index = 0;
-        while let Some(offset) = bytes[index..]
-            .windows(pb.len())
-            .position(|window| window == pb)
-        {
+        // `str::find` runs the standard library's optimized search even in a debug build.
+        while let Some(offset) = text[index..].find(prefix) {
             let start = index + offset;
-            let end = start + token_run(&bytes[start + pb.len()..]) + pb.len();
-            spans.push(SecretSpan {
-                start,
-                end,
-                kind: kind.clone(),
-            });
+            let tail = token_run(&bytes[start + pb.len()..]);
+            let end = start + tail + pb.len();
+            if tail >= *shortest {
+                spans.push(SecretSpan {
+                    start,
+                    end,
+                    kind: SecretKind::Credentials,
+                });
+            }
             index = end.max(start + 1);
         }
     }
@@ -197,7 +224,20 @@ fn pem_spans(text: &str) -> Vec<SecretSpan> {
                     + b"-----END".len()
                     + pem_tail(&bytes[block_start + e + b"-----END".len()..])
             }
-            None => break,
+            None => {
+                // Output cut mid-key (size cap, truncated read): the body has no footer to find,
+                // and everything after the header is key material.
+                let header_end = find_subslice(&bytes[block_start..], b"\n")
+                    .map_or(bytes.len(), |end| block_start + end);
+                if text[block_start..header_end].contains("PRIVATE KEY") {
+                    spans.push(SecretSpan {
+                        start: block_start,
+                        end: bytes.len(),
+                        kind: SecretKind::PrivateKey,
+                    });
+                }
+                break;
+            }
         };
         let block = &text[block_start..block_end.min(text.len())];
         if block.contains("PRIVATE KEY") {
@@ -345,6 +385,86 @@ fn userinfo_spans(text: &str) -> Vec<SecretSpan> {
     spans
 }
 
+/// Rule 4b: the value in `password=...`, `"api_key": "..."`, `Bearer ...`. Entropy cannot see
+/// hex tokens (16 symbols top out at 4.0 bits) or short passwords; the name next to the value can.
+/// An unquoted value needs a digit, so `token = tokens.next()` and `password: string` stay readable.
+fn assignment_spans(text: &str) -> Vec<SecretSpan> {
+    const KEYS: &[&str] = &[
+        "password",
+        "passwd",
+        "secret",
+        "token",
+        "api_key",
+        "apikey",
+        "api-key",
+        "private_key",
+        "access_key",
+        "authorization",
+        "bearer",
+    ];
+    const MIN_VALUE: usize = 8;
+    let bytes = text.as_bytes();
+    // ASCII-only lowercasing keeps every byte offset.
+    let lower = text.to_ascii_lowercase();
+    let value_byte = |b: u8| b.is_ascii_alphanumeric() || b"+/=_.~-".contains(&b);
+    let mut spans = Vec::new();
+    for key in KEYS {
+        let bearer = *key == "bearer";
+        let mut index = 0;
+        while let Some(offset) = lower[index..].find(key) {
+            let mut cursor = index + offset + key.len();
+            index = cursor;
+            if bearer {
+                // Only the header form: `Bearer <token>` after a single space.
+                if bytes.get(cursor) != Some(&b' ') {
+                    continue;
+                }
+                cursor += 1;
+            } else {
+                // Rest of the identifier (`token_value`), a closing quote, then `=` or `:`.
+                while bytes
+                    .get(cursor)
+                    .is_some_and(|b| b.is_ascii_alphanumeric() || *b == b'_' || *b == b'-')
+                {
+                    cursor += 1;
+                }
+                if matches!(bytes.get(cursor), Some(b'"' | b'\'')) {
+                    cursor += 1;
+                }
+                while bytes.get(cursor) == Some(&b' ') {
+                    cursor += 1;
+                }
+                if !matches!(bytes.get(cursor), Some(b'=' | b':')) {
+                    continue;
+                }
+                cursor += 1;
+                while matches!(bytes.get(cursor), Some(b' ' | b'\t')) {
+                    cursor += 1;
+                }
+            }
+            let quoted = matches!(bytes.get(cursor), Some(b'"' | b'\''));
+            if quoted {
+                cursor += 1;
+            }
+            let start = cursor;
+            while bytes.get(cursor).is_some_and(|b| value_byte(*b)) {
+                cursor += 1;
+            }
+            let value = &bytes[start..cursor];
+            let long_enough = value.len() >= if bearer { 16 } else { MIN_VALUE };
+            if long_enough && (quoted || bearer || value.iter().any(u8::is_ascii_digit)) {
+                spans.push(SecretSpan {
+                    start,
+                    end: cursor,
+                    kind: SecretKind::Credentials,
+                });
+            }
+            index = cursor.max(index);
+        }
+    }
+    spans
+}
+
 /// Rule 5: Shannon-mean entropy across a sliding 32-byte window, limit 4.7 bits/char,
 /// two consecutive windows — calibrated on Spike B (design §9). Never a 16-byte window:
 /// its theoretical ceiling is log2(16) = 4.0, unreachable above any real limit.
@@ -439,8 +559,19 @@ fn shannon_from_counts(counts: &[u32; 256]) -> f64 {
         .sum::<f64>()
 }
 
+/// Jumps between occurrences of the needle's first byte instead of comparing every window: the
+/// rules above scan a 64 KiB command output once per keyword.
 fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    haystack.windows(needle.len()).position(|w| w == needle)
+    let first = *needle.first()?;
+    let mut from = 0;
+    while let Some(offset) = haystack[from..].iter().position(|byte| *byte == first) {
+        let start = from + offset;
+        if haystack[start..].starts_with(needle) {
+            return Some(start);
+        }
+        from = start + 1;
+    }
+    None
 }
 
 /// Friendly view of an approved secret file: keys only for `.env`, metadata for keys (design §6.4).
@@ -851,5 +982,90 @@ mod tests {
             }
             _ => panic!("esperado PrivateKey"),
         }
+    }
+
+    #[test]
+    fn path_sees_through_windows_aliases() {
+        for name in [".env::$DATA", ".env:stream", ".env.", ".env ", ".envrc"] {
+            assert_eq!(
+                detect_path_secret(Path::new(name)),
+                Some(SecretKind::DotEnv),
+                "{name}"
+            );
+        }
+        for name in ["id_ed25519_github", "id_rsa.bak", "key.PPK", "prod.tfstate"] {
+            assert!(detect_path_secret(Path::new(name)).is_some(), "{name}");
+        }
+        for name in [".npmrc", ".netrc", ".pgpass"] {
+            assert_eq!(
+                detect_path_secret(Path::new(name)),
+                Some(SecretKind::Credentials),
+                "{name}"
+            );
+        }
+        for name in ["id_rsa.pub", "id_generator.rs", "envrc.md"] {
+            assert_eq!(detect_path_secret(Path::new(name)), None, "{name}");
+        }
+    }
+
+    #[test]
+    fn more_token_formats_are_redacted() {
+        for token in [
+            "ghs_16C7e42F292c6912E7710c838347Ae178B4a",
+            "github_pat_11ABCDEFG0abcdefghijkl_mnopqrstuvwxyz",
+            "glpat-xxxxxxxxxxxxxxxxxxxx",
+            "xoxs-123456789012-abcdef",
+            "ASIAIOSFODNN7EXAMPLE",
+            "AIzaSyA-1234567890abcdefghijklmnopqrstu",
+            "npm_abcdefghijklmnopqrstuvwxyz0123456789",
+            // concat!: o literal inteiro dispararia o push protection do GitHub (é falso, só pra teste).
+            concat!("hf_", "abcdefghijklmnopqrstuvwxyzABCDEFGH"),
+        ] {
+            let redacted = redact(&format!("key {token} end"));
+            assert!(!redacted.text.contains(token), "{token}: {}", redacted.text);
+        }
+        // Short look-alikes are ordinary words.
+        for text in ["ASIAN markets", "hf_x", "npm_config_registry"] {
+            assert_eq!(redact(text).text, text);
+        }
+    }
+
+    #[test]
+    fn assigned_secrets_are_redacted_by_name() {
+        for (text, secret) in [
+            ("DB_PASSWORD=5f4dcc3b5aa765d61d8327deb882cf99", "5f4dcc3b5"),
+            ("api_key: 0123456789abcdef", "0123456789abcdef"),
+            (r#"{"token": "correcthorse"}"#, "correcthorse"),
+            ("secret = 'hunter2hunter2'", "hunter2hunter2"),
+            (
+                "Authorization: Bearer abcDEFghiJKLmnopQRSTuv",
+                "abcDEFghiJKLmnopQRSTuv",
+            ),
+        ] {
+            let redacted = redact(text);
+            assert!(!redacted.text.contains(secret), "{text}: {}", redacted.text);
+        }
+    }
+
+    #[test]
+    fn assignment_rule_leaves_code_readable() {
+        for text in [
+            "let token = tokens.next();",
+            "password: string;",
+            "const secret = loadSecret(path);",
+            "the token expires soon",
+            "Bearer token",
+            "token: \"\"",
+        ] {
+            assert_eq!(redact(text).text, text);
+        }
+    }
+
+    #[test]
+    fn a_private_key_cut_short_is_still_redacted() {
+        let text = "saída:\n-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAABG5vbmU";
+        let redacted = redact(text);
+        assert!(!redacted.text.contains("b3BlbnNz"), "{}", redacted.text);
+        assert!(redacted.text.starts_with("saída:"));
     }
 }
