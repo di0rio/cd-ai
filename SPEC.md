@@ -643,7 +643,7 @@ Comandos compostos (pipes, `&&`, `;`, subshells, `$(...)`) recebem a classifica�
 Validar paths não protege o shell: `run_command` pode fazer qualquer coisa que o usuário faria. A promessa "não sair do workspace" só é garantida com sandbox do sistema operacional.
 
 - **Linux:** executar comandos em sandbox (ex.: bubblewrap, landlock, namespaces), com escrita permitida só no workspace e diretórios temporários/cache necessários, e **rede bloqueada por padrão**.
-- **Plataforma sem sandbox disponível:** o modo FULL ACCESS fica indisponível, e todo comando fora das classes `read`/`validate` exige aprovação.
+- **Plataforma sem sandbox disponível:** o modo FULL ACCESS fica indisponível, e todo comando fora da classe `read` exige aprovação — inclusive `validate`, que executa código do próprio repositório (`build.rs`, scripts de pacote). No Windows, `cd-ai sandbox-setup` restaura a execução automática.
 
 A rede é liberada por comando, com aprovação explícita (ex.: instalar dependências).
 
@@ -654,7 +654,8 @@ A rede é liberada por comando, com aprovação explícita (ex.: instalar depend
 | Ler arquivo no workspace | auto | auto | auto |
 | Editar/criar arquivo no workspace | aprovar | auto | auto |
 | Deletar arquivo | aprovar | aprovar | auto (com checkpoint) |
-| Comando `read` / `validate` | auto | auto | auto |
+| Comando `read` | auto | auto | auto |
+| Comando `validate` | auto (sandbox) | auto (sandbox) | auto (sandbox) |
 | Comando `write` | aprovar | auto (sandbox) | auto (sandbox) |
 | Comando `network` | aprovar | aprovar | aprovar |
 | Comando `destructive` / `unknown` | aprovar | aprovar | aprovar |
