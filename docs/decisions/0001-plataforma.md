@@ -8,7 +8,7 @@ A máquina de desenvolvimento roda Windows 11 sem WSL. O alvo do primeiro releas
 
 ## Decisão
 
-- **Fases 1–6:** desenvolvimento no Windows 11 nativo. Tauri, Rust e Ollama (com GPU) funcionam nativamente.
+- **Fases 1-6:** desenvolvimento no Windows 11 nativo. Tauri, Rust e Ollama (com GPU) funcionam nativamente.
 - **Alvo do primeiro release:** Linux x86_64 (`.deb` e AppImage).
 - **Linux entra obrigatoriamente** (WSL2 ou VM) na Fase 7 (sandbox de shell) e na Fase 14 (empacotamento e instalação limpa).
 
@@ -26,7 +26,7 @@ A máquina de desenvolvimento roda Windows 11 sem WSL. O alvo do primeiro releas
 
 ## Esclarecimento (2026-09-11)
 
-- **Linux é o alvo de release; Windows é o ambiente de desenvolvimento completo** (não "fases 1–6 e depois abandona").
+- **Linux é o alvo de release; Windows é o ambiente de desenvolvimento completo** (não "fases 1-6 e depois abandona").
 - **Segurança básica de execução existe desde o Tool Engine** (Fase 4): classificação de comando e aprovação. A Fase 7 adiciona o **sandbox de OS** (isolamento de processos), que é uma camada a mais sobre essa base, não o começo da segurança.
 
 ## Consequências

@@ -2,7 +2,7 @@
 
 Situação em 2026-09-15. Plano: `plans/015-fase-5-loop-ponta-a-ponta.md`.
 
-## O que já estava em `main` (Partes 0–G)
+## O que já estava em `main` (Partes 0-G)
 
 | Parte | O que entregou |
 |---|---|

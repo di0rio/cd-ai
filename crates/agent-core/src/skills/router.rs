@@ -1,4 +1,4 @@
-//! Deterministic Skill Router (SPEC §17.3, plan 021 D4–D7).
+//! Deterministic Skill Router (SPEC §17.3, plan 021 D4-D7).
 //!
 //! Pure function: same inputs → same loaded names, in a stable order. No LLM, no IO,
 //! no permission changes.

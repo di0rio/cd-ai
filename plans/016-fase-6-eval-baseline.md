@@ -2,7 +2,7 @@
 
 > **Instruções ao executor:** rode os passos nesta ordem e confirme cada verificação antes de avançar. Se alguma STOP condition acontecer, pare e reporte; não improvise. Uma parte só está pronta com `bun run verify` saindo com exit 0 (AGENTS.md).
 >
-> **Drift check (rode primeiro):** `git log -1 --oneline` deve estar em `main` (Fases 0–5 mergeadas). Confira `evals/fixtures/soma/`, `apps/cli/src/main.rs` (`cd-ai task`) e `crates/agent-core/src/agent/runner.rs` (`run_task`, `ScriptedModel`). Se o comando `task` ou o fixture tiverem sumido, trate como STOP.
+> **Drift check (rode primeiro):** `git log -1 --oneline` deve estar em `main` (Fases 0-5 mergeadas). Confira `evals/fixtures/soma/`, `apps/cli/src/main.rs` (`cd-ai task`) e `crates/agent-core/src/agent/runner.rs` (`run_task`, `ScriptedModel`). Se o comando `task` ou o fixture tiverem sumido, trate como STOP.
 
 ## Status
 
@@ -17,7 +17,7 @@
 
 A Fase 5 fecha o loop, mas a única prova de que o agente “resolve uma tarefa” é um aceite manual (e o de 2026-09-12 reprovou por timeout de aprovação). Sem eval, mudanças de prompt, parser ou tools não têm um número para comparar.
 
-A Fase 6 não é a suíte de 20–50 tarefas do SPEC §26. É o **harness** e um **baseline pequeno**: cada tarefa com check automático e limite de tempo, runner na CLI sem UI, relatório com as métricas do §26, resultados gravados.
+A Fase 6 não é a suíte de 20-50 tarefas do SPEC §26. É o **harness** e um **baseline pequeno**: cada tarefa com check automático e limite de tempo, runner na CLI sem UI, relatório com as métricas do §26, resultados gravados.
 
 ## Estado atual (fatos)
 
@@ -34,7 +34,7 @@ A Fase 6 não é a suíte de 20–50 tarefas do SPEC §26. É o **harness** e um
 | D1 | **`cd-ai eval` auto-aprova** no workspace que ele mesmo copiou. `cd-ai task` continua sem `--yes`. | SPEC §26 é headless. O fixture copiado é descartável, nunca o projeto do usuário. |
 | D2 | **`evals/fixtures/` permanece** (não renomear para `repos/`). `evals/tasks/` são as tarefas; `evals/results/` os relatórios. | Fase 5 já publicou `fixtures/soma/`. A árvore do SPEC §7.1 (`repos/`) é o papel, não o nome no disco. |
 | D3 | **Sucesso = exit do check**, não o status do agente. | O modelo pode encerrar em `completed_unvalidated` com o bug intacto. |
-| D4 | **Suite enxuta (3 tarefas).** 20–50 vem depois, quando o harness existir. | SPEC §34 pede baseline, não a suíte final. |
+| D4 | **Suite enxuta (3 tarefas).** 20-50 vem depois, quando o harness existir. | SPEC §34 pede baseline, não a suíte final. |
 | D5 | **`--scripted` usa o campo `script` da tarefa** via `ScriptedModel` (passa a ser API pública do core). | Dry-run sem Ollama; os testes do harness não dependem de rede. |
 | D6 | **Módulo `eval` no `agent-core`.** A CLI só adapta args, imprime e grava. | Fronteira de confiança é o Rust. Sem crate novo. |
 | D7 | **Eval usa `TaskStore` temporário**, nunca o diretório de dados do usuário. | Isolamento. `CD_AI_DATA_DIR` nos testes. |

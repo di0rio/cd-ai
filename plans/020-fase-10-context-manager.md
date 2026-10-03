@@ -2,7 +2,7 @@
 
 > **Instruções ao executor:** rode os passos nesta ordem e confirme cada verificação antes de avançar. Se alguma STOP condition acontecer, pare e reporte; não improvise. Uma parte só está pronta com `bun run verify` saindo com exit 0 (AGENTS.md).
 >
-> **Drift check (rode primeiro):** `git log -1 --oneline` deve estar em `main` com as Fases 0–9 (PR #7). Confira `crates/agent-core/src/agent/prompt.rs` (`trim_for_budget` / `ContextExhausted`), `crates/agent-core/src/agent/profile.rs`, `crates/agent-core/src/tools/edit.rs` (`parse_check` tree-sitter), `docs/decisions/0008-continuidade-sem-teto-de-token.md` e SPEC §12.1 / §16 / §34 Fase 10. Se o perfil, o corte explícito ou o parse tiverem sumido, trate como STOP.
+> **Drift check (rode primeiro):** `git log -1 --oneline` deve estar em `main` com as Fases 0-9 (PR #7). Confira `crates/agent-core/src/agent/prompt.rs` (`trim_for_budget` / `ContextExhausted`), `crates/agent-core/src/agent/profile.rs`, `crates/agent-core/src/tools/edit.rs` (`parse_check` tree-sitter), `docs/decisions/0008-continuidade-sem-teto-de-token.md` e SPEC §12.1 / §16 / §34 Fase 10. Se o perfil, o corte explícito ou o parse tiverem sumido, trate como STOP.
 
 ## Status
 

@@ -2,8 +2,8 @@
 
 Gerados pela skill `improve` em 2026-09-11.
 
-**Geração 1** (001–009): a partir da árvore de trabalho sobre o commit `158f609`.
-**Geração 2** (010–013): auditado em cima do commit `f6e7764` (que já contém 001–009).
+**Geração 1** (001-009): a partir da árvore de trabalho sobre o commit `158f609`.
+**Geração 2** (010-013): auditado em cima do commit `f6e7764` (que já contém 001-009).
 
 **Antes de executar qualquer plano:** commite o estado atual e use esse commit como base do drift check de cada plano.
 
@@ -33,7 +33,7 @@ Cada executor deve:
 |------|--------|-----------|---------|------------|--------|
 | 010 | Conversa segue eventos vivos (auto-scroll + comando que falha abre) | P1 | S | — | DONE |
 | 011 | Testes de caracterização da CLI (antes do 005 reescrever `main.rs`) | P1 | S | — | DONE |
-| 012 | Design/spike da Fase 4: Tool Engine, permissões, redator, eventos | P1 | M | leitura de 001–009 | DONE |
+| 012 | Design/spike da Fase 4: Tool Engine, permissões, redator, eventos | P1 | M | leitura de 001-009 | DONE |
 | 013 | Tooltip volta a funcionar em botões de ícone desabilitados | P3 | S | — | DONE |
 | 014 | Implementar a Fase 4 (tools, permissões, redator, eventos) | P1 | L | 002, 005, 006, 009, 010, 012 | DONE |
 
@@ -47,11 +47,11 @@ Escrita pelo lead em 2026-09-11 sobre o commit `040369a`. Ponto de partida: `doc
 
 O plano 009 foi adicionado depois do benchmark de modelos (`docs/audit/benchmark-2026-09-11.md`). O modelo CODER escolhido escreve tool calls num formato que o Ollama 0.34 não converte.
 
-**Estado do 015 em 2026-09-15:** Partes 0 e A–G em `main` (PR #2); fechamento com `keep_alive: -1`, `Child::kill` se o kill do grupo falhar, teste determinístico no fixture `soma/` e documentação alinhada. O aceite ao vivo com Ollama+CODER **não** rodou neste ambiente (sem daemon); o loop no mesmo fixture, com `ScriptedModel`, passou. Detalhe em `docs/fase-5-o-que-falta.md` e `docs/audit/fase-5-aceite.md`.
+**Estado do 015 em 2026-09-15:** Partes 0 e A-G em `main` (PR #2); fechamento com `keep_alive: -1`, `Child::kill` se o kill do grupo falhar, teste determinístico no fixture `soma/` e documentação alinhada. O aceite ao vivo com Ollama+CODER **não** rodou neste ambiente (sem daemon); o loop no mesmo fixture, com `ScriptedModel`, passou. Detalhe em `docs/fase-5-o-que-falta.md` e `docs/audit/fase-5-aceite.md`.
 
 ### Geração 4
 
-Escrita em 2026-09-15 sobre o `main` com as Fases 0–5 fechadas.
+Escrita em 2026-09-15 sobre o `main` com as Fases 0-5 fechadas.
 
 | Plano | Título | Prioridade | Esforço | Depende de | Status |
 |------|--------|-----------|---------|------------|--------|
@@ -59,7 +59,7 @@ Escrita em 2026-09-15 sobre o `main` com as Fases 0–5 fechadas.
 
 ### Geração 5
 
-Escrita em 2026-09-16 sobre o `main` com as Fases 0–6 fechadas (PR #3).
+Escrita em 2026-09-16 sobre o `main` com as Fases 0-6 fechadas (PR #3).
 
 | Plano | Título | Prioridade | Esforço | Depende de | Status |
 |------|--------|-----------|---------|------------|--------|
@@ -67,7 +67,7 @@ Escrita em 2026-09-16 sobre o `main` com as Fases 0–6 fechadas (PR #3).
 
 ### Geração 6
 
-Escrita em 2026-09-16 sobre o `main` com as Fases 0–7 fechadas (PR #4).
+Escrita em 2026-09-16 sobre o `main` com as Fases 0-7 fechadas (PR #4).
 
 | Plano | Título | Prioridade | Esforço | Depende de | Status |
 |------|--------|-----------|---------|------------|--------|
@@ -75,7 +75,7 @@ Escrita em 2026-09-16 sobre o `main` com as Fases 0–7 fechadas (PR #4).
 
 ### Geração 7
 
-Escrita em 2026-09-16 sobre o `main` com as Fases 0–8 fechadas (PR #5).
+Escrita em 2026-09-16 sobre o `main` com as Fases 0-8 fechadas (PR #5).
 
 | Plano | Título | Prioridade | Esforço | Depende de | Status |
 |------|--------|-----------|---------|------------|--------|
@@ -83,7 +83,7 @@ Escrita em 2026-09-16 sobre o `main` com as Fases 0–8 fechadas (PR #5).
 
 ### Geração 8
 
-Escrita em 2026-09-16 sobre o `main` com as Fases 0–9 fechadas (PR #7).
+Escrita em 2026-09-16 sobre o `main` com as Fases 0-9 fechadas (PR #7).
 
 | Plano | Título | Prioridade | Esforço | Depende de | Status |
 |------|--------|-----------|---------|------------|--------|
@@ -91,7 +91,7 @@ Escrita em 2026-09-16 sobre o `main` com as Fases 0–9 fechadas (PR #7).
 
 ### Geração 9
 
-Escrita em 2026-09-16 sobre o `main` com as Fases 0–10 fechadas (PR #10).
+Escrita em 2026-09-16 sobre o `main` com as Fases 0-10 fechadas (PR #10).
 
 | Plano | Título | Prioridade | Esforço | Depende de | Status |
 |------|--------|-----------|---------|------------|--------|
@@ -99,7 +99,7 @@ Escrita em 2026-09-16 sobre o `main` com as Fases 0–10 fechadas (PR #10).
 
 ### Geração 10
 
-Escrita em 2026-09-16 sobre o `main` com as Fases 0–11 fechadas (PR #11).
+Escrita em 2026-09-16 sobre o `main` com as Fases 0-11 fechadas (PR #11).
 
 | Plano | Título | Prioridade | Esforço | Depende de | Status |
 |------|--------|-----------|---------|------------|--------|
@@ -107,7 +107,7 @@ Escrita em 2026-09-16 sobre o `main` com as Fases 0–11 fechadas (PR #11).
 
 ### Geração 11
 
-Escrita em 2026-09-16 sobre o `main` com as Fases 0–12 fechadas (PR #12).
+Escrita em 2026-09-16 sobre o `main` com as Fases 0-12 fechadas (PR #12).
 
 | Plano | Título | Prioridade | Esforço | Depende de | Status |
 |------|--------|-----------|---------|------------|--------|
@@ -115,7 +115,7 @@ Escrita em 2026-09-16 sobre o `main` com as Fases 0–12 fechadas (PR #12).
 
 ### Geração 12
 
-Escrita em 2026-09-16 sobre o `main` com as Fases 0–13 fechadas (PR #13).
+Escrita em 2026-09-16 sobre o `main` com as Fases 0-13 fechadas (PR #13).
 
 | Plano | Título | Prioridade | Esforço | Depende de | Status |
 |------|--------|-----------|---------|------------|--------|
@@ -198,4 +198,4 @@ Valores de status: TODO | IN PROGRESS | DONE | BLOCKED (com motivo de uma linha)
 
 - **`tasks === demoTasks` para o badge de demonstração** (`app-shell.tsx:18`): frágil por construção, mas dev-only, funciona hoje e desaparece naturalmente quando os dados reais chegarem. Não vale plano.
 - **Bugs de produção nos componentes estáticos** (ex.: `title` em `empty-workspace.tsx`/`sidebar.tsx`): verificados um a um; só `icon-button.tsx` tinha o problema real de `pointer-events-none` → coberto pelo plano 013.
-- **Rust sem `cargo` neste ambiente de auditoria:** não foi possível rodar `cargo test`/`clippy` aqui; a auditoria do Rust foi por leitura. Os planos 001–011 exigem `bun run verify` numa máquina com cargo (Windows de dev).
+- **Rust sem `cargo` neste ambiente de auditoria:** não foi possível rodar `cargo test`/`clippy` aqui; a auditoria do Rust foi por leitura. Os planos 001-011 exigem `bun run verify` numa máquina com cargo (Windows de dev).

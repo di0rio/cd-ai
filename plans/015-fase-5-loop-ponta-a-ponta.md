@@ -13,7 +13,7 @@
 - **Categoria:** feature (SPEC §34, Fase 5)
 - **Planejado em:** commit `040369a` (`main` local), 2026-09-11
 - **Estado de partida:** `docs/handoff.md`
-- **Implementação das Partes 0–G:** em `main` a partir de `193d198` (core), `7f4fe0d` (bridge), `fa50221` (CLI) e `57c522b` (UI G1+G2)
+- **Implementação das Partes 0-G:** em `main` a partir de `193d198` (core), `7f4fe0d` (bridge), `fa50221` (CLI) e `57c522b` (UI G1+G2)
 - **Fechamento:** 2026-09-15 — ver seção abaixo. Linha em `plans/README.md`: DONE (o aceite ao vivo com Ollama ficou registrado como não executável neste ambiente).
 
 ## Fechamento (2026-09-15)
@@ -137,7 +137,7 @@ O loop precisa ter limites, timeout, cancelamento, detecção de loop e estado p
 | D12 | **Eventos:** `AgentEvent` (Parte C) dentro de `AgentEventMessage { taskId, sequence, at, …flatten }`, no mesmo formato `{ event, data }` do plano 005. Os eventos do `ToolEngine` viajam como `AgentEvent::Tool(ToolEvent)`. | SPEC §22. Um único canal por tarefa. |
 | D13 | **Na CLI, a aprovação é pedida no stdin** (terminal interativo), mostrando o argv ou o diff exato. Sem terminal interativo, o pedido é **negado**. Não existe flag de auto-aprovação. | Decisão 0001: sem sandbox, toda escrita e todo comando não-read pedem aprovação. |
 | D14 | **`num_ctx` padrão de 16384** (decisão 0002, regra 3). O modelo é sempre escolhido por quem chama: a UI escolhe a partir da lista do Ollama, e a CLI exige `--model`. Nenhum nome de modelo fica no código. | Decisão 0002 e seu esclarecimento. |
-| D15 | **Testes que executam processos usam argv por plataforma**, com helpers de teste: `cmd /C echo` e `cmd /C dir /B` no Windows, `echo` e `ls` no Unix; e `powershell -NoProfile -Command "Start-Sleep -Seconds N"` no Windows, `sleep N` no Unix. Nenhum teste chama um binário Unix sem `cfg`. | Decisão 0001: as Fases 1–6 rodam no Windows 11. O gate precisa ficar verde nas duas plataformas. |
+| D15 | **Testes que executam processos usam argv por plataforma**, com helpers de teste: `cmd /C echo` e `cmd /C dir /B` no Windows, `echo` e `ls` no Unix; e `powershell -NoProfile -Command "Start-Sleep -Seconds N"` no Windows, `sleep N` no Unix. Nenhum teste chama um binário Unix sem `cfg`. | Decisão 0001: as Fases 1-6 rodam no Windows 11. O gate precisa ficar verde nas duas plataformas. |
 
 ## Contratos (tipos que as partes criam)
 

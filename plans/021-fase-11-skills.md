@@ -2,7 +2,7 @@
 
 > **Instruções ao executor:** rode os passos nesta ordem e confirme cada verificação antes de avançar. Se alguma STOP condition acontecer, pare e reporte; não improvise. Uma parte só está pronta com `bun run verify` saindo com exit 0 (AGENTS.md).
 >
-> **Drift check (rode primeiro):** `git log -1 --oneline` deve estar em `main` com as Fases 0–10 (PR #10). Confira `crates/agent-core/src/agent/context.rs` (`assemble` / orçamento por seção), `crates/agent-core/src/agent/role.rs` (Explorer/Coder; comentário “Skills are Fase 11”), `crates/agent-core/src/agent/events.rs` (`contextBudgetCut` / `roleChanged`) e SPEC §17 / §12.4 / §34 Fase 11. Se o Context Manager ou o Explorer tiverem sumido, trate como STOP.
+> **Drift check (rode primeiro):** `git log -1 --oneline` deve estar em `main` com as Fases 0-10 (PR #10). Confira `crates/agent-core/src/agent/context.rs` (`assemble` / orçamento por seção), `crates/agent-core/src/agent/role.rs` (Explorer/Coder; comentário “Skills are Fase 11”), `crates/agent-core/src/agent/events.rs` (`contextBudgetCut` / `roleChanged`) e SPEC §17 / §12.4 / §34 Fase 11. Se o Context Manager ou o Explorer tiverem sumido, trate como STOP.
 
 ## Status
 

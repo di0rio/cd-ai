@@ -2,7 +2,7 @@
 
 > **Instruções ao executor:** rode os passos nesta ordem e confirme cada verificação antes de avançar. Se alguma STOP condition acontecer, pare e reporte; não improvise. Uma parte só está pronta com `bun run verify` saindo com exit 0 (AGENTS.md).
 >
-> **Drift check (rode primeiro):** `git log -1 --oneline` deve estar em `main` com as Fases 0–11 (PR #11). Confira `crates/agent-core/src/skills/` (registry + router), `crates/agent-core/src/agent/role.rs` (`TaskKind` / Explorer), `crates/agent-core/src/agent/settings.rs` (só `model` + `permissionMode`), `crates/agent-core/src/ollama.rs` (`status` com `loaded`) e SPEC §10 / §24.2 / §25 / §34 Fase 12. Se o Skill Router ou o Context Manager tiverem sumido, trate como STOP.
+> **Drift check (rode primeiro):** `git log -1 --oneline` deve estar em `main` com as Fases 0-11 (PR #11). Confira `crates/agent-core/src/skills/` (registry + router), `crates/agent-core/src/agent/role.rs` (`TaskKind` / Explorer), `crates/agent-core/src/agent/settings.rs` (só `model` + `permissionMode`), `crates/agent-core/src/ollama.rs` (`status` com `loaded`) e SPEC §10 / §24.2 / §25 / §34 Fase 12. Se o Skill Router ou o Context Manager tiverem sumido, trate como STOP.
 
 ## Status
 
@@ -45,7 +45,7 @@ Até a Fase 11 o loop usa **um** modelo: o `--model` / o último escolhido na UI
 
 **Dentro:** router puro + `apply_route`; settings de categorias e trajetórias; memória + CLI; JSONL opt-in; eventos `modelRouted` / `memoryLoaded`; eval JSON; testes determinísticos de rota/escalonamento/memória/trajetória; docs/handoff/audit.
 
-**Fora:** Fase 13–14 (otimização ampla, empacotamento). Provider cloud. RAG/embeddings. Treino/fine-tune. Suíte de eval maior. UI completa de categorias (IPC + settings bastam; o picker atual continua sendo o default). Payloads ofensivos.
+**Fora:** Fase 13-14 (otimização ampla, empacotamento). Provider cloud. RAG/embeddings. Treino/fine-tune. Suíte de eval maior. UI completa de categorias (IPC + settings bastam; o picker atual continua sendo o default). Payloads ofensivos.
 
 ## Passos
 

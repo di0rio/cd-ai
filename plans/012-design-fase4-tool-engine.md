@@ -2,7 +2,7 @@
 
 > **Instruções ao executor:** siga o plano passo a passo. Este é um plano de **design**, não de implementação: o produto final é um documento de decisão em `docs/design/` com o desenho da Fase 4 (SPEC §34) — as 6 ferramentas mínimas, o pipeline de permissão/aprovação, o Secret Redactor e os eventos — mais a conclusão de dois spikes de risco. **Você não deve implementar as ferramentas.** Rode cada verificação e confirme o resultado esperado. Se alguma STOP condition acontecer, pare e reporte; não improvise. Ao terminar, atualize a linha deste plano em `plans/README.md` e registre o plano de implementação proposto como um TODO futuro.
 >
-> **Drift check (rode primeiro):** confirme que `crates/agent-core/src/lib.rs` ainda tem só `AppInfo` (ou no máximo os módulos `workspace`/`ollama`/`tool_call` dos planos 002/004/009) e que `plans/README.md` ainda lista 001–009. Se a árvore avançou além disso, STOP.
+> **Drift check (rode primeiro):** confirme que `crates/agent-core/src/lib.rs` ainda tem só `AppInfo` (ou no máximo os módulos `workspace`/`ollama`/`tool_call` dos planos 002/004/009) e que `plans/README.md` ainda lista 001-009. Se a árvore avançou além disso, STOP.
 
 ## Status
 
@@ -15,7 +15,7 @@
 
 ## Por que isso importa
 
-Os planos 001–009 preparam exatamente os pré-requisitos da Fase 4 (módulo `workspace` com validação de path, cliente do Ollama, streaming cancelável, ACL do Tauri, tipos IPC, parser de tool calls). **Nenhum deles desenha ou entrega o que vem depois**: as 6 ferramentas mínimas (SPEC §15.1), o ciclo de permissão/aprovação (§20.4), a classificação de comandos (§20.2) e o Secret Redactor (§20.6) — o último obrigatório **antes** de qualquer output de comando cruzar para a UI, o modelo ou o histórico. O SPEC §34 define a saída da Fase 4 e o SPEC §11.1 define o loop mínimo da Fase 5.
+Os planos 001-009 preparam exatamente os pré-requisitos da Fase 4 (módulo `workspace` com validação de path, cliente do Ollama, streaming cancelável, ACL do Tauri, tipos IPC, parser de tool calls). **Nenhum deles desenha ou entrega o que vem depois**: as 6 ferramentas mínimas (SPEC §15.1), o ciclo de permissão/aprovação (§20.4), a classificação de comandos (§20.2) e o Secret Redactor (§20.6) — o último obrigatório **antes** de qualquer output de comando cruzar para a UI, o modelo ou o histórico. O SPEC §34 define a saída da Fase 4 e o SPEC §11.1 define o loop mínimo da Fase 5.
 
 Ferramenta de arquivo é código de segurança: tudo que o modelo pedir vai atravessar `Workspace::resolve`, permissões e redator. Implementar isso "direto" sem um design explícito é como construir a porta da frente da casa sem decidir onde fica a fechadura. Este plano gera a decisão antes do código — e valida os dois riscos mais altos (cancelar a árvore de processos; heurísticas de redação sem falso-positivo demais) com spikes baratos.
 
@@ -114,14 +114,14 @@ Crie `docs/design/fase-4-tool-engine.md`. Ele deve **decidir** (nada de "TBD") o
 8. **Riscos e decisões abertas**: responda explicitamente às perguntas abaixo da seção "Perguntas que o design deve responder".
 9. **Spikes** (se `cargo` existir) — veja Passo 2.
 
-**Verificar:** o arquivo existe e nenhuma das seções 1–8 termina com "TBD", "a decidir" ou similar não resolvido. Um documento que decida pouco é falha deste plano.
+**Verificar:** o arquivo existe e nenhuma das seções 1-8 termina com "TBD", "a decidir" ou similar não resolvido. Um documento que decida pouco é falha deste plano.
 
 ### Passo 2: rodar os dois spikes e registrar as conclusões
 
 Se `cargo --version` funcionar, valide com código de brinquedo (pode ser num diretório temporário fora do workspace, ex. `/tmp/opencode/spike-fase4`; **não** altere o workspace):
 
 - **Spike A — cancelamento mata a árvore de processos.** Com `tokio`, inicie um processo que abre filhos (ex.: shell script com `sleep 1 & sleep 1`), aborte via drop do handle/`Child::kill` e verifique se **todos** os filhos morrem. Compare: Linux (`kill` com pgroup via `setsid`/`process_group`) e Windows (`taskkill /T /F`). Registre no doc: comando exato usado por plataforma, o que funcionou, e a recomendação para `run_command`.
-- **Spike B — heurísticas de redação.** Monte 8–10 trechos realistas de output (ex.: `cat .env`, saída de `env`, log de teste com URL de serviço contendo token, `git diff` tocando um `.env`) e rode as heurísticas de entropia/marcação manualmente (uma função Rust de 20 linhas em scratch ou até um script ad-hoc): meça falso-positivo (redigiu o que não é segredo?). Registre no doc: a lista de heurísticas escolhidas, o limite de entropia, e a taxa observada de falso-positivo.
+- **Spike B — heurísticas de redação.** Monte 8-10 trechos realistas de output (ex.: `cat .env`, saída de `env`, log de teste com URL de serviço contendo token, `git diff` tocando um `.env`) e rode as heurísticas de entropia/marcação manualmente (uma função Rust de 20 linhas em scratch ou até um script ad-hoc): meça falso-positivo (redigiu o que não é segredo?). Registre no doc: a lista de heurísticas escolhidas, o limite de entropia, e a taxa observada de falso-positivo.
 
 Se `cargo` **não** existir, escreva na seção "Spikes": "não rodado — requer cargo" e liste o que cada spike vai medir, para o executor do plano de implementação rodar.
 
@@ -148,11 +148,11 @@ Atualize `plans/README.md`:
 
 ## Plano de testes (do próprio plano)
 
-Este plano não produz código de produto; seu "teste" é o documento atender à estrutura do Passo 1 e às verificações dos Passos 2–4. O **executor dos planos futuros** deve conferir contra este documento que tudo o que ele implementa está previsto aqui (drift entre design e implementação é falha de processo, não de código).
+Este plano não produz código de produto; seu "teste" é o documento atender à estrutura do Passo 1 e às verificações dos Passos 2-4. O **executor dos planos futuros** deve conferir contra este documento que tudo o que ele implementa está previsto aqui (drift entre design e implementação é falha de processo, não de código).
 
 ## Critérios de pronto
 
-- [ ] `docs/design/fase-4-tool-engine.md` existe, com as seções 1–8 decididas (sem "TBD")
+- [ ] `docs/design/fase-4-tool-engine.md` existe, com as seções 1-8 decididas (sem "TBD")
 - [ ] Seção "Spikes" com conclusão ou marcação "não rodado — requer cargo" + receita
 - [ ] `plans/README.md` com a linha do 012 preenchida e a linha futura `014` em TODO
 - [ ] `bun run check`, typecheck e testes do frontend passam
@@ -161,7 +161,7 @@ Este plano não produz código de produto; seu "teste" é o documento atender à
 
 ## STOP conditions
 
-- A árvore avançou além do estado descrito em "Estado atual" (ex.: `plans/README.md` sem linhas 001–009, ou módulos de tools já existentes em `agent-core`).
+- A árvore avançou além do estado descrito em "Estado atual" (ex.: `plans/README.md` sem linhas 001-009, ou módulos de tools já existentes em `agent-core`).
 - A vontade de "adiantar a implementação" do Tool Engine: este plano é design. Implementação é o plano 014.
 - Uma decisão de design conflita com um contrato citado deste plano (SPEC §14/15/18/20/22 ou decisões 0001/0003). Conflito = revisar o design, não ignorar o SPEC.
 

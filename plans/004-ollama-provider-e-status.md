@@ -21,7 +21,7 @@ Pela decisão 0004 (sem cloud), o cliente só pode falar com o **loopback**: um 
 
 ## Estado atual
 
-- `apps/desktop/src/components/sidebar.tsx`, linhas 97–103:
+- `apps/desktop/src/components/sidebar.tsx`, linhas 97-103:
 
   ```tsx
   <div className="space-y-1 border-t border-line px-4 py-3 text-xs text-ink-faint">
@@ -192,7 +192,7 @@ Atenção: `OLLAMA_HOST` às vezes vem sem esquema (ex.: `127.0.0.1:11434`). Se 
      | alcançável, nada carregado | `bg-ok` | `Ollama {version} · {models.length} modelos` |
      | com modelo carregado | `bg-ok` | `{loaded[0].name} carregado` |
 
-3. Em `sidebar.tsx`, troque o `<p>...Ollama · não verificado</p>` (linhas 98–101) por `<OllamaStatus />`, importado de `./ollama-status`.
+3. Em `sidebar.tsx`, troque o `<p>...Ollama · não verificado</p>` (linhas 98-101) por `<OllamaStatus />`, importado de `./ollama-status`.
 
 **Verificar:** `bun run verify` sai com exit 0.
 

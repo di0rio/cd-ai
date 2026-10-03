@@ -1,6 +1,6 @@
 import type { ApprovalAction, StopReason } from "./ipc";
 
-// UI view of a task. Mirrors the event stream the Rust core will emit (SPEC §22–23).
+// UI view of a task. Mirrors the event stream the Rust core will emit (SPEC §22-23).
 export type TaskStatus =
   | "running"
   | "waiting_approval"

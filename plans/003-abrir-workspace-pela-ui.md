@@ -60,7 +60,7 @@ O diálogo de pasta deve ser aberto **pelo Rust**, e a validação (`Workspace::
   }
   ```
 
-- `apps/desktop/src/components/sidebar.tsx`, linhas 53–64: botão de workspace desabilitado.
+- `apps/desktop/src/components/sidebar.tsx`, linhas 53-64: botão de workspace desabilitado.
 
   ```tsx
   <button
@@ -74,7 +74,7 @@ O diálogo de pasta deve ser aberto **pelo Rust**, e a validação (`Workspace::
   </button>
   ```
 
-- `apps/desktop/src/components/empty-workspace.tsx`, linhas 27–36: o botão primário "Abrir workspace" está desabilitado, com o mesmo `title`.
+- `apps/desktop/src/components/empty-workspace.tsx`, linhas 27-36: o botão primário "Abrir workspace" está desabilitado, com o mesmo `title`.
 - `apps/desktop/src/components/app-shell.tsx`, linha 48: `workspace={task?.workspace ?? null}` é passado para a `Sidebar`. A linha 70 mostra `Nenhum workspace aberto` no header quando não há tarefa.
 - Padrão para chamar o core com fallback fora do Tauri: `apps/desktop/src/components/core-status.tsx`. Ele chama o IPC dentro de `useEffect` e trata a rejeição com um estado `unavailable`.
 - **Design** (ver `apps/desktop/DESIGN.md`):
