@@ -2,7 +2,7 @@
 
 > **Instruções ao executor:** rode os passos nesta ordem e confirme cada verificação antes de avançar. Se alguma STOP condition acontecer, pare e reporte; não improvise. Uma parte só está pronta com `bun run verify` saindo com exit 0 (AGENTS.md).
 >
-> **Drift check (rode primeiro):** `git log -1 --oneline` deve estar em `main` com as Fases 0–13 (PR #13). Confira `src-tauri/tauri.conf.json` (`bundle.targets` = `deb` + `appimage`), `apps/desktop/public/icon.svg`, `src-tauri/icons/`, `Cargo.toml` `version = "0.1.0"`, e SPEC §34 Fase 14. Se o eval scripted, o CLI `cd-ai` ou os alvos Linux tiverem sumido, trate como STOP.
+> **Drift check (rode primeiro):** `git log -1 --oneline` deve estar em `main` com as Fases 0-13 (PR #13). Confira `src-tauri/tauri.conf.json` (`bundle.targets` = `deb` + `appimage`), `apps/desktop/public/icon.svg`, `src-tauri/icons/`, `Cargo.toml` `version = "0.1.0"`, e SPEC §34 Fase 14. Se o eval scripted, o CLI `cd-ai` ou os alvos Linux tiverem sumido, trate como STOP.
 
 ## Status
 
@@ -15,7 +15,7 @@
 
 ## Por que isso importa
 
-As Fases 0–13 fecham o produto no repositório: o loop, o sandbox Linux, o eval 3/3 e as otimizações medidas. Ainda não há **caminho de instalação** — `bundle.targets` já pede `.deb` e AppImage, mas faltam metadados, o binário da CLI no pacote, instruções reproduzíveis e prova de máquina limpa. A Fase 14 é a última do roadmap da §34: Linux x86_64 instalado do zero resolve uma tarefa do eval (ou a prova mais próxima, com lacunas explícitas).
+As Fases 0-13 fecham o produto no repositório: o loop, o sandbox Linux, o eval 3/3 e as otimizações medidas. Ainda não há **caminho de instalação** — `bundle.targets` já pede `.deb` e AppImage, mas faltam metadados, o binário da CLI no pacote, instruções reproduzíveis e prova de máquina limpa. A Fase 14 é a última do roadmap da §34: Linux x86_64 instalado do zero resolve uma tarefa do eval (ou a prova mais próxima, com lacunas explícitas).
 
 ## Estado atual (fatos)
 
@@ -25,7 +25,7 @@ As Fases 0–13 fecham o produto no repositório: o loop, o sandbox Linux, o eva
 - `bun run build` = `tauri build`. `beforeBuildCommand` só gera o frontend. Não há script de release, nem CI, nem `dist/`.
 - README descreve o app como árvore de desenvolvimento (`bun install` / `cargo run`). Não há instalação de pacote.
 - Sem `.github/workflows`. Sem assinatura. Sem LICENSE na raiz.
-- Eval scripted 3/3; o check das fixtures chama `bun test`. Sem Ollama nesta VM a taxa ao vivo não bloqueia (mesmo padrão das fases 6–13).
+- Eval scripted 3/3; o check das fixtures chama `bun test`. Sem Ollama nesta VM a taxa ao vivo não bloqueia (mesmo padrão das fases 6-13).
 
 ## Decisões deste plano (não reabrir sem ADR)
 
@@ -48,7 +48,7 @@ As Fases 0–13 fecham o produto no repositório: o loop, o sandbox Linux, o eva
 ## Passos
 
 1. **Plano:** este arquivo; linha 024 em `plans/README.md`.
-2. **Tauri D1–D4:** `mainBinaryName`, categoria, descrições, homepage, `linux.deb` (section `devel`, recommends `git`, files CLI + evals), `linux.appimage.files` iguais. `beforeBuildCommand` também faz `cargo build --release -p cd-ai-cli`.
+2. **Tauri D1-D4:** `mainBinaryName`, categoria, descrições, homepage, `linux.deb` (section `devel`, recommends `git`, files CLI + evals), `linux.appimage.files` iguais. `beforeBuildCommand` também faz `cargo build --release -p cd-ai-cli`.
 3. **Scripts:** `scripts/check-release-metadata.ts` (gate); `scripts/build-linux-release.ts` (CLI + `tauri build` + cópia para `dist/linux/` + hashes).
 4. **CI D5:** `.github/workflows/linux-release.yml` em Ubuntu 22.04: deps WebKitGTK, `bun run verify`, eval scripted, script de release, upload de artefatos; GitHub Release só em tag `v*`.
 5. **Docs:** `docs/release.md` (build, instalação limpa, prova de eval, glibc, o que não entra); README/AGENTS; handoff marca roadmap Linux completo; `docs/audit/fase-14-release.md`.

@@ -106,7 +106,7 @@ Registradas em `docs/decisions/`. O relatório de ambiente está em `docs/audit/
 
 ### 5.1 Plataforma — `0001` (aceita)
 
-- Fases 1–6 desenvolvidas no **Windows 11 nativo**.
+- Fases 1-6 desenvolvidas no **Windows 11 nativo**.
 - Alvo do primeiro release: **Linux x86_64** (`.deb`, AppImage).
 - Linux (WSL2 ou VM) entra obrigatoriamente na Fase 7 (sandbox) e na Fase 14 (empacotamento).
 - Código portável desde o início: paths via APIs de path, execução de comandos atrás de um módulo de plataforma.
@@ -809,7 +809,7 @@ Não implementar treinamento agora.
 
 Métricas de latência não dizem se o agente ficou melhor. O eval diz.
 
-- Diretório `evals/` com 20–50 tarefas fixas sobre repositórios de teste (fixtures).
+- Diretório `evals/` com 20-50 tarefas fixas sobre repositórios de teste (fixtures).
 - Cada tarefa tem um **check automático** (ex.: um teste que só passa se a tarefa foi bem resolvida) e um limite de tempo.
 - Rodado pela **CLI headless**, sem UI.
 - Reporta por execução: taxa de sucesso, iterações, tokens, tempo, retries, falhas de formato de tool call, edições rejeitadas.
@@ -1099,7 +1099,7 @@ Comece pela **Fase 0**. Não implemente o produto.
 5. Tomar e registrar as decisões da seção 5 (plataforma, hardware/modelo, local do loop, provider), consultando o usuário quando necessário.
 6. Propor a estrutura inicial do repositório.
 7. Identificar riscos.
-8. Apresentar a arquitetura mínima e o plano das fases 1–5.
+8. Apresentar a arquitetura mínima e o plano das fases 1-5.
 9. Só então iniciar a Fase 1.
 
 Durante toda a implementação: executar comandos reais, validar resultados, corrigir erros, não assumir que algo funcionou, manter o diff limpo, não sair do escopo.

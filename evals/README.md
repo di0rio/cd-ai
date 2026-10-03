@@ -45,7 +45,7 @@ fixture. `cd-ai task` continua pedindo aprovação no terminal — não existe `
 | `greet` | `fixtures/greet` | Cumprimentar (`Olá, {nome}`) |
 | `dobro` | `fixtures/dobro` | Criar `src/dobro.ts` (`n * 2`) |
 
-A suíte é propositalmente pequena. 20–50 tarefas é o alvo do SPEC §26, não desta fase.
+A suíte é propositalmente pequena. 20-50 tarefas é o alvo do SPEC §26, não desta fase.
 
 ## Relatório
 

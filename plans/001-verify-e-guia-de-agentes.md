@@ -25,7 +25,7 @@ Todos os próximos planos precisam de um gate único para provar que não quebra
 
 ## Estado atual
 
-- `package.json` (raiz), linhas 7–13:
+- `package.json` (raiz), linhas 7-13:
 
   ```json
   "scripts": {

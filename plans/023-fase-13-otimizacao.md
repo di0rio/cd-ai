@@ -2,7 +2,7 @@
 
 > **Instruções ao executor:** rode os passos nesta ordem e confirme cada verificação antes de avançar. Se alguma STOP condition acontecer, pare e reporte; não improvise. Uma parte só está pronta com `bun run verify` saindo com exit 0 (AGENTS.md).
 >
-> **Drift check (rode primeiro):** `git log -1 --oneline` deve estar em `main` com as Fases 0–12 (PR #12). Confira `crates/agent-core/src/agent/repo_map.rs` (cache mtime), `crates/agent-core/src/agent/context.rs` (`assemble` / `assemble_new`), `crates/agent-core/src/agent/runner.rs` (tools em série), `crates/agent-core/src/redactor.rs` (`entropy_spans`), `crates/agent-core/src/agent/router.rs` e SPEC §15.3 / §16.4 / §27 / §34 Fase 13. Se o Context Manager, o Model Router ou o eval scripted tiverem sumido, trate como STOP.
+> **Drift check (rode primeiro):** `git log -1 --oneline` deve estar em `main` com as Fases 0-12 (PR #12). Confira `crates/agent-core/src/agent/repo_map.rs` (cache mtime), `crates/agent-core/src/agent/context.rs` (`assemble` / `assemble_new`), `crates/agent-core/src/agent/runner.rs` (tools em série), `crates/agent-core/src/redactor.rs` (`entropy_spans`), `crates/agent-core/src/agent/router.rs` e SPEC §15.3 / §16.4 / §27 / §34 Fase 13. Se o Context Manager, o Model Router ou o eval scripted tiverem sumido, trate como STOP.
 
 ## Status
 
@@ -15,7 +15,7 @@
 
 ## Por que isso importa
 
-As Fases 10–12 já cortam tokens, cacheiam o mapa em disco e encolhem a janela em trivial. O loop ainda **mede pouco e gasta à toa**: `assemble_new` anda o workspace duas vezes, o router em 8k remonta o prompt com **outro** walk, o redactor calcula Shannon do zero em cada janela de 32 bytes, e leituras independentes do mesmo turno correm em série (SPEC §15.3). A Fase 13 fecha a saída da §34: ganhos comprovados por métrica e eval, sem otimizar por especulação.
+As Fases 10-12 já cortam tokens, cacheiam o mapa em disco e encolhem a janela em trivial. O loop ainda **mede pouco e gasta à toa**: `assemble_new` anda o workspace duas vezes, o router em 8k remonta o prompt com **outro** walk, o redactor calcula Shannon do zero em cada janela de 32 bytes, e leituras independentes do mesmo turno correm em série (SPEC §15.3). A Fase 13 fecha a saída da §34: ganhos comprovados por métrica e eval, sem otimizar por especulação.
 
 ## O que foi medido (antes de mudar)
 

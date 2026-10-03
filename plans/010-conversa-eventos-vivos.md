@@ -15,7 +15,7 @@
 
 ## Por que isso importa
 
-Hoje a conversa recebe uma lista de eventos estática (dados de demonstração) e assume que ela não cresce depois do mount. Quando a Fase 4/5 ligar o stream real de eventos do core Rust à UI — os planos 001–009 constroem exatamente esse pipeline — duas coisas vão quebrar:
+Hoje a conversa recebe uma lista de eventos estática (dados de demonstração) e assume que ela não cresce depois do mount. Quando a Fase 4/5 ligar o stream real de eventos do core Rust à UI — os planos 001-009 constroem exatamente esse pipeline — duas coisas vão quebrar:
 
 1. **A conversa deixa de seguir a atividade nova.** O auto-scroll roda uma única vez, no mount (`conversation.tsx:23-26`). Um comando ou edit novo chegando com a tarefa aberta não rola a tela até ele, quebrando a promessa do `DESIGN.md` ("Abre rolada até a atividade mais recente") e do fluxo "acompanhar o que o agente está fazendo".
 2. **Comando que falha no meio fica colapsado.** `CommandRow` decide o estado `open` uma vez, no mount (`conversation.tsx:171`). No stream real, um comando entra como `running` (recolhido) e depois termina com `exitCode != 0`; o `open` continua `false` e a saída da falha fica escondida — contrariando a regra do `DESIGN.md` ("A saída fica recolhida, **exceto quando o comando falhou**") e do `PRODUCT.md` ("Erros e decisões ficam à vista").
@@ -24,7 +24,7 @@ Este plano deixa a conversa pronta para receber eventos incrementais antes de qu
 
 ## Estado atual
 
-- `apps/desktop/src/components/conversation.tsx`, linhas 20–26 — auto-scroll só no mount:
+- `apps/desktop/src/components/conversation.tsx`, linhas 20-26 — auto-scroll só no mount:
 
   ```tsx
   export function Conversation({ task }: { task: Task }) {
@@ -36,7 +36,7 @@ Este plano deixa a conversa pronta para receber eventos incrementais antes de qu
     }, []);
   ```
 
-- `apps/desktop/src/components/conversation.tsx`, linhas 167–171 — colapso decidido no mount:
+- `apps/desktop/src/components/conversation.tsx`, linhas 167-171 — colapso decidido no mount:
 
   ```tsx
   function CommandRow({ event }: { event: CommandEvent }) {
@@ -83,7 +83,7 @@ Este plano deixa a conversa pronta para receber eventos incrementais antes de qu
 
 ### Passo 1: auto-scroll em eventos novos
 
-Em `conversation.tsx`, troque o `useEffect` do scroll (linhas 23–26) para reagir ao crescimento da lista de eventos:
+Em `conversation.tsx`, troque o `useEffect` do scroll (linhas 23-26) para reagir ao crescimento da lista de eventos:
 
 ```tsx
 useEffect(() => {

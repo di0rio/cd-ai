@@ -87,7 +87,7 @@ Convenção de estilo: variantes `enabled:`/`disabled:` são usadas no resto do 
 
 ### Passo 1: trocar as classes do botão
 
-Em `icon-button.tsx`, no `className` do `<button>` (linhas 20–22):
+Em `icon-button.tsx`, no `className` do `<button>` (linhas 20-22):
 
 - remova `disabled:pointer-events-none`;
 - restrinja o hover ao estado habilitado trocando `hover:bg-sidebar hover:text-ink` por `enabled:hover:bg-sidebar enabled:hover:text-ink`.

@@ -1,12 +1,12 @@
 # Handoff — estado do cd-ai
 
-Estado em 2026-09-16, sobre `main` (Fases 0–13, PR #13) mais o trabalho da **Fase 14**
+Estado em 2026-09-16, sobre `main` (Fases 0-13, PR #13) mais o trabalho da **Fase 14**
 (plano 024, esta PR). Serve pra uma sessão/agente novo continuar sem depender da conversa anterior.
 
 - **Fontes da verdade:** [`AGENTS.md`](../AGENTS.md) (regras + comandos), [`SPEC.md`](../SPEC.md) (§34), [`plans/README.md`](../plans/README.md), [`docs/decisions/`](decisions/) (ADRs), [`plans/024-fase-14-release.md`](../plans/024-fase-14-release.md), [`docs/release.md`](release.md).
 - **Gate:** qualquer mudança só está pronta com `bun run verify` passando (exit 0).
 
-## O que já está pronto (Fases 0–14)
+## O que já está pronto (Fases 0-14)
 
 Tudo em `main` até a Fase 13; Fase 14 nesta PR. Gate: `bun run verify`. **O roadmap da SPEC §34 está completo para o primeiro release Linux.**
 
@@ -34,7 +34,7 @@ Tudo em `main` até a Fase 13; Fase 14 nesta PR. Gate: `bun run verify`. **O roa
 | Auto-update Tauri | v1 local-first, sem rede (decisão 0004) |
 | `fix-path-env` na GUI | Menu do desktop não herda `~/.bashrc`; abrir `cd-ai-desktop` dum terminal ou pôr `git`/`bun` em `/usr/bin` |
 | LICENSE na raiz | Não inventar; o repo ainda não declara uma |
-| Tokenizer por modelo, watcher, suíte de eval maior | Fora das Fases 13–14 de propósito |
+| Tokenizer por modelo, watcher, suíte de eval maior | Fora das Fases 13-14 de propósito |
 
 Commits automáticos no git do **usuário** continuam desligados (SPEC §19). Status `verifying`/`reviewing`/`fixing` (§23) ficaram de fora da Fase 8. Marketplace / importação de skills do usuário ficaram de fora da Fase 11. UI completa de categorias FAST/CODER/REASONER ficou de fora da Fase 12.
 

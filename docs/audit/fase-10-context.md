@@ -27,7 +27,7 @@ A redução frente ao corte cego da Fase 5 está nos testes unitários:
 - orçamento por seção impede o map de comer a janela;
 - compactação substitui o meio da conversa por um resumo curto e deixa a tarefa **continuar** (`Finished`) onde antes ela parava em `ContextExhausted`.
 
-Numa tarefa scripted mínima (3–4 turnos, fixture de 2 arquivos) o map **adiciona** umas centenas de caracteres ao system prompt — o ganho aparece em repos maiores e em conversas longas, que é o caso da §16.
+Numa tarefa scripted mínima (3-4 turnos, fixture de 2 arquivos) o map **adiciona** umas centenas de caracteres ao system prompt — o ganho aparece em repos maiores e em conversas longas, que é o caso da §16.
 
 ## Eval
 
