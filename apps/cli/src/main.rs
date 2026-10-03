@@ -1352,7 +1352,20 @@ fn wait_for_line(lines: &Receiver<String>, cancel: &CancelToken) -> Option<Strin
 fn ask_approval(request: &ApprovalRequest, cancel: &CancelToken) -> ApprovalResponse {
     let stdin = std::io::stdin();
     if !stdin.is_terminal() {
-        eprintln!("sem terminal interativo: negado");
+        if matches!(
+            &request.action,
+            ApprovalAction::RunCommand {
+                class: CommandClass::Validate,
+                ..
+            }
+        ) {
+            eprintln!(
+                "validação sem sandbox executa código do repositório e exige aprovação; sem \
+                 terminal interativo: negado (rode `cd-ai sandbox-setup` ou use um terminal)"
+            );
+        } else {
+            eprintln!("sem terminal interativo: negado");
+        }
         return ApprovalResponse::Denied {
             reason: Some("sem terminal interativo".to_string()),
         };

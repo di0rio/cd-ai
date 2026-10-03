@@ -79,7 +79,11 @@ pub fn policy(mode: PermissionMode, kind: &PermissionKind, caps: SandboxCapabili
             PermissionMode::Auto | PermissionMode::FullAccess => Policy::Auto,
         },
         PermissionKind::RunCommand { class } => match class {
-            CommandClass::Read | CommandClass::Validate => Policy::Auto,
+            CommandClass::Read => Policy::Auto,
+            // Validators run the repository's own code (build.rs, package scripts): without a
+            // filesystem sandbox that is arbitrary code as the user, so it asks in every mode.
+            CommandClass::Validate if caps.filesystem => Policy::Auto,
+            CommandClass::Validate => Policy::Ask,
             CommandClass::Write => match mode {
                 PermissionMode::Ask => Policy::Ask,
                 PermissionMode::Auto | PermissionMode::FullAccess if caps.filesystem => {
@@ -1129,7 +1133,7 @@ mod tests {
                 &PermissionKind::RunCommand {
                     class: CommandClass::Validate
                 },
-                none()
+                ready()
             ),
             Policy::Auto
         );
@@ -1150,6 +1154,38 @@ mod tests {
                 Policy::Ask,
                 "{class:?}"
             );
+        }
+    }
+
+    #[test]
+    fn validate_asks_without_a_filesystem_sandbox_in_every_mode() {
+        let validate = PermissionKind::RunCommand {
+            class: CommandClass::Validate,
+        };
+        let read = PermissionKind::RunCommand {
+            class: CommandClass::Read,
+        };
+        for mode in [
+            PermissionMode::Ask,
+            PermissionMode::Auto,
+            PermissionMode::FullAccess,
+        ] {
+            assert_eq!(policy(mode, &validate, none()), Policy::Ask, "{mode:?}");
+            // Network blocking alone does not contain repo code on the filesystem.
+            assert_eq!(
+                policy(mode, &validate, caps(false, true)),
+                Policy::Ask,
+                "{mode:?}"
+            );
+            assert_eq!(
+                policy(mode, &validate, caps(true, false)),
+                Policy::Auto,
+                "{mode:?}"
+            );
+            assert_eq!(policy(mode, &validate, ready()), Policy::Auto, "{mode:?}");
+            // Plain reads stay automatic with or without a sandbox.
+            assert_eq!(policy(mode, &read, none()), Policy::Auto, "{mode:?}");
+            assert_eq!(policy(mode, &read, ready()), Policy::Auto, "{mode:?}");
         }
     }
 

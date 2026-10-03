@@ -43,7 +43,9 @@ use crate::permissions::{ApprovalRequest, CommandClass, classify};
 use crate::redactor;
 use crate::tool_call::parse_text_tool_calls;
 use crate::tools::cancel::CancelToken;
-use crate::tools::{ReadFileArgs, Responder, RunCommandArgs, ToolEngine, ToolOutput, ToolRequest};
+use crate::tools::{
+    ReadFileArgs, Responder, RunCommandArgs, ToolEngine, ToolError, ToolOutput, ToolRequest,
+};
 use crate::workspace::Workspace;
 
 /// What a resumed task is told, as a user message (D9).
@@ -1473,6 +1475,11 @@ fn run_pending_validation(
         if exit_code == Some(0) {
             evidence.push(format!("{}: exit 0", argv.join(" ")));
             continue;
+        }
+        // A denied validation is not a code failure: the model cannot fix it, so no correction
+        // round is spent on it. The task ends unvalidated, with the reason in the tool result.
+        if matches!(outcome.error, Some(ToolError::PermissionDenied { .. })) {
+            return Ok(Verdict::Unvalidated { why: output });
         }
         return Ok(Verdict::Fail {
             reasons: vec![command_failure_reason(&argv, exit_code, &output)],
@@ -3160,6 +3167,46 @@ name = \"x\"
                 AgentEvent::UserMessage { text } if text.contains("verificação determinística falhou")
             )),
             "o ciclo de correção tem de aparecer na conversa"
+        );
+    }
+
+    #[test]
+    fn a_denied_validation_ends_unvalidated_without_a_correction_round() {
+        // With a working sandbox validate never asks, so there is nothing to deny.
+        if crate::sandbox::status().capabilities().filesystem {
+            return;
+        }
+        let harness = soma_harness();
+        let mut model = ScriptedModel::new(vec![
+            ScriptedModel::calls(&[(
+                "edit_file",
+                serde_json::json!({
+                    "path": "src/soma.ts",
+                    "old_text": "a - b",
+                    "new_text": "a + b",
+                }),
+            )]),
+            ScriptedModel::text("pronto"),
+        ]);
+        let mut ctx = harness.context();
+        ctx.limits.llm_review = false;
+        // Edits are approved, commands are not (headless CLI: nobody to ask).
+        let mut responder = |request: ApprovalRequest| match request.action {
+            crate::permissions::ApprovalAction::RunCommand { .. } => {
+                ApprovalResponse::Denied { reason: None }
+            }
+            _ => ApprovalResponse::Granted,
+        };
+        let (state, events) = run(ctx, &mut model, start("corrija a soma"), &mut responder);
+
+        assert_eq!(state.status, TaskStatus::CompletedUnvalidated);
+        assert_eq!(state.stop_reason, Some(StopReason::Finished));
+        assert!(
+            !events.iter().any(|message| matches!(
+                &message.event,
+                AgentEvent::UserMessage { text } if text.contains("verificação determinística falhou")
+            )),
+            "negar a validação não é falha de código: não gasta rodada de correção"
         );
     }
 

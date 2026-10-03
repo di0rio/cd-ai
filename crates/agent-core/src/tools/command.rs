@@ -17,9 +17,9 @@ use crate::tools::{
 /// The model picks the timeout; this bounds it (and keeps `Instant + timeout` from overflowing).
 const MAX_COMMAND_TIMEOUT_MS: u64 = 30 * 60 * 1000;
 
-/// run_command: argv only, never a shell (design D2). Commands classified `read`/`validate` run
-/// automatically (§20.4); every other class asks the user with the exact argv, never a model
-/// summary, and the class is part of the approval (design D5/D8).
+/// run_command: argv only, never a shell (design D2). Commands classified `read` (and `validate`,
+/// with a filesystem sandbox) run automatically (§20.4); every other class asks the user with the
+/// exact argv, never a model summary, and the class is part of the approval (design D5/D8).
 pub fn run_command(
     engine: &mut ToolEngine,
     args: RunCommandArgs,
@@ -51,9 +51,10 @@ pub fn run_command(
         None => engine.workspace.root().to_path_buf(),
     };
 
-    // §20.4: `read`/`validate` is `auto` in all three permission modes. Write commands become
-    // auto only in AUTO/FULL ACCESS when a filesystem sandbox is actually on (D6). Network,
-    // destructive and unknown always ask. The decision never comes from a model claim (§20.5).
+    // §20.4: `read` is `auto` in all three permission modes; `validate` too, but only with a
+    // filesystem sandbox (it runs repo code). Write commands become auto only in AUTO/FULL ACCESS
+    // when a filesystem sandbox is actually on (D6). Network, destructive and unknown always ask.
+    // The decision never comes from a model claim (§20.5).
     let class = escalate_for_paths(classify(argv), argv, &engine.workspace);
     let decision = engine.authorize(
         events,
@@ -68,8 +69,14 @@ pub fn run_command(
         },
     );
     if decision == PermissionDecision::Denied {
+        let reason = if class == CommandClass::Validate && !engine.sandbox_caps().filesystem {
+            "comando de validação negado: sem sandbox ele executa código do repositório e exige \
+             aprovação (cd-ai sandbox-setup restaura a execução automática)"
+        } else {
+            "comando negado"
+        };
         return Err(ToolError::PermissionDenied {
-            reason: "comando negado".to_string(),
+            reason: reason.to_string(),
         });
     }
 
@@ -439,13 +446,54 @@ mod tests {
     }
 
     #[test]
-    fn validate_command_runs_without_approval() {
+    fn validate_command_asks_without_a_sandbox_and_says_why_when_denied() {
         let dir = tempdir().unwrap();
         let mut engine = boot(dir.path());
+        engine.set_sandbox_caps(crate::sandbox::SandboxCapabilities {
+            filesystem: false,
+            network_block: false,
+        });
+        let mut asked = 0usize;
+        let mut deny = |_: crate::permissions::ApprovalRequest| {
+            asked += 1;
+            crate::permissions::ApprovalResponse::Denied { reason: None }
+        };
+        let mut sink = |_: crate::events::ToolEventMessage| {};
+
+        let err = run_command(
+            &mut engine,
+            RunCommandArgs {
+                argv: cv(&["cargo", "fmt", "--check", "--version"]),
+                cwd: None,
+                timeout_ms: Some(30_000),
+            },
+            &mut sink,
+            &mut deny,
+        )
+        .unwrap_err();
+
+        assert_eq!(asked, 1);
+        match err {
+            ToolError::PermissionDenied { reason } => {
+                assert!(reason.contains("sandbox-setup"), "{reason}")
+            }
+            other => panic!("esperava PermissionDenied, veio {other:?}"),
+        }
+    }
+
+    #[test]
+    fn validate_command_runs_without_approval_with_a_sandbox() {
+        let dir = tempdir().unwrap();
+        let mut engine = boot(dir.path());
+        engine.set_sandbox_caps(crate::sandbox::SandboxCapabilities {
+            filesystem: true,
+            network_block: true,
+        });
         let mut seen = Vec::new();
         let mut sink = |message: crate::events::ToolEventMessage| seen.push(message);
 
-        // §20.4: `validate` is `auto`; `never_asked` panics if the approval path is taken.
+        // §20.4: `validate` is `auto` with a sandbox; `never_asked` panics if the approval path
+        // is taken.
         let (decision, result) = run_command(
             &mut engine,
             RunCommandArgs {
