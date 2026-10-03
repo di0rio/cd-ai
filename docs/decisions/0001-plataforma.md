@@ -33,3 +33,13 @@ A máquina de desenvolvimento roda Windows 11 sem WSL. O alvo do primeiro releas
 
 - Testes de sandbox: Linux em `crates/agent-core/src/sandbox/linux.rs`, macOS em `sandbox/macos.rs` (pulam quando `sandbox-exec` falta), Windows ponta a ponta em `crates/agent-core/tests/windows_sandbox.rs` (binário próprio, porque é também o launcher). Sem sandbox pronto, o probe reporta indisponível e a policy rebaixa FULL ACCESS para ASK.
 - CI local precisa rodar os testes de path em ambas as plataformas quando o Linux estiver disponível.
+
+## Limites do sandbox (auditoria de segurança, 2026-10-03)
+
+O sandbox é uma camada a mais; o que ele **não** promete:
+
+- **Sem sandbox pronto** (Windows sem `cd-ai sandbox-setup`, macOS sem `sandbox-exec`, outros sistemas): `run_command` roda como o usuário, sem isolamento algum. FULL ACCESS fica indisponível e comandos `write` perguntam, mas comandos `read` e `validate` continuam automáticos, e `validate` executa código do próprio repositório (`npm test`, `cargo test`, `build.rs`). Confira `sandbox_status` (UI) ou `cd-ai sandbox-setup` antes de abrir um repositório que você não escreveu.
+- **Leitura:** Linux (Landlock) e macOS (Seatbelt) deixam o sistema inteiro legível (`~/.ssh`, `~/.aws`); só a escrita e a rede são limitadas. O AppContainer do Windows é mais restrito: lê só o que recebeu por ACL, além do que o Windows abre a qualquer AppContainer (pastas do sistema).
+- **Escrita no workspace inclui o que roda depois, fora do sandbox:** `.git/hooks`, `.git/config`, `package.json`, `Makefile`, `.vscode/tasks.json`. As ferramentas `edit_file`/`write_file` recusam `.git`, mas um comando sandboxed pode escrevê-lo. Revise o diff antes de rodar esses arquivos por conta própria.
+- **Comando `network` aprovado** perde o isolamento de rede e, no Windows, também o do sistema de arquivos (roda fora do container). Aprove só o que você leu.
+- **Corrida entre a checagem do path e a abertura do arquivo** (TOCTOU): `Workspace::resolve` valida e as ferramentas abrem em seguida. Um processo que sobreviva a um comando (daemonizado) poderia trocar um diretório por um symlink nesse intervalo.

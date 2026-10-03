@@ -74,6 +74,9 @@ impl Workspace {
         };
         for component in requested.components() {
             match component {
+                Component::Normal(name) if cfg!(windows) && windows_unsafe_name(name) => {
+                    return Err(outside());
+                }
                 Component::Prefix(_) | Component::RootDir | Component::Normal(_) => {
                     lexical.push(component)
                 }
@@ -141,10 +144,94 @@ impl Workspace {
     }
 }
 
+/// Names Windows reads differently from what the path parser sees: `:` opens an alternate data
+/// stream (`.env::$DATA` is `.env`, which would dodge the secret-file check) or swaps the drive,
+/// trailing dots and spaces are dropped (`.git.` is `.git`), and device names (`NUL`, `COM1`,
+/// `CON.txt`) open a device instead of a file. No legitimate project file needs any of them.
+fn windows_unsafe_name(name: &std::ffi::OsStr) -> bool {
+    let name = name.to_string_lossy();
+    if name.contains(':') || name.ends_with('.') || name.ends_with(' ') {
+        return true;
+    }
+    let stem = name
+        .split('.')
+        .next()
+        .unwrap_or_default()
+        .to_ascii_uppercase();
+    let numbered = |prefix: &str| {
+        let mut rest = stem.strip_prefix(prefix).into_iter().flat_map(str::chars);
+        matches!((rest.next(), rest.next()), (Some(digit), None) if digit.is_ascii_digit() || "¹²³".contains(digit))
+    };
+    matches!(
+        stem.as_str(),
+        "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$"
+    ) || numbered("COM")
+        || numbered("LPT")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    #[test]
+    fn flags_names_windows_reinterprets() {
+        for name in [
+            ".env::$DATA",
+            "file.txt:stream",
+            "C:",
+            ".git.",
+            "dir ",
+            "...",
+            "NUL",
+            "nul.txt",
+            "Con",
+            "COM1",
+            "lpt9.log",
+            "com¹",
+            "CONOUT$",
+        ] {
+            assert!(windows_unsafe_name(name.as_ref()), "{name}");
+        }
+        for name in [
+            ".env",
+            ".git",
+            "main.rs",
+            "console.log",
+            "com10",
+            "comma",
+            "lpt",
+            "null",
+            "a b",
+        ] {
+            assert!(!windows_unsafe_name(name.as_ref()), "{name}");
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn rejects_windows_aliases_of_a_workspace_file() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join(".env"), "TOKEN=x").unwrap();
+        let ws = Workspace::open(dir.path()).unwrap();
+        for path in [
+            ".env::$DATA",
+            ".env:stream",
+            ".env.",
+            ".env ",
+            "sub\\C:\\x",
+            "C:x",
+            "nul",
+            "\\\\server\\share\\x",
+            "\\\\.\\C:\\x",
+        ] {
+            assert!(
+                matches!(ws.resolve(path), Err(WorkspaceError::OutsideWorkspace(_))),
+                "{path}"
+            );
+        }
+        assert!(ws.resolve(".env").is_ok());
+    }
 
     #[test]
     fn open_missing_folder_is_not_found() {

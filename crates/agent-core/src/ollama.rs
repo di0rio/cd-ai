@@ -303,6 +303,14 @@ fn request_body(request: &ChatRequest) -> serde_json::Value {
     body
 }
 
+/// The checked loopback URL is the only place a prompt may go: no redirect to another host
+/// (a 307 would resend the body) and no `HTTP_PROXY` detour, which would hand the prompt to the proxy.
+fn local_client() -> reqwest::ClientBuilder {
+    reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .no_proxy()
+}
+
 #[derive(Clone)]
 pub struct OllamaClient {
     base_url: String,
@@ -381,7 +389,7 @@ impl OllamaClient {
             return Err("o Ollama precisa estar nesta máquina (loopback)".to_string());
         }
         let base_url = base_url.trim_end_matches('/').to_string();
-        let http = reqwest::Client::builder()
+        let http = local_client()
             .timeout(Duration::from_secs(5))
             .build()
             .map_err(|error| error.to_string())?;
@@ -490,7 +498,7 @@ impl OllamaClient {
         request: &ChatRequest,
         mut on_event: impl FnMut(ChatEvent) + Send,
     ) -> Result<(), String> {
-        let http = reqwest::Client::builder()
+        let http = local_client()
             .connect_timeout(Duration::from_secs(5))
             .build()
             .map_err(|error| error.to_string())?;
@@ -565,6 +573,37 @@ mod tests {
     fn new_refuses_remote_host() {
         assert!(OllamaClient::new("http://192.168.0.10:11434").is_err());
         assert!(OllamaClient::new("https://example.com").is_err());
+    }
+
+    #[tokio::test]
+    async fn a_redirect_never_leaves_the_checked_host() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+
+        let elsewhere = TcpListener::bind("127.0.0.1:0").unwrap();
+        elsewhere.set_nonblocking(true).unwrap();
+        let target = elsewhere.local_addr().unwrap().port();
+        let ollama = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = ollama.local_addr().unwrap().port();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = ollama.accept().unwrap();
+            let mut buffer = [0u8; 1024];
+            let _ = stream.read(&mut buffer);
+            let reply = format!(
+                "HTTP/1.1 307 Temporary Redirect\r\nLocation: http://127.0.0.1:{target}/api/version\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            );
+            let _ = stream.write_all(reply.as_bytes());
+        });
+
+        let client = OllamaClient::new(&format!("http://127.0.0.1:{port}")).unwrap();
+        let status = client.status().await;
+        server.join().unwrap();
+
+        assert!(status.version.is_none());
+        assert!(
+            elsewhere.accept().is_err(),
+            "the redirect target must never be contacted"
+        );
     }
 
     #[test]
