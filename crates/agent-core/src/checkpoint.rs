@@ -623,7 +623,7 @@ mod tests {
         for (path, _) in secrets {
             assert!(
                 repo.show(&baseline, path).unwrap().is_none(),
-                "{path} foi copiado para o shadow repo"
+                "arquivo secreto foi copiado para o shadow repo"
             );
         }
         assert!(repo.show(&baseline, "src/main.rs").unwrap().is_some());
