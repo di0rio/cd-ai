@@ -34,16 +34,18 @@ use windows_sys::Win32::Security::Isolation::{
     CreateAppContainerProfile, DeriveAppContainerSidFromAppContainerName, GetAppContainerFolderPath,
 };
 use windows_sys::Win32::Security::{
-    ACCESS_ALLOWED_ACE, ACE_HEADER, ACL, ACL_SIZE_INFORMATION, AclSizeInformation,
+    ACCESS_ALLOWED_ACE, ACE_HEADER, ACL, ACL_SIZE_INFORMATION, AclSizeInformation, AddAce,
     CONTAINER_INHERIT_ACE, DACL_SECURITY_INFORMATION, EqualSid, FreeSid, GetAce, GetAclInformation,
-    GetSecurityDescriptorControl, InitializeSecurityDescriptor, NO_INHERITANCE, OBJECT_INHERIT_ACE,
-    PSECURITY_DESCRIPTOR, PSID, SE_DACL_AUTO_INHERITED, SE_DACL_PROTECTED, SECURITY_CAPABILITIES,
-    SECURITY_DESCRIPTOR, SUB_CONTAINERS_AND_OBJECTS_INHERIT, SetFileSecurityW,
-    SetSecurityDescriptorControl, SetSecurityDescriptorDacl,
+    GetSecurityDescriptorControl, INHERITED_ACE, InitializeAcl, InitializeSecurityDescriptor,
+    NO_INHERITANCE, OBJECT_INHERIT_ACE, PROTECTED_DACL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR,
+    PSID, SE_DACL_AUTO_INHERITED, SE_DACL_PROTECTED, SECURITY_CAPABILITIES, SECURITY_DESCRIPTOR,
+    SUB_CONTAINERS_AND_OBJECTS_INHERIT, SetFileSecurityW, SetSecurityDescriptorControl,
+    SetSecurityDescriptorDacl,
 };
 use windows_sys::Win32::Storage::FileSystem::{
-    DELETE, FILE_DELETE_CHILD, FILE_GENERIC_EXECUTE, FILE_GENERIC_READ, FILE_GENERIC_WRITE,
-    FILE_LIST_DIRECTORY, FILE_READ_ATTRIBUTES, FILE_TRAVERSE, SYNCHRONIZE,
+    DELETE, FILE_APPEND_DATA, FILE_DELETE_CHILD, FILE_GENERIC_EXECUTE, FILE_GENERIC_READ,
+    FILE_GENERIC_WRITE, FILE_LIST_DIRECTORY, FILE_READ_ATTRIBUTES, FILE_TRAVERSE, FILE_WRITE_DATA,
+    SYNCHRONIZE,
 };
 use windows_sys::Win32::System::Com::CoTaskMemFree;
 use windows_sys::Win32::System::Console::{
@@ -164,6 +166,7 @@ pub fn contained_command(program: &str, exec: &SandboxExec) -> io::Result<Comman
     };
     prepare_host(container);
     grant_workspace(container, &exec.workspace)?;
+    protect_git(container, &exec.workspace);
     let mut command = Command::new(launcher);
     command.arg(LAUNCH_FLAG).arg(program);
     Ok(command)
@@ -304,6 +307,234 @@ fn grant_workspace(container: &Container, workspace: &Path) -> io::Result<()> {
     })?;
     granted.insert(workspace.to_path_buf());
     Ok(())
+}
+
+/// Flag of an ACE that only applies to what is below the folder, not to the folder.
+const INHERIT_ONLY: u32 = 8;
+/// `ACL_REVISION_DS`: also fine for plain entries, and the only one that takes object entries.
+const ACL_REVISION_DS: u32 = 4;
+const ACCESS_DENIED_ACE_TYPE: u8 = 1;
+
+/// Keeps the container from changing the workspace's `.git\hooks` and `.git\config`, which name
+/// programs git runs on its own: a hook on `git commit`, `core.fsmonitor` or `core.hooksPath` on a
+/// `git status` that needs no approval, run by the user outside the sandbox.
+///
+/// Only allow entries bind the container (a deny entry for its SID is ignored: a file that denies
+/// it everything is still written), so the way to take access away is to not give it. For each of
+/// the three paths the ACL is cut loose from the workspace's, the other principals' entries are
+/// copied over as explicit ones, and the container gets:
+/// - `.git\hooks` and `.git\config`: read and execute, nothing else;
+/// - `.git` itself: what it had, except `FILE_DELETE_CHILD` on the folder, so `hooks` cannot be
+///   renamed away to plant another (that needs `DELETE` on `hooks`, which it no longer has, or
+///   `FILE_DELETE_CHILD` here). Below `.git` it keeps modify, so lock files, refs and objects work.
+///
+/// Applied before every spawn and skipped when already in place; a `.git` that appears later is
+/// covered by the next command. Best effort: a failed entry is not a failed spawn.
+fn protect_git(container: &Container, workspace: &Path) {
+    let protected = super::git_protected_paths(workspace);
+    if protected.is_empty() {
+        return;
+    }
+    // `.git` first: its inheritable entry reaches everything below, and `hooks` and `config`
+    // are then cut loose from it.
+    let _ = replace_container_entries(
+        &workspace.join(".git"),
+        &container.sid,
+        &[
+            (READ_EXECUTE | FILE_GENERIC_WRITE, NO_INHERITANCE),
+            (MODIFY, SUB_CONTAINERS_AND_OBJECTS_INHERIT | INHERIT_ONLY),
+        ],
+        cannot_delete_children,
+    );
+    for path in protected {
+        let inherit = if path.is_dir() {
+            SUB_CONTAINERS_AND_OBJECTS_INHERIT
+        } else {
+            NO_INHERITANCE
+        };
+        let _ = replace_container_entries(
+            &path,
+            &container.sid,
+            &[(READ_EXECUTE, inherit)],
+            only_reads,
+        );
+    }
+}
+
+/// Rewrites the DACL of `path` as a protected one in which `sid` has exactly `entries`
+/// (`(access, inheritance)`) and every other principal keeps what it had. Skipped when `done` says
+/// the DACL already is as wanted.
+fn replace_container_entries(
+    path: &Path,
+    sid: &str,
+    entries: &[(u32, u32)],
+    done: unsafe fn(*const ACL, PSID) -> bool,
+) -> Result<(), String> {
+    let name = wide(path.as_os_str());
+    with_sid(sid, |sid| {
+        read_dacl(path, |dacl| unsafe {
+            if done(dacl, sid) {
+                return Ok(());
+            }
+            let kept = dacl_without(dacl, sid)?;
+            let wanted: Vec<EXPLICIT_ACCESS_W> = entries
+                .iter()
+                .map(|(access, inherit)| EXPLICIT_ACCESS_W {
+                    grfAccessPermissions: *access,
+                    grfAccessMode: GRANT_ACCESS,
+                    grfInheritance: *inherit,
+                    Trustee: TRUSTEE_W {
+                        pMultipleTrustee: null_mut(),
+                        MultipleTrusteeOperation: NO_MULTIPLE_TRUSTEE,
+                        TrusteeForm: TRUSTEE_IS_SID,
+                        TrusteeType: TRUSTEE_IS_UNKNOWN,
+                        ptstrName: sid as *mut u16,
+                    },
+                })
+                .collect();
+            let mut updated: *mut ACL = null_mut();
+            let merged = SetEntriesInAclW(
+                wanted.len() as u32,
+                wanted.as_ptr(),
+                kept.as_ptr().cast(),
+                &mut updated,
+            );
+            if merged != 0 {
+                return Err(format!("ACL não montada (erro {merged})"));
+            }
+            let written = SetNamedSecurityInfoW(
+                name.as_ptr(),
+                SE_FILE_OBJECT,
+                DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+                null_mut(),
+                null_mut(),
+                updated,
+                null(),
+            );
+            LocalFree(updated as HLOCAL);
+            if written == 0 {
+                Ok(())
+            } else {
+                Err(format!(
+                    "{}: ACL não gravada (erro {written})",
+                    path.display()
+                ))
+            }
+        })
+    })??
+}
+
+const WRITES: u32 = FILE_WRITE_DATA | FILE_APPEND_DATA | FILE_DELETE_CHILD | DELETE;
+
+/// `dacl` gives `sid` read and execute and nothing that writes.
+unsafe fn only_reads(dacl: *const ACL, sid: PSID) -> bool {
+    let mut reads = false;
+    let mut writes = false;
+    for_each_ace(dacl, |header, mask, ace_sid| {
+        if header.AceType == ACCESS_ALLOWED_ACE_TYPE
+            && !ace_sid.is_null()
+            && unsafe { EqualSid(ace_sid, sid) } != 0
+        {
+            reads |= mask & READ_EXECUTE == READ_EXECUTE;
+            writes |= mask & WRITES != 0;
+        }
+    });
+    reads && !writes
+}
+
+/// No entry gives `sid` `FILE_DELETE_CHILD` on the folder itself (an inherit-only entry is for what
+/// is below), and some entry still lets it write.
+unsafe fn cannot_delete_children(dacl: *const ACL, sid: PSID) -> bool {
+    let mut deletes = false;
+    let mut writes = false;
+    for_each_ace(dacl, |header, mask, ace_sid| {
+        if header.AceType == ACCESS_ALLOWED_ACE_TYPE
+            && !ace_sid.is_null()
+            && unsafe { EqualSid(ace_sid, sid) } != 0
+        {
+            let here = u32::from(header.AceFlags) & INHERIT_ONLY == 0;
+            deletes |= here && mask & FILE_DELETE_CHILD != 0;
+            writes |= mask & FILE_WRITE_DATA != 0;
+        }
+    });
+    !deletes && writes
+}
+
+/// A copy of `dacl` as raw ACL bytes (room left for more entries) without any entry of `sid`, and
+/// with the "inherited" flag cleared on what is kept, which makes those entries explicit.
+unsafe fn dacl_without(dacl: *const ACL, sid: PSID) -> Result<Vec<u32>, String> {
+    let mut aces: Vec<Vec<u8>> = Vec::new();
+    for_each_ace(dacl, |header, _, ace_sid| {
+        if !ace_sid.is_null() && unsafe { EqualSid(ace_sid, sid) } != 0 {
+            return;
+        }
+        let bytes = unsafe {
+            std::slice::from_raw_parts(
+                header as *const ACE_HEADER as *const u8,
+                header.AceSize.into(),
+            )
+        };
+        let mut copy = bytes.to_vec();
+        copy[1] &= !(INHERITED_ACE as u8);
+        aces.push(copy);
+    });
+    let bytes = size_of::<ACL>() + aces.iter().map(Vec::len).sum::<usize>();
+    let mut storage = vec![0u32; bytes.div_ceil(4) + 1];
+    let acl = storage.as_mut_ptr() as *mut ACL;
+    if unsafe { InitializeAcl(acl, (storage.len() * 4) as u32, ACL_REVISION_DS) } == 0 {
+        return Err(last_error("InitializeAcl"));
+    }
+    for ace in &aces {
+        let added = unsafe {
+            AddAce(
+                acl,
+                ACL_REVISION_DS,
+                u32::MAX,
+                ace.as_ptr().cast(),
+                ace.len() as u32,
+            )
+        };
+        if added == 0 {
+            return Err(last_error("AddAce"));
+        }
+    }
+    Ok(storage)
+}
+
+/// Calls `visit(header, mask, sid)` for every ACE of `dacl`. Allow and deny entries share one
+/// layout; any other kind (object, audit) is passed on with no SID, so a copy of the list keeps it
+/// and nothing reads it as an allow or deny entry.
+fn for_each_ace(dacl: *const ACL, mut visit: impl FnMut(&ACE_HEADER, u32, PSID)) {
+    if dacl.is_null() {
+        return;
+    }
+    let mut info = ACL_SIZE_INFORMATION::default();
+    let read = unsafe {
+        GetAclInformation(
+            dacl,
+            &mut info as *mut ACL_SIZE_INFORMATION as *mut c_void,
+            size_of::<ACL_SIZE_INFORMATION>() as u32,
+            AclSizeInformation,
+        )
+    };
+    if read == 0 {
+        return;
+    }
+    for index in 0..info.AceCount {
+        unsafe {
+            let mut ace: *mut c_void = null_mut();
+            if GetAce(dacl, index, &mut ace) == 0 {
+                continue;
+            }
+            let header = &*(ace as *const ACE_HEADER);
+            if header.AceType > ACCESS_DENIED_ACE_TYPE {
+                visit(header, 0, null_mut());
+                continue;
+            }
+            let entry = &*(ace as *const ACCESS_ALLOWED_ACE);
+            visit(header, entry.Mask, &entry.SidStart as *const u32 as PSID);
+        }
+    }
 }
 
 /// Lets the container list the folders above `path`, the ones the user may change. The names in

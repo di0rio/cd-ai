@@ -1345,6 +1345,29 @@ fn wait_for_line(lines: &Receiver<String>, cancel: &CancelToken) -> Option<Strin
     }
 }
 
+/// Text from the repository or the model, safe to print on the approval prompt. A file name or a
+/// diff line can carry escape sequences that clear the screen, move the cursor or rewrite the
+/// "Aprovar?" line, so the user would approve something other than what is shown. Every control
+/// character except `\n` and `\t` (C0, DEL, C1: the 8-bit CSI is U+009B) and the bidi overrides
+/// that reorder text is shown as a visible escape (`\x1b`, `\u{202e}`); the rest of an escape
+/// sequence is then plain text, and the terminal never sees the ESC that gives it meaning.
+fn terminal_safe(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for c in text.chars() {
+        match c {
+            '\n' | '\t' => out.push(c),
+            c if c < ' ' || ('\u{7f}'..='\u{9f}').contains(&c) => {
+                out.push_str(&format!("\\x{:02x}", c as u32));
+            }
+            '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}' | '\u{200e}' | '\u{200f}' => {
+                out.push_str(&format!("\\u{{{:x}}}", c as u32));
+            }
+            c => out.push(c),
+        }
+    }
+    out
+}
+
 /// Asks the user in the terminal, showing the exact action (D13).
 ///
 /// Without an interactive stdin there is nobody to ask, so the answer is a denial: the CLI has no
@@ -1352,7 +1375,20 @@ fn wait_for_line(lines: &Receiver<String>, cancel: &CancelToken) -> Option<Strin
 fn ask_approval(request: &ApprovalRequest, cancel: &CancelToken) -> ApprovalResponse {
     let stdin = std::io::stdin();
     if !stdin.is_terminal() {
-        eprintln!("sem terminal interativo: negado");
+        if matches!(
+            &request.action,
+            ApprovalAction::RunCommand {
+                class: CommandClass::Validate,
+                ..
+            }
+        ) {
+            eprintln!(
+                "validação sem sandbox executa código do repositório e exige aprovação; sem \
+                 terminal interativo: negado (rode `cd-ai sandbox-setup` ou use um terminal)"
+            );
+        } else {
+            eprintln!("sem terminal interativo: negado");
+        }
         return ApprovalResponse::Denied {
             reason: Some("sem terminal interativo".to_string()),
         };
@@ -1363,18 +1399,21 @@ fn ask_approval(request: &ApprovalRequest, cancel: &CancelToken) -> ApprovalResp
         ApprovalAction::RunCommand { argv, class, cwd } => {
             eprintln!("rodar comando ({}):", class_label(class));
             eprintln!("  argv: {}", format_argv(argv));
-            eprintln!("  cwd:  {cwd}");
+            eprintln!("  cwd:  {}", terminal_safe(cwd));
         }
         ApprovalAction::EditFile { path, diff } => {
-            eprintln!("editar {path}:");
+            eprintln!("editar {}:", terminal_safe(path));
             for line in diff.lines() {
-                eprintln!("  {line}");
+                eprintln!("  {}", terminal_safe(line));
             }
         }
-        ApprovalAction::WriteFile { path, size } => {
-            eprintln!("escrever {path} ({size} bytes)");
+        ApprovalAction::WriteFile { path, size, diff } => {
+            eprintln!("escrever {} ({size} bytes):", terminal_safe(path));
+            for line in diff.lines() {
+                eprintln!("  {}", terminal_safe(line));
+            }
         }
-        ApprovalAction::ReadFile { path } => eprintln!("ler {path}"),
+        ApprovalAction::ReadFile { path } => eprintln!("ler {}", terminal_safe(path)),
     }
     eprint!("Aprovar? [s/N] ");
     let _ = std::io::stderr().flush();
@@ -1549,5 +1588,32 @@ mod tests {
 
         let args = ["--scripted", "--model", "qwen3"].map(String::from);
         assert!(parse_eval_args(args.into_iter()).is_err());
+    }
+
+    #[test]
+    fn terminal_safe_shows_control_characters_instead_of_sending_them() {
+        // Clears the screen and rewrites the prompt line: none of it may reach the terminal.
+        let hostile = "ok\x1b[2J\x1b]0;titulo\x07\rAprovar? [s/N] s\x7f\u{9b}31m";
+        let shown = terminal_safe(hostile);
+        assert!(
+            !shown
+                .chars()
+                .any(|c| c.is_control() && c != '\n' && c != '\t'),
+            "{shown:?}"
+        );
+        assert!(shown.contains("\\x1b[2J"), "{shown}");
+        assert!(shown.contains("\\x07\\x0d"), "{shown}");
+        assert!(shown.contains("\\x7f\\x9b31m"), "{shown}");
+    }
+
+    #[test]
+    fn terminal_safe_keeps_ordinary_text_newlines_tabs_and_accents() {
+        let plain = "src/ação.rs\n\t+ linha\n- outra";
+        assert_eq!(terminal_safe(plain), plain);
+    }
+
+    #[test]
+    fn terminal_safe_escapes_bidi_overrides() {
+        assert_eq!(terminal_safe("gpj.\u{202e}exe"), "gpj.\\u{202e}exe");
     }
 }

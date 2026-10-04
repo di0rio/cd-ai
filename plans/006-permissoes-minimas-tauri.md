@@ -46,7 +46,7 @@ Aplicar menor privilégio (SPEC §20 e decisão 0003) antes de existirem ferrame
   }
   ```
 
-- Commands esperados depois dos planos 003–005 (confirme no drift check):
+- Commands esperados depois dos planos 003-005 (confirme no drift check):
   - `app_info`
   - `open_workspace`
   - `current_workspace`

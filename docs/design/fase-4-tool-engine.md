@@ -142,7 +142,7 @@ Regras da seção 3. Resultado: `{ changedLines, removed, added, hashBefore, has
 2. `search` — depende do motor de grep.
 3. `edit_file` + `write_file` (formato de edição, aprovação, parse) — o cerne de segurança.
 4. `run_command` (classificação + aprovação + tree-kill).
-5. Redator aplicado sobre os pontos de saída (1–4).
+5. Redator aplicado sobre os pontos de saída (1-4).
 
 ## 3. Formato de edição
 
@@ -389,10 +389,10 @@ Textos limpos (6, 7, 8, 10): **0 falsos-positivos**. As amostras 2 e 4 disparara
 
 ## Conexões com o SPEC
 
-- §14 / §15 — formato de edição e as 6 tools (seções 2–3).
-- §13.1 — parse sintático imediato e comandos de validação (seções 3.4–4).
+- §14 / §15 — formato de edição e as 6 tools (seções 2-3).
+- §13.1 — parse sintático imediato e comandos de validação (seções 3.4-4).
 - §18 — terminal: stdout/stderr separados, tree-kill (seções 2.6, Spike A).
-- §20.2 / §20.4 / §20.5 / §20.6 — classificação, permissão, injection, secrets (seções 4–6).
+- §20.2 / §20.4 / §20.5 / §20.6 — classificação, permissão, injection, secrets (seções 4-6).
 - §21 — checkpoint mínimo de hash (seção D5).
 - §22 — eventos (seção 7) e compatibilidade com `session.ts`.
 - Decisões 0001 (sem sandbox até F7; aprovação obrigatória), 0003 (tudo no Rust), 0005 (UI só apresenta).

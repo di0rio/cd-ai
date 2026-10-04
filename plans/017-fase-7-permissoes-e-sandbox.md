@@ -2,7 +2,7 @@
 
 > **Instruções ao executor:** rode os passos nesta ordem e confirme cada verificação antes de avançar. Se alguma STOP condition acontecer, pare e reporte; não improvise. Uma parte só está pronta com `bun run verify` saindo com exit 0 (AGENTS.md).
 >
-> **Drift check (rode primeiro):** `git log -1 --oneline` deve estar em `main` com as Fases 0–6 (PR #3). Confira `crates/agent-core/src/permissions.rs`, `crates/agent-core/src/tools/command.rs`, `docs/design/fase-4-tool-engine.md` §5 e SPEC §20 / §34 Fase 7. Se a classificação de comandos ou o `ToolEngine` tiverem sumido, trate como STOP.
+> **Drift check (rode primeiro):** `git log -1 --oneline` deve estar em `main` com as Fases 0-6 (PR #3). Confira `crates/agent-core/src/permissions.rs`, `crates/agent-core/src/tools/command.rs`, `docs/design/fase-4-tool-engine.md` §5 e SPEC §20 / §34 Fase 7. Se a classificação de comandos ou o `ToolEngine` tiverem sumido, trate como STOP.
 
 ## Status
 
@@ -17,7 +17,7 @@
 
 Até a Fase 6 o modo é efetivamente ASK: `read`/`validate` passam sozinhos e o resto pergunta. A classificação existe, mas **não há sandbox de SO** e a rede de um comando aprovado (ou de um `unknown` que o usuário liberou) continua disponível. Sem isolamento, a promessa "não sair do workspace" não vale para `run_command`.
 
-A Fase 7 fecha SPEC §20.3–§20.5: sandbox do shell, rede bloqueada de fato, modos ASK/AUTO/FULL ACCESS, e todo resultado de tool marcado como dado não confiável.
+A Fase 7 fecha SPEC §20.3-§20.5: sandbox do shell, rede bloqueada de fato, modos ASK/AUTO/FULL ACCESS, e todo resultado de tool marcado como dado não confiável.
 
 ## Estado atual (fatos)
 
@@ -36,7 +36,7 @@ A Fase 7 fecha SPEC §20.3–§20.5: sandbox do shell, rede bloqueada de fato, m
 | D2 | **Linux primeiro, com Landlock + user/net namespace.** Sem bubblewrap (binário extra). Windows/macOS: sandbox indisponível, documentado, sem fingir isolamento. | SPEC §20.3 + decisão 0001. Landlock ABI 6 e `unshare` já existem aqui. |
 | D3 | **Rede bloqueada no OS para qualquer classe que não seja `network` aprovada.** Mesmo um `unknown` liberado pelo usuário nasce sem rede. `network` aprovado pula o netns (e o deny TCP do Landlock). | SPEC: "rede bloqueada por padrão"; "a rede é liberada por comando, com aprovação explícita". Perguntar não é bloquear. |
 | D4 | **Escrita no sandbox: workspace + tmp/cache necessários.** `/` fica leitura+execução. Write em workspace, `TMPDIR`/`/tmp`/`/var/tmp`, e caches do usuário (`~/.cache`, `~/.bun`, `~/.cargo`, `~/.npm`, `~/.local/share`). Não liberar `$HOME` inteiro. | SPEC §20.3. `bun test`/`cargo test` precisam do cache; `$HOME` solto furaria o workspace. |
-| D5 | **FULL ACCESS só com sandbox completo** (filesystem **e** bloqueio de rede). Sem isso o modo é recusado (CLI/UI) e, se chegar no engine, rebaixa para ASK. | SPEC §20.3–§20.4. |
+| D5 | **FULL ACCESS só com sandbox completo** (filesystem **e** bloqueio de rede). Sem isso o modo é recusado (CLI/UI) e, se chegar no engine, rebaixa para ASK. | SPEC §20.3-§20.4. |
 | D6 | **AUTO sem sandbox de FS:** editar/criar arquivo continua automático (path já é validado); comando `write` **pergunta** (a tabela diz "auto (sandbox)"). | Não fingir isolamento de shell no Windows. |
 | D7 | **A tabela §20.4 é uma função pura** `policy(mode, kind, caps) -> Auto \| Ask \| Deny`. Tools só perguntam quando a policy diz `Ask`. | Fronteira de confiança no Rust; testável sem spawn. |
 | D8 | **Modo vive em `settings.json`** (`permissionMode`), default ASK. CLI: `--mode ask\|auto\|full-access`. Eval continua ASK + responder que concede — o sandbox ainda envolve os comandos. Sem `--yes` no `task`. | Settings já é o lugar da preferência (plano 015). Eval não pode regressar. |

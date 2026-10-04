@@ -74,6 +74,9 @@ impl Workspace {
         };
         for component in requested.components() {
             match component {
+                Component::Normal(name) if cfg!(windows) && windows_unsafe_name(name) => {
+                    return Err(outside());
+                }
                 Component::Prefix(_) | Component::RootDir | Component::Normal(_) => {
                     lexical.push(component)
                 }
@@ -141,10 +144,179 @@ impl Workspace {
     }
 }
 
+/// Refuses a folder that is too broad to be a project: a filesystem root (`/`, `C:\`), the home
+/// directory, or a folder that contains it (`/home`, `C:\Users`). The agent may read the whole
+/// workspace, and a sandboxed command may write all of it, so opening `~` would hand over
+/// `~/.ssh`, `~/.aws` and every other project. The message is for the user (pt-BR).
+pub fn ensure_project_folder(path: &Path) -> Result<(), String> {
+    ensure_project_folder_with(path, home_dir().as_deref())
+}
+
+fn ensure_project_folder_with(path: &Path, home: Option<&Path>) -> Result<(), String> {
+    let canonical = path
+        .canonicalize()
+        .map_err(|error| format!("{}: {error}", path.display()))?;
+    let shown = canonical.to_string_lossy();
+    let shown = shown.trim_start_matches(r"\\?\");
+    let refuse = |why: &str| {
+        Err(format!(
+            "{shown}: {why}. Abra a pasta de um projeto, não uma pasta tão ampla."
+        ))
+    };
+    if canonical.parent().is_none() {
+        return refuse("é a raiz do sistema de arquivos");
+    }
+    if let Some(home) = home.and_then(|home| home.canonicalize().ok()) {
+        if canonical == home {
+            return refuse("é a sua pasta pessoal");
+        }
+        if home.starts_with(&canonical) {
+            return refuse("contém a sua pasta pessoal");
+        }
+    }
+    Ok(())
+}
+
+fn home_dir() -> Option<PathBuf> {
+    let var = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
+    std::env::var_os(var)
+        .filter(|home| !home.is_empty())
+        .map(PathBuf::from)
+}
+
+/// Names Windows reads differently from what the path parser sees: `:` opens an alternate data
+/// stream (`.env::$DATA` is `.env`, which would dodge the secret-file check) or swaps the drive,
+/// trailing dots and spaces are dropped (`.git.` is `.git`), and device names (`NUL`, `COM1`,
+/// `CON.txt`) open a device instead of a file. No legitimate project file needs any of them.
+fn windows_unsafe_name(name: &std::ffi::OsStr) -> bool {
+    let name = name.to_string_lossy();
+    if name.contains(':') || name.ends_with('.') || name.ends_with(' ') {
+        return true;
+    }
+    let stem = name
+        .split('.')
+        .next()
+        .unwrap_or_default()
+        .to_ascii_uppercase();
+    let numbered = |prefix: &str| {
+        let mut rest = stem.strip_prefix(prefix).into_iter().flat_map(str::chars);
+        matches!((rest.next(), rest.next()), (Some(digit), None) if digit.is_ascii_digit() || "¹²³".contains(digit))
+    };
+    matches!(
+        stem.as_str(),
+        "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$"
+    ) || numbered("COM")
+        || numbered("LPT")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    #[test]
+    fn flags_names_windows_reinterprets() {
+        for name in [
+            ".env::$DATA",
+            "file.txt:stream",
+            "C:",
+            ".git.",
+            "dir ",
+            "...",
+            "NUL",
+            "nul.txt",
+            "Con",
+            "COM1",
+            "lpt9.log",
+            "com¹",
+            "CONOUT$",
+        ] {
+            assert!(windows_unsafe_name(name.as_ref()), "{name}");
+        }
+        for name in [
+            ".env",
+            ".git",
+            "main.rs",
+            "console.log",
+            "com10",
+            "comma",
+            "lpt",
+            "null",
+            "a b",
+        ] {
+            assert!(!windows_unsafe_name(name.as_ref()), "{name}");
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn rejects_windows_aliases_of_a_workspace_file() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join(".env"), "TOKEN=x").unwrap();
+        let ws = Workspace::open(dir.path()).unwrap();
+        for path in [
+            ".env::$DATA",
+            ".env:stream",
+            ".env.",
+            ".env ",
+            "sub\\C:\\x",
+            "C:x",
+            "nul",
+            "\\\\server\\share\\x",
+            "\\\\.\\C:\\x",
+        ] {
+            assert!(
+                matches!(ws.resolve(path), Err(WorkspaceError::OutsideWorkspace(_))),
+                "{path}"
+            );
+        }
+        assert!(ws.resolve(".env").is_ok());
+    }
+
+    #[test]
+    fn refuses_roots_home_and_what_contains_home() {
+        let outer = tempdir().unwrap();
+        let home = outer.path().join("users").join("cauan");
+        let project = home.join("projetos").join("app");
+        fs::create_dir_all(&project).unwrap();
+        let elsewhere = outer.path().join("trabalho").join("app");
+        fs::create_dir_all(&elsewhere).unwrap();
+        let check = |path: &Path| ensure_project_folder_with(path, Some(&home));
+
+        // Home itself, and every folder above it up to the root.
+        for broad in [&home, home.parent().unwrap(), outer.path()] {
+            let error = check(broad).unwrap_err();
+            assert!(error.contains("Abra a pasta de um projeto"), "{error}");
+        }
+        let root = outer.path().ancestors().last().unwrap().to_path_buf();
+        let error = check(&root).unwrap_err();
+        assert!(error.contains("raiz"), "{error}");
+        let error = check(&home).unwrap_err();
+        assert!(error.contains("pessoal"), "{error}");
+        let error = check(home.parent().unwrap()).unwrap_err();
+        assert!(error.contains("contém"), "{error}");
+
+        // A project under home, or a folder that has nothing to do with it, is fine.
+        assert!(check(&project).is_ok());
+        assert!(check(&home.join("projetos")).is_ok());
+        assert!(check(&elsewhere).is_ok());
+        // No home known: only the root is refused.
+        assert!(ensure_project_folder_with(&home, None).is_ok());
+        assert!(ensure_project_folder_with(&root, None).is_err());
+        // A folder that is not there is the caller's error, not a pass.
+        assert!(check(&outer.path().join("nope")).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_symlink_to_home_is_home() {
+        let outer = tempdir().unwrap();
+        let home = outer.path().join("home");
+        fs::create_dir(&home).unwrap();
+        let link = outer.path().join("atalho");
+        std::os::unix::fs::symlink(&home, &link).unwrap();
+        assert!(ensure_project_folder_with(&link, Some(&home)).is_err());
+    }
 
     #[test]
     fn open_missing_folder_is_not_found() {

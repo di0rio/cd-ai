@@ -12,6 +12,24 @@
 //! (`~/.cargo/bin`, `~/.rustup`, `~/.bun/bin`, a global npm prefix): a command must not plant a
 //! binary the user will execute next. A host without a working sandbox reports it unavailable:
 //! FULL ACCESS stays off and write commands keep asking (D5/D6).
+//!
+//! The workspace is writable, but not all of it: `.git/hooks` and `.git/config` name programs git
+//! runs on its own, outside the sandbox, so they are read-only (`git_protected_paths`):
+//! - Linux: bind mounts in the child's own mount namespace, which needs the user namespace the
+//!   network isolation creates. On a Landlock-only host, and for an approved `network` command,
+//!   they stay writable (Landlock cannot carve a folder out of a writable one).
+//! - macOS: `deny file-write*` rules after the allow, for every command.
+//! - Windows: the container's ACL on those paths is cut loose from the workspace's and gives it
+//!   read and execute only. Deny entries do not work for an AppContainer SID; see `protect_git`.
+//!
+//! Credentials under the home directory (`secret_home_paths`: `~/.ssh`, `~/.aws`, `~/.npmrc`, ...)
+//! are hidden from a command that has no network: an empty mount over them on Linux (same
+//! condition as above), `deny file-read*` on macOS, never granted on Windows. An approved `network`
+//! command runs with them visible, since `git push` over ssh or `npm publish` need them.
+//!
+//! The environment of the child is an allowlist (`scrub_env`), not the app's: no API tokens.
+//! `argv` that names `.git` never reaches the sandbox as an automatic command: it asks first
+//! (`tools::command::escalate_for_paths`), which is what covers the paths no mount can.
 
 use std::io;
 use std::path::PathBuf;
@@ -126,7 +144,15 @@ fn probe() -> SandboxStatus {
 /// The command that spawns `program` under the sandbox; the caller adds the arguments, the cwd
 /// and the stdio. A plain command when this host cannot isolate. An error when it can but setting
 /// up the isolation failed: the command must never run "unsandboxed by accident".
+///
+/// The child starts with an allowlisted environment, not the app's: see [`scrub_env`].
 pub fn command(program: &str, exec: &SandboxExec) -> io::Result<Command> {
+    let mut command = platform_command(program, exec)?;
+    scrub_env(&mut command, exec.allow_network);
+    Ok(command)
+}
+
+fn platform_command(program: &str, exec: &SandboxExec) -> io::Result<Command> {
     #[cfg(target_os = "linux")]
     {
         let mut command = Command::new(program);
@@ -146,6 +172,132 @@ pub fn command(program: &str, exec: &SandboxExec) -> io::Result<Command> {
         let _ = exec;
         Ok(Command::new(program))
     }
+}
+
+/// Variables a command may inherit: where things are (PATH, home, temp, the toolchains), the
+/// locale and terminal, and what Windows needs to start a process at all. Everything else stays
+/// behind: API tokens (`GH_TOKEN`, `NPM_TOKEN`, `AWS_*`, `OPENAI_API_KEY`), `SSH_AUTH_SOCK`, and
+/// the variables that make a tool run a program (`NODE_OPTIONS`, `LD_PRELOAD`, `RUSTC_WRAPPER`,
+/// `GIT_SSH_COMMAND`). A command that needs one has to be run by the user.
+const ENV_ALLOWED: &[&str] = &[
+    "PATH",
+    "HOME",
+    "USERPROFILE",
+    "HOMEDRIVE",
+    "HOMEPATH",
+    "USER",
+    "USERNAME",
+    "USERDOMAIN",
+    "LOGNAME",
+    "TEMP",
+    "TMP",
+    "TMPDIR",
+    "LANG",
+    "LANGUAGE",
+    "TZ",
+    "TERM",
+    "COLORTERM",
+    "NO_COLOR",
+    "SHELL",
+    "CARGO_HOME",
+    "RUSTUP_HOME",
+    "RUSTUP_TOOLCHAIN",
+    "CARGO_TARGET_DIR",
+    "RUST_BACKTRACE",
+    "GOPATH",
+    "GOROOT",
+    "JAVA_HOME",
+    "BUN_INSTALL",
+    // Windows: without these, processes (and the C runtime) do not start or find their DLLs.
+    "SYSTEMROOT",
+    "WINDIR",
+    "SYSTEMDRIVE",
+    "COMSPEC",
+    "PATHEXT",
+    "APPDATA",
+    "LOCALAPPDATA",
+    "PROGRAMFILES",
+    "PROGRAMFILES(X86)",
+    "PROGRAMW6432",
+    "PROGRAMDATA",
+    "COMMONPROGRAMFILES",
+    "NUMBER_OF_PROCESSORS",
+    "PROCESSOR_ARCHITECTURE",
+    "OS",
+];
+
+/// Added for an approved `network` command: how to reach the network, not what to sign in with.
+const ENV_NETWORK: &[&str] = &[
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "ALL_PROXY",
+    "NO_PROXY",
+    "SSL_CERT_FILE",
+    "SSL_CERT_DIR",
+    "CURL_CA_BUNDLE",
+    "REQUESTS_CA_BUNDLE",
+    "NODE_EXTRA_CA_CERTS",
+    "SSH_AUTH_SOCK",
+];
+
+/// Whether a variable of this name reaches the command. Case-insensitive: Windows names are.
+fn env_allowed(name: &str, allow_network: bool) -> bool {
+    let upper = name.to_ascii_uppercase();
+    upper.starts_with("LC_")
+        || upper.starts_with("XDG_")
+        || ENV_ALLOWED.contains(&upper.as_str())
+        || (allow_network && ENV_NETWORK.contains(&upper.as_str()))
+}
+
+/// Replaces the inherited environment with the allowlisted part of it.
+fn scrub_env(command: &mut Command, allow_network: bool) {
+    scrub_env_from(command, std::env::vars_os(), allow_network);
+}
+
+fn scrub_env_from(
+    command: &mut Command,
+    vars: impl Iterator<Item = (std::ffi::OsString, std::ffi::OsString)>,
+    allow_network: bool,
+) {
+    command.env_clear();
+    for (name, value) in vars {
+        if name
+            .to_str()
+            .is_some_and(|name| env_allowed(name, allow_network))
+        {
+            command.env(name, value);
+        }
+    }
+}
+
+/// Credentials under the home directory. A sandboxed command has no business reading them: they
+/// are read-denied where the platform can (Linux with user namespaces, macOS); on Windows the
+/// container was never granted them.
+#[cfg_attr(windows, allow(dead_code))]
+pub(crate) fn secret_home_paths() -> Vec<PathBuf> {
+    let Some(home) = home_dir() else {
+        return Vec::new();
+    };
+    vec![
+        home.join(".ssh"),
+        home.join(".aws"),
+        home.join(".config").join("gcloud"),
+        home.join(".docker").join("config.json"),
+        home.join(".npmrc"),
+        home.join(".git-credentials"),
+    ]
+}
+
+/// `.git/hooks` and `.git/config` of the workspace, which name programs git runs on its own (a
+/// hook on `git commit`, `core.fsmonitor` on `git status`). They stay read-only for a sandboxed
+/// command, which otherwise has the whole workspace writable. Only a `.git` directory counts: in a
+/// linked worktree `.git` is a file, and the real one lives outside the workspace and the sandbox.
+pub(crate) fn git_protected_paths(workspace: &std::path::Path) -> Vec<PathBuf> {
+    let git = workspace.join(".git");
+    if !git.is_dir() {
+        return Vec::new();
+    }
+    vec![git.join("hooks"), git.join("config")]
 }
 
 /// One-time host preparation that needs an administrator (`cd-ai sandbox-setup`). Only Windows
@@ -180,17 +332,8 @@ pub fn contained_command(program: &str, exec: &SandboxExec) -> io::Result<Comman
 fn cache_roots() -> Vec<PathBuf> {
     let home = home_dir();
     let mut roots = Vec::new();
-    // Cargo's download cache and the lock files it takes even for an offline build.
     if let Some(cargo) = cargo_home() {
-        for name in [
-            "registry",
-            "git",
-            ".package-cache",
-            ".package-cache-mutate",
-            ".global-cache",
-        ] {
-            roots.push(cargo.join(name));
-        }
+        roots.extend(cargo_cache_roots(&cargo));
     }
     if let Some(home) = &home {
         roots.push(home.join(".bun").join("install").join("cache"));
@@ -240,6 +383,29 @@ fn cache_roots() -> Vec<PathBuf> {
     roots
 }
 
+/// Cargo's download cache and the lock files it takes even for an offline build. Not
+/// `registry/src` and `git/checkouts`, where the unpacked sources of every dependency live: every
+/// later build, outside the sandbox too, compiles (and runs `build.rs` from) what is there. A
+/// dependency never built before cannot be unpacked inside the sandbox, so its first build fails
+/// here and has to be run by the user.
+#[cfg_attr(
+    not(any(target_os = "linux", target_os = "macos", windows, test)),
+    allow(dead_code)
+)]
+fn cargo_cache_roots(cargo: &std::path::Path) -> Vec<PathBuf> {
+    [
+        "registry/index",
+        "registry/cache",
+        "git/db",
+        ".package-cache",
+        ".package-cache-mutate",
+        ".global-cache",
+    ]
+    .iter()
+    .map(|name| cargo.join(name))
+    .collect()
+}
+
 /// Cache directories whose contents are executed later, outside the sandbox.
 const RUNS_LATER: &[&str] = &["pre-commit", "node", "pnpm"];
 
@@ -286,6 +452,8 @@ mod tests {
         for forbidden in [
             cargo.join("bin"),
             cargo.join("config.toml"),
+            cargo.join("registry").join("src"),
+            cargo.join("git").join("checkouts"),
             home.join(".rustup"),
             home.join(".bun").join("bin"),
             home.join(".npm").join("_npx"),
@@ -299,5 +467,116 @@ mod tests {
                 "{forbidden:?} would be writable through {roots:?}"
             );
         }
+    }
+
+    #[test]
+    fn cargo_caches_are_listed_by_name_not_as_a_whole() {
+        // The unpacked sources are what a later build compiles: never writable by a sandboxed
+        // command, even when the download caches next to them are.
+        let cargo = PathBuf::from("cargo-home");
+        let roots = cargo_cache_roots(&cargo);
+        assert!(roots.contains(&cargo.join("registry/index")), "{roots:?}");
+        assert!(roots.contains(&cargo.join("registry/cache")), "{roots:?}");
+        assert!(roots.contains(&cargo.join("git/db")), "{roots:?}");
+        assert!(!roots.contains(&cargo.join("registry")), "{roots:?}");
+        assert!(!roots.contains(&cargo.join("registry/src")), "{roots:?}");
+        assert!(!roots.contains(&cargo.join("git")), "{roots:?}");
+        assert!(!roots.contains(&cargo.join("git/checkouts")), "{roots:?}");
+    }
+
+    #[test]
+    fn env_allowlist_keeps_the_toolchain_and_drops_secrets() {
+        for name in [
+            "PATH",
+            "Path",
+            "HOME",
+            "USERPROFILE",
+            "TEMP",
+            "TMPDIR",
+            "LANG",
+            "LC_ALL",
+            "SystemRoot",
+            "windir",
+            "ComSpec",
+            "PATHEXT",
+            "CARGO_HOME",
+            "RUSTUP_HOME",
+            "XDG_CACHE_HOME",
+        ] {
+            assert!(env_allowed(name, false), "{name}");
+        }
+        for name in [
+            "GH_TOKEN",
+            "GITHUB_TOKEN",
+            "NPM_TOKEN",
+            "AWS_SECRET_ACCESS_KEY",
+            "OPENAI_API_KEY",
+            "SSH_AUTH_SOCK",
+            "NODE_OPTIONS",
+            "LD_PRELOAD",
+            "RUSTC_WRAPPER",
+            "RUSTFLAGS",
+            "GIT_SSH_COMMAND",
+            "HTTP_PROXY",
+        ] {
+            assert!(!env_allowed(name, false), "{name}");
+        }
+        // An approved network command also gets the way to reach the network, never a token.
+        assert!(env_allowed("HTTPS_PROXY", true));
+        assert!(env_allowed("SSH_AUTH_SOCK", true));
+        assert!(!env_allowed("GH_TOKEN", true));
+    }
+
+    #[test]
+    fn a_sandboxed_command_does_not_inherit_the_secrets_of_the_app() {
+        let vars = [
+            ("CD_AI_TEST_SECRET_TOKEN", "hunter2-hunter2"),
+            ("GH_TOKEN", "ghp_x"),
+            ("PATH", "/usr/bin"),
+            ("LC_ALL", "C"),
+        ]
+        .map(|(name, value)| (name.into(), value.into()));
+        let mut command = Command::new("true");
+        scrub_env_from(&mut command, vars.into_iter(), false);
+        let envs: Vec<_> = command.get_envs().collect();
+        let names: Vec<_> = envs
+            .iter()
+            .map(|(name, _)| name.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(names.len(), 2, "{names:?}");
+        assert!(names.iter().any(|name| name == "PATH"), "{names:?}");
+        assert!(names.iter().any(|name| name == "LC_ALL"), "{names:?}");
+    }
+
+    #[test]
+    fn git_hooks_and_config_are_protected_only_for_a_real_git_dir() {
+        let workspace = tempfile::tempdir().unwrap();
+        assert!(git_protected_paths(workspace.path()).is_empty());
+        // A linked worktree has a `.git` file, not a directory.
+        std::fs::write(workspace.path().join(".git"), "gitdir: /elsewhere\n").unwrap();
+        assert!(git_protected_paths(workspace.path()).is_empty());
+        std::fs::remove_file(workspace.path().join(".git")).unwrap();
+        std::fs::create_dir(workspace.path().join(".git")).unwrap();
+        assert_eq!(
+            git_protected_paths(workspace.path()),
+            vec![
+                workspace.path().join(".git").join("hooks"),
+                workspace.path().join(".git").join("config"),
+            ]
+        );
+    }
+
+    #[test]
+    fn credential_paths_live_under_the_home_directory() {
+        let Some(home) = home_dir() else {
+            return;
+        };
+        let paths = secret_home_paths();
+        assert!(paths.iter().all(|path| path.starts_with(&home)));
+        for name in [".ssh", ".aws", ".npmrc", ".git-credentials"] {
+            assert!(paths.contains(&home.join(name)), "{name}");
+        }
+        assert!(paths.contains(&home.join(".config").join("gcloud")));
+        assert!(paths.contains(&home.join(".docker").join("config.json")));
     }
 }

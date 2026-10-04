@@ -2,7 +2,7 @@
 
 > **Instruções ao executor:** rode os passos nesta ordem e confirme cada verificação antes de avançar. Se alguma STOP condition acontecer, pare e reporte; não improvise. Uma parte só está pronta com `bun run verify` saindo com exit 0 (AGENTS.md).
 >
-> **Drift check (rode primeiro):** `git log -1 --oneline` deve estar em `main` com as Fases 0–7 (PR #4). Confira `crates/agent-core/src/agent/runner.rs` (`status_for` / D11), `crates/agent-core/src/permissions.rs` (`CommandClass::Validate`), `crates/agent-core/src/agent/profile.rs` e SPEC §13 / §23 / §34 Fase 8. Se o loop ou a classificação tiverem sumido, trate como STOP.
+> **Drift check (rode primeiro):** `git log -1 --oneline` deve estar em `main` com as Fases 0-7 (PR #4). Confira `crates/agent-core/src/agent/runner.rs` (`status_for` / D11), `crates/agent-core/src/permissions.rs` (`CommandClass::Validate`), `crates/agent-core/src/agent/profile.rs` e SPEC §13 / §23 / §34 Fase 8. Se o loop ou a classificação tiverem sumido, trate como STOP.
 
 ## Status
 

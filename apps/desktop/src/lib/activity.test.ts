@@ -145,7 +145,7 @@ describe("applyToolEvent", () => {
   test("approvalGranted clears the pending approval and goes back to running", () => {
     const waiting = task({
       status: "waiting_approval",
-      pendingApproval: { id: "aprv_0001", action: { type: "writeFile", path: "novo.ts", size: 42 } },
+      pendingApproval: { id: "aprv_0001", action: { type: "writeFile", path: "novo.ts", size: 42, diff: "" } },
     });
 
     const next = applyToolEvent(waiting, message({ event: "approvalGranted", data: { id: "aprv_0001" } }));

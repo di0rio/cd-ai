@@ -268,6 +268,8 @@ async fn open_workspace(
         return Ok(None); // user cancelled
     };
     let path = folder.into_path().map_err(|error| error.to_string())?;
+    // The agent reads, and a sandboxed command writes, the whole workspace: not `~`, not `/`.
+    agent_core::workspace::ensure_project_folder(&path)?;
     let workspace = Workspace::open(path).map_err(|error| error.to_string())?;
     let info = workspace.info();
     *state
