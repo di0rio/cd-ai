@@ -111,6 +111,7 @@ function Action({ action }: { action: ApprovalAction }) {
         <>
           <code className="text-[0.8125rem] text-ink">{action.path}</code>
           <p className="mt-1.5 text-xs text-ink-faint">Conteúdo novo, {action.size} bytes.</p>
+          <Diff diff={action.diff} />
         </>
       );
     case "readFile":

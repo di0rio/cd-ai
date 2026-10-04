@@ -6,7 +6,7 @@
   "identifier": "dev.cdai.desktop",
   "build": {
     "frontendDist": "../apps/desktop/out",
-    "devUrl": "http://localhost:1420",
+    "devUrl": "http://127.0.0.1:1420",
     "beforeDevCommand": "bun run --cwd apps/desktop dev",
     "beforeBuildCommand": "bun run --cwd apps/desktop build && cargo build --release -p cd-ai-cli"
   },

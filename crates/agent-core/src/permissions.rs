@@ -140,6 +140,10 @@ pub enum ApprovalAction {
         path: String,
         #[ts(type = "number")]
         size: u64,
+        /// What the write changes: a unified diff against the file now on disk (every line is an
+        /// addition for a new file), cut with `... (N more lines)` when long. Shown with the path
+        /// and size, so the user approves the content and not just where it goes.
+        diff: String,
     },
     ReadFile {
         path: String,
@@ -260,6 +264,9 @@ pub fn classify(argv: &[String]) -> CommandClass {
     }
 
     let class = match basename.as_str() {
+        // A recursive grep walks into `.env`, `.git` and, with `-R`, through symlinks out of the
+        // workspace; the arguments no longer say what is read, so the user sees the argv.
+        "grep" if grep_recurses(argv) => CommandClass::Unknown,
         "ls" | "cat" | "head" | "tail" | "less" | "grep" | "wc" | "file" | "stat" | "which"
         | "echo" => CommandClass::Read,
         "find" => classify_find(argv),
@@ -273,6 +280,9 @@ pub fn classify(argv: &[String]) -> CommandClass {
         {
             CommandClass::Unknown
         }
+        // Hidden files, ignored files and symlinks are where the secrets are: `rg` skips them
+        // unless told otherwise.
+        "rg" if rg_widens_search(argv) => CommandClass::Unknown,
         "rg" => CommandClass::Read,
         "git" => classify_git(argv),
         "npm" | "yarn" | "pnpm" | "bun" => classify_package_tagged(argv, flags),
@@ -283,7 +293,10 @@ pub fn classify(argv: &[String]) -> CommandClass {
         "python" | "python3" => classify_python(argv, flags),
         "rm" => classify_rm(flags),
         "tf" | "tofu" | "aws" | "kubectl" => CommandClass::Network,
-        "touch" | "mkdir" | "cp" | "mv" | "tee" | "sed" | "awk" => CommandClass::Write,
+        "touch" | "mkdir" | "cp" | "mv" | "tee" => CommandClass::Write,
+        // `sed` (`e` command, `w` file) and `awk` (`system()`, `| getline`) run programs from
+        // their own script argument, so they are not file writes: unknown, and the user asks.
+        "sed" | "awk" | "gawk" | "mawk" | "nawk" => CommandClass::Unknown,
         "sh" | "bash" | "zsh" | "dash" => CommandClass::Unknown,
         _ => {
             if is_validate_candidate(&basename, argv, flags) {
@@ -346,6 +359,34 @@ fn classify_find(argv: &[String]) -> CommandClass {
     }
 }
 
+/// Short flags are checked inside a cluster (`-rn`, `-uu`): a false positive only costs a prompt.
+fn short_flag_in(token: &str, letters: &[char]) -> bool {
+    token.starts_with('-')
+        && !token.starts_with("--")
+        && token.chars().skip(1).any(|c| letters.contains(&c))
+}
+
+fn grep_recurses(argv: &[String]) -> bool {
+    argv.iter().skip(1).any(|token| {
+        short_flag_in(token, &['r', 'R'])
+            || matches!(
+                token.as_str(),
+                "--recursive" | "--dereference-recursive" | "recurse" | "--directories=recurse"
+            )
+    })
+}
+
+fn rg_widens_search(argv: &[String]) -> bool {
+    argv.iter().skip(1).any(|token| {
+        short_flag_in(token, &['u', 'L', '.'])
+            || matches!(
+                token.as_str(),
+                "--hidden" | "--follow" | "--unrestricted" | "--no-ignore"
+            )
+            || token.starts_with("--no-ignore-")
+    })
+}
+
 fn most_dangerous(argv: &[String]) -> CommandClass {
     // Reclassify without the compound flag: destructive > network > write > validate > read > unknown.
     // Starts at `unknown` (§20.2 "na dúvida, unknown"): a compound whose parts are all unclassified
@@ -399,14 +440,16 @@ fn classify_git(argv: &[String]) -> CommandClass {
         .any(|token| token == "--output" || token.starts_with("--output="));
     match subcommand {
         "diff" | "log" | "show" if writes_output => CommandClass::Write,
-        "status" | "diff" | "log" | "show" | "blame" => CommandClass::Read,
+        // These run with `-c core.fsmonitor=false --no-ext-diff --no-textconv` added by
+        // `run_command` (see `harden_git`), so a repository config cannot name a program for them.
+        "status" | "diff" | "log" | "show" => CommandClass::Read,
+        // `blame` honours `diff.<driver>.textconv` and has no flag to turn that off.
+        "blame" => CommandClass::Unknown,
         "branch" => classify_git_branch(&argv[2..]),
         "remote" => classify_git_remote(&argv[2..]),
-        "add" | "commit" | "mv" | "restore" => CommandClass::Write,
-        "checkout" if has_flag("--force") || has_short_flag("f") => CommandClass::Destructive,
-        "checkout" if has_flag("--") => CommandClass::Destructive,
-        "checkout" if has_flag("-b") => CommandClass::Write,
-        "checkout" => CommandClass::Write,
+        "add" | "commit" | "mv" => CommandClass::Write,
+        "restore" => classify_git_restore(argv),
+        "checkout" => classify_git_checkout(argv),
         "reset" if has_flag("--hard") => CommandClass::Destructive,
         "reset" => CommandClass::Write,
         "clean" if has_flag("--force") || has_short_flag("f") => CommandClass::Destructive,
@@ -414,6 +457,49 @@ fn classify_git(argv: &[String]) -> CommandClass {
         "fetch" | "pull" | "push" | "clone" => CommandClass::Network,
         _ => CommandClass::Unknown,
     }
+}
+
+/// `git restore` rewrites the worktree unless it is limited to the index (`--staged` alone), and
+/// what it overwrites is not in any commit.
+fn classify_git_restore(argv: &[String]) -> CommandClass {
+    let has = |long: &str, short: char| {
+        argv.iter()
+            .skip(2)
+            .any(|token| token == long || short_flag_in(token, &[short]))
+    };
+    if has("--staged", 'S') && !has("--worktree", 'W') {
+        CommandClass::Write
+    } else {
+        CommandClass::Destructive
+    }
+}
+
+/// `git checkout <branch>` moves HEAD; `git checkout [<tree>] -- <path>`, `git checkout .` and
+/// `-p` overwrite worktree files that no commit holds. Whether a lone argument is a branch or a
+/// pathspec depends on the disk: `run_command` raises it to destructive when it names a path that
+/// exists (`escalate_for_paths`).
+fn classify_git_checkout(argv: &[String]) -> CommandClass {
+    let rest = &argv[2..];
+    let has_flag = |flag: &str| rest.iter().any(|token| token == flag);
+    if has_flag("--force") || has_flag("--patch") || short_flag_in_any(rest, &['f', 'p']) {
+        return CommandClass::Destructive;
+    }
+    // `--` ends the options: whatever follows is a pathspec.
+    let positional: Vec<&String> = rest
+        .iter()
+        .filter(|token| !token.starts_with('-'))
+        .collect();
+    if has_flag("--")
+        || positional.iter().any(|token| token.as_str() == ".")
+        || (positional.len() > 1 && !has_flag("-b") && !has_flag("-B"))
+    {
+        return CommandClass::Destructive;
+    }
+    CommandClass::Write
+}
+
+fn short_flag_in_any(tokens: &[String], letters: &[char]) -> bool {
+    tokens.iter().any(|token| short_flag_in(token, letters))
 }
 
 /// `git branch` only reads when it lists: any rename, copy, upstream change, deletion or new
@@ -808,6 +894,122 @@ mod tests {
     }
 
     #[test]
+    fn sed_and_awk_can_run_programs_so_they_are_not_writes() {
+        // `sed 's/x/y/e'`, `sed -n 'w out'`, `awk 'BEGIN{system("...")}'`: a Write runs
+        // unattended in Auto and Full Access.
+        for argv in [
+            cv(&["sed", "-i", "s/a/b/", "x.txt"]),
+            cv(&["sed", "s/a/b/e", "x.txt"]),
+            cv(&["sed", "-n", "w out.txt", "x.txt"]),
+            cv(&["awk", "BEGIN{system(\"id\")}"]),
+            cv(&["gawk", "{print}", "x.txt"]),
+            cv(&["/usr/bin/sed", "-i", "s/a/b/", "x"]),
+        ] {
+            assert_eq!(classify(&argv), CommandClass::Unknown, "{argv:?}");
+        }
+        for tool in ["touch", "mkdir", "cp", "mv", "tee"] {
+            assert_eq!(classify(&cv(&[tool, "a"])), CommandClass::Write, "{tool}");
+        }
+    }
+
+    #[test]
+    fn recursive_grep_is_not_a_read() {
+        for argv in [
+            cv(&["grep", "-r", "token", "."]),
+            cv(&["grep", "-R", "token", "."]),
+            cv(&["grep", "-rn", "token", "."]),
+            cv(&["grep", "-nR", "token"]),
+            cv(&["grep", "-irl", "token", "src"]),
+            cv(&["grep", "--recursive", "token"]),
+            cv(&["grep", "--dereference-recursive", "token"]),
+            cv(&["grep", "--directories=recurse", "token"]),
+            cv(&["grep", "-d", "recurse", "token", "."]),
+        ] {
+            assert_eq!(classify(&argv), CommandClass::Unknown, "{argv:?}");
+        }
+        for argv in [
+            cv(&["grep", "token", "src/main.rs"]),
+            cv(&["grep", "-n", "token", "a.txt", "b.txt"]),
+            cv(&["grep", "-i", "-C", "3", "token", "a.txt"]),
+            cv(&["grep", "--line-number", "token", "a.txt"]),
+        ] {
+            assert_eq!(classify(&argv), CommandClass::Read, "{argv:?}");
+        }
+    }
+
+    #[test]
+    fn rg_that_widens_the_search_is_not_a_read() {
+        // Hidden files (`.env`), ignored files and symlinks are what `rg` skips by default.
+        for argv in [
+            cv(&["rg", "--hidden", "token"]),
+            cv(&["rg", "-L", "token"]),
+            cv(&["rg", "--follow", "token"]),
+            cv(&["rg", "--no-ignore", "token"]),
+            cv(&["rg", "--no-ignore-vcs", "token"]),
+            cv(&["rg", "--no-ignore-parent", "token"]),
+            cv(&["rg", "-u", "token"]),
+            cv(&["rg", "-uu", "token"]),
+            cv(&["rg", "-uuu", "token"]),
+            cv(&["rg", "-nL", "token"]),
+            cv(&["rg", "-.", "token"]),
+            cv(&["rg", "--unrestricted", "token"]),
+        ] {
+            assert_eq!(classify(&argv), CommandClass::Unknown, "{argv:?}");
+        }
+        for argv in [
+            cv(&["rg", "token"]),
+            cv(&["rg", "-n", "-i", "token", "src"]),
+            cv(&["rg", "--fixed-strings", "TODO", "src"]),
+            cv(&["rg", "-g", "*.rs", "token"]),
+        ] {
+            assert_eq!(classify(&argv), CommandClass::Read, "{argv:?}");
+        }
+    }
+
+    #[test]
+    fn git_commands_that_discard_worktree_changes_are_destructive() {
+        for argv in [
+            cv(&["git", "restore", "file.rs"]),
+            cv(&["git", "restore", "."]),
+            cv(&["git", "restore", "--source=HEAD~1", "file.rs"]),
+            cv(&["git", "restore", "--worktree", "file.rs"]),
+            cv(&["git", "restore", "--staged", "--worktree", "file.rs"]),
+            cv(&["git", "restore", "-SW", "file.rs"]),
+            cv(&["git", "checkout", "."]),
+            cv(&["git", "checkout", "--", "file.rs"]),
+            cv(&["git", "checkout", "HEAD", "--", "file.rs"]),
+            cv(&["git", "checkout", "HEAD", "file.rs"]),
+            cv(&["git", "checkout", "-p"]),
+            cv(&["git", "checkout", "--patch", "HEAD", "file.rs"]),
+            cv(&["git", "checkout", "-f", "main"]),
+        ] {
+            assert_eq!(classify(&argv), CommandClass::Destructive, "{argv:?}");
+        }
+        // Only the index changes, or only HEAD moves.
+        for argv in [
+            cv(&["git", "restore", "--staged", "file.rs"]),
+            cv(&["git", "restore", "-S", "file.rs"]),
+            cv(&["git", "checkout", "main"]),
+            cv(&["git", "checkout", "feature/x"]),
+            cv(&["git", "checkout", "-b", "nova"]),
+            cv(&["git", "checkout", "-b", "nova", "origin/main"]),
+        ] {
+            assert_eq!(classify(&argv), CommandClass::Write, "{argv:?}");
+        }
+    }
+
+    #[test]
+    fn git_blame_can_run_a_textconv_program_so_it_is_not_a_read() {
+        assert_eq!(
+            classify(&cv(&["git", "blame", "src/main.rs"])),
+            CommandClass::Unknown
+        );
+        for sub in ["status", "diff", "log", "show"] {
+            assert_eq!(classify(&cv(&["git", sub])), CommandClass::Read, "{sub}");
+        }
+    }
+
+    #[test]
     fn git_read_subcommands_that_mutate_are_not_reads() {
         assert_eq!(
             classify(&cv(&["git", "branch", "-D", "main"])),
@@ -1017,6 +1219,7 @@ mod tests {
             ApprovalAction::WriteFile {
                 path: "a".into(),
                 size: 1,
+                diff: String::new(),
             },
         );
         let second = manager.pending_for(
@@ -1024,6 +1227,7 @@ mod tests {
             ApprovalAction::WriteFile {
                 path: "a".into(),
                 size: 1,
+                diff: String::new(),
             },
         );
         assert_eq!(first.id, second.id);
@@ -1041,6 +1245,7 @@ mod tests {
             ApprovalAction::WriteFile {
                 path: "a".into(),
                 size: 1,
+                diff: String::new(),
             },
         );
         let b = manager.pending_for(
@@ -1048,6 +1253,7 @@ mod tests {
             ApprovalAction::WriteFile {
                 path: "b".into(),
                 size: 1,
+                diff: String::new(),
             },
         );
         assert_ne!(a.id, b.id);
@@ -1061,6 +1267,7 @@ mod tests {
             ApprovalAction::WriteFile {
                 path: "a".into(),
                 size: 1,
+                diff: String::new(),
             },
         );
         manager.pending_for(

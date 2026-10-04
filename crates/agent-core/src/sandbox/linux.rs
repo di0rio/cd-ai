@@ -97,6 +97,12 @@ pub fn probe() -> SandboxStatus {
 }
 
 pub fn constrain(command: &mut Command, exec: SandboxExec) {
+    constrain_with(command, exec, super::secret_home_paths());
+}
+
+/// [`constrain`] with the credential paths to hide spelled out, so a test can aim it at a
+/// directory of its own.
+fn constrain_with(command: &mut Command, exec: SandboxExec, secrets: Vec<PathBuf>) {
     let snapshot = super::status().clone();
     if !snapshot.filesystem && !snapshot.network_block {
         return;
@@ -109,6 +115,17 @@ pub fn constrain(command: &mut Command, exec: SandboxExec) {
     if !use_netns && !use_landlock_fs && !use_landlock_net {
         return;
     }
+    // Landlock only ever adds access beneath a path: it cannot take `.git/hooks` back from a
+    // writable workspace, nor hide `~/.ssh` from a readable `/`. A mount namespace can, and the
+    // user namespace the network isolation already creates is what allows one. Without it
+    // (Landlock-only hosts, approved `network` commands, which need the user's credentials) these
+    // paths stay as Landlock leaves them, and the approval for a command that names `.git` is
+    // what protects the hooks.
+    let mounts = if use_netns {
+        MountPlan::new(&exec.workspace, &secrets)
+    } else {
+        MountPlan::default()
+    };
 
     // pre_exec runs after fork, before exec. Not strictly async-signal-safe (opens files),
     // which is how every practical Landlock wrapper does it.
@@ -116,6 +133,9 @@ pub fn constrain(command: &mut Command, exec: SandboxExec) {
         command.pre_exec(move || {
             if use_netns {
                 enter_netns()?;
+                // Best effort: a kernel that refuses a mount leaves that path as it was, it
+                // does not stop the command.
+                mounts.apply();
             }
             if use_landlock_fs || use_landlock_net {
                 apply_landlock(&write_roots, use_landlock_net)?;
@@ -123,6 +143,146 @@ pub fn constrain(command: &mut Command, exec: SandboxExec) {
             Ok(())
         });
     }
+}
+
+/// What to remount in the child's own mount namespace, as C strings built before the fork.
+#[derive(Default)]
+struct MountPlan {
+    /// Existing paths that stay visible but read-only: `.git/hooks`, `.git/config`.
+    read_only: Vec<CString>,
+    /// Credential directories, replaced by an empty read-only filesystem.
+    hidden_dirs: Vec<CString>,
+    /// Credential files, replaced by `/dev/null`.
+    hidden_files: Vec<CString>,
+}
+
+impl MountPlan {
+    fn new(workspace: &Path, secrets: &[PathBuf]) -> Self {
+        use std::os::unix::ffi::OsStrExt;
+        let c_path = |path: &Path| CString::new(path.as_os_str().as_bytes()).ok();
+        let mut plan = Self::default();
+        for path in super::git_protected_paths(workspace) {
+            // A directory or file that is not there yet cannot be mounted over.
+            if path.exists()
+                && let Some(c_path) = c_path(&path)
+            {
+                plan.read_only.push(c_path);
+            }
+        }
+        for path in secrets {
+            let Some(c_path) = c_path(path) else {
+                continue;
+            };
+            // `symlink_metadata`: a link to somewhere else is not mounted over, the link itself
+            // is a file that names nothing the command could not already name.
+            match std::fs::symlink_metadata(path) {
+                Ok(meta) if meta.is_dir() => plan.hidden_dirs.push(c_path),
+                Ok(meta) if meta.is_file() => plan.hidden_files.push(c_path),
+                _ => {}
+            }
+        }
+        plan
+    }
+
+    fn is_empty(&self) -> bool {
+        self.read_only.is_empty() && self.hidden_dirs.is_empty() && self.hidden_files.is_empty()
+    }
+
+    /// Runs in the child between `unshare(CLONE_NEWUSER)` and `exec`. Every failure is ignored.
+    fn apply(&self) {
+        if self.is_empty() || unsafe { libc::unshare(libc::CLONE_NEWNS) } != 0 {
+            return;
+        }
+        // Nothing mounted below may propagate back to the host's namespace.
+        let none: *const libc::c_char = std::ptr::null();
+        let no_data: *const libc::c_void = std::ptr::null();
+        unsafe {
+            libc::mount(
+                none,
+                c"/".as_ptr(),
+                none,
+                libc::MS_REC | libc::MS_PRIVATE,
+                no_data,
+            );
+        }
+        for path in &self.read_only {
+            bind_read_only(path.as_c_str(), path.as_c_str());
+        }
+        for path in &self.hidden_files {
+            bind_read_only(c"/dev/null", path.as_c_str());
+        }
+        for path in &self.hidden_dirs {
+            let flags = libc::MS_RDONLY | libc::MS_NOSUID | libc::MS_NODEV | libc::MS_NOEXEC;
+            unsafe {
+                libc::mount(
+                    c"tmpfs".as_ptr(),
+                    path.as_ptr(),
+                    c"tmpfs".as_ptr(),
+                    flags,
+                    c"size=4k,mode=0555".as_ptr().cast(),
+                );
+            }
+        }
+    }
+}
+
+/// `mount --bind source target` and then read-only. The second step has to repeat the flags the
+/// source mount already carries (`nosuid`, `nodev`, ...): inside a user namespace those are
+/// locked, and a remount that drops one fails with EPERM.
+fn bind_read_only(source: &std::ffi::CStr, target: &std::ffi::CStr) {
+    let none: *const libc::c_char = std::ptr::null();
+    let no_data: *const libc::c_void = std::ptr::null();
+    let bound = unsafe {
+        libc::mount(
+            source.as_ptr(),
+            target.as_ptr(),
+            none,
+            libc::MS_BIND,
+            no_data,
+        )
+    };
+    if bound != 0 {
+        return;
+    }
+    let mut stat: libc::statvfs = unsafe { std::mem::zeroed() };
+    let kept = if unsafe { libc::statvfs(target.as_ptr(), &mut stat) } == 0 {
+        mount_flags_of(stat.f_flag as u64)
+    } else {
+        0
+    };
+    unsafe {
+        libc::mount(
+            none,
+            target.as_ptr(),
+            none,
+            libc::MS_BIND | libc::MS_REMOUNT | libc::MS_RDONLY | kept,
+            no_data,
+        );
+    }
+}
+
+/// `statvfs` flags (`ST_*`) as the `MS_*` flags a remount has to pass to keep them.
+fn mount_flags_of(st_flags: u64) -> libc::c_ulong {
+    const ST_NOSUID: u64 = 2;
+    const ST_NODEV: u64 = 4;
+    const ST_NOEXEC: u64 = 8;
+    const ST_NOATIME: u64 = 1024;
+    const ST_NODIRATIME: u64 = 2048;
+    const ST_RELATIME: u64 = 4096;
+    let mut flags = 0;
+    for (st, ms) in [
+        (ST_NOSUID, libc::MS_NOSUID),
+        (ST_NODEV, libc::MS_NODEV),
+        (ST_NOEXEC, libc::MS_NOEXEC),
+        (ST_NOATIME, libc::MS_NOATIME),
+        (ST_NODIRATIME, libc::MS_NODIRATIME),
+        (ST_RELATIME, libc::MS_RELATIME),
+    ] {
+        if st_flags & st != 0 {
+            flags |= ms;
+        }
+    }
+    flags
 }
 
 fn probe_netns() -> bool {
@@ -550,6 +710,113 @@ mod tests {
             output.status.success(),
             "sandboxed /dev/null O_RDWR must work: {}",
             String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[test]
+    fn mount_plan_picks_only_what_exists_and_sorts_files_from_directories() {
+        let workspace = tempdir().unwrap();
+        // No `.git` yet: nothing to protect.
+        assert!(MountPlan::new(workspace.path(), &[]).is_empty());
+
+        std::fs::create_dir_all(workspace.path().join(".git").join("hooks")).unwrap();
+        std::fs::write(workspace.path().join(".git").join("config"), "[core]\n").unwrap();
+        let home = tempdir().unwrap();
+        std::fs::create_dir(home.path().join(".ssh")).unwrap();
+        std::fs::write(home.path().join(".npmrc"), "//x:_authToken=y\n").unwrap();
+        let plan = MountPlan::new(
+            workspace.path(),
+            &[
+                home.path().join(".ssh"),
+                home.path().join(".npmrc"),
+                home.path().join(".aws"),
+            ],
+        );
+        assert_eq!(plan.read_only.len(), 2);
+        assert_eq!(plan.hidden_dirs.len(), 1);
+        assert_eq!(plan.hidden_files.len(), 1);
+    }
+
+    #[test]
+    fn statvfs_flags_translate_to_the_mount_flags_a_remount_must_keep() {
+        assert_eq!(mount_flags_of(0), 0);
+        assert_eq!(
+            mount_flags_of(2 | 4 | 8),
+            libc::MS_NOSUID | libc::MS_NODEV | libc::MS_NOEXEC
+        );
+        assert_eq!(mount_flags_of(4096), libc::MS_RELATIME);
+    }
+
+    #[test]
+    fn sandbox_keeps_git_hooks_and_config_read_only_and_hides_credentials() {
+        let status = status();
+        if !status.filesystem || !net_namespace_available() {
+            eprintln!(
+                "skip: needs Landlock and a user namespace ({})",
+                status.detail
+            );
+            return;
+        }
+        let workspace = tempdir().unwrap();
+        std::fs::create_dir_all(workspace.path().join(".git").join("hooks")).unwrap();
+        std::fs::write(workspace.path().join(".git").join("config"), "[core]\n").unwrap();
+        let home = tempdir().unwrap();
+        std::fs::create_dir(home.path().join(".ssh")).unwrap();
+        std::fs::write(home.path().join(".ssh").join("id_test"), "CHAVE-PRIVADA\n").unwrap();
+        std::fs::write(home.path().join(".npmrc"), "TOKEN-NPM\n").unwrap();
+        let secrets = vec![home.path().join(".ssh"), home.path().join(".npmrc")];
+
+        let run = |script: &str| {
+            let mut command = Command::new("sh");
+            command.args(["-c", script]).current_dir(workspace.path());
+            constrain_with(
+                &mut command,
+                SandboxExec {
+                    workspace: workspace.path().to_path_buf(),
+                    allow_network: false,
+                },
+                secrets.clone(),
+            );
+            command.output().expect("spawn sandboxed sh")
+        };
+
+        let hook = run("echo '#!/bin/sh' > .git/hooks/pre-commit");
+        assert!(!hook.status.success(), "writing a hook must fail");
+        assert!(!workspace.path().join(".git/hooks/pre-commit").exists());
+        let config = run("echo '[core] fsmonitor = evil' >> .git/config");
+        assert!(
+            !config.status.success(),
+            "appending to .git/config must fail"
+        );
+        assert_eq!(
+            std::fs::read_to_string(workspace.path().join(".git/config")).unwrap(),
+            "[core]\n"
+        );
+        // Moving the hooks folder away to plant another is a write to its mount point.
+        let renamed = run("mv .git/hooks .git/hooks-old");
+        assert!(!renamed.status.success(), "renaming .git/hooks must fail");
+
+        // The rest of the workspace is still writable, and `.git/config` still readable.
+        let ok = run("echo ok > a.txt && cat .git/config");
+        assert!(
+            ok.status.success(),
+            "{}",
+            String::from_utf8_lossy(&ok.stderr)
+        );
+        assert!(workspace.path().join("a.txt").exists());
+
+        let ssh = run(&format!(
+            "cat {}",
+            home.path().join(".ssh/id_test").display()
+        ));
+        assert!(!String::from_utf8_lossy(&ssh.stdout).contains("CHAVE-PRIVADA"));
+        let npmrc = run(&format!("cat {}", home.path().join(".npmrc").display()));
+        assert!(!String::from_utf8_lossy(&npmrc.stdout).contains("TOKEN-NPM"));
+        // Outside the sandbox nothing changed.
+        assert!(home.path().join(".ssh/id_test").exists());
+        assert_eq!(
+            std::fs::read_to_string(home.path().join(".npmrc")).unwrap(),
+            "TOKEN-NPM\n"
         );
     }
 }

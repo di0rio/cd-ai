@@ -46,7 +46,7 @@ pub struct SettingsStore {
 impl SettingsStore {
     pub fn open(data_dir: impl AsRef<Path>) -> Result<Self, StorageError> {
         let root = data_dir.as_ref();
-        fs::create_dir_all(root).map_err(io_error)?;
+        crate::agent::storage::create_private_dir_all(root).map_err(io_error)?;
         Ok(Self {
             path: root.join(SETTINGS_FILE),
         })

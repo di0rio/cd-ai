@@ -19,6 +19,7 @@ use crate::agent::state::{
 };
 use crate::agent::storage::TaskStore;
 use crate::events::timestamp;
+use crate::redactor;
 use crate::tools::sha256_hex;
 use crate::workspace::Workspace;
 
@@ -83,7 +84,7 @@ impl ShadowRepo {
     pub fn open(data_dir: &Path, workspace: &Workspace) -> Result<Self, CheckpointError> {
         let id = sha256_hex(workspace.root().to_string_lossy().as_bytes());
         let git_dir = data_dir.join(SHADOW_DIR).join(id);
-        fs::create_dir_all(&git_dir)?;
+        crate::agent::storage::create_private_dir_all(&git_dir)?;
         let repo = Self {
             git_dir,
             work_tree: workspace.root().to_path_buf(),
@@ -113,6 +114,10 @@ impl ShadowRepo {
         self.ensure_init()?;
         for path in paths {
             if !is_safe_relative(path) {
+                continue;
+            }
+            // Not even force-added: a secret file the agent created must not land in the snapshot.
+            if redactor::detect_path_secret(Path::new(path)).is_some() {
                 continue;
             }
             // A missing path is not fatal: the next commit still has a SHA to hang the task on.
@@ -146,9 +151,7 @@ impl ShadowRepo {
         }
         // `.git/` is the user's repo; the bulky dirs keep a first snapshot cheap on real projects.
         // Agent-touched files are force-added later, so a gitignored edit is still restorable.
-        fs::write(
-            exclude,
-            "\
+        let mut patterns = "\
 .git/\n\
 .git\n\
 node_modules/\n\
@@ -157,8 +160,15 @@ dist/\n\
 .next/\n\
 __pycache__/\n\
 .turbo/\n\
-coverage/\n",
-        )?;
+coverage/\n"
+            .to_string();
+        // `add -A` would copy `.env`, keys and tokens into the shadow repo, a second place on disk
+        // with the user's secrets that no `.gitignore` of theirs covers.
+        for pattern in redactor::secret_path_ignore_patterns() {
+            patterns.push_str(&pattern);
+            patterns.push('\n');
+        }
+        fs::write(exclude, patterns)?;
         Ok(())
     }
 
@@ -350,19 +360,59 @@ fn restore_to(path: &Path, baseline: Option<&[u8]>) -> Result<(), CheckpointErro
     }
 }
 
+/// Sibling temp file, write, fsync, rename. The temp name is new on every call and opened with
+/// `create_new` (O_EXCL), so a file or symlink planted in the workspace at a guessable name is
+/// skipped, never followed and truncated: the restore would write the checkpoint's bytes wherever
+/// the link points.
 fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), CheckpointError> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
+    use std::io::Write;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    fs::create_dir_all(parent)?;
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("file");
+    // The restored file keeps the mode of the one it replaces.
+    let permissions = fs::metadata(path).ok().map(|meta| meta.permissions());
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.subsec_nanos());
+    for attempt in 1..=64u32 {
+        let tmp = parent.join(format!(
+            ".{file_name}.{}.{nanos:08x}.{attempt}.cd-ai-restore.tmp",
+            std::process::id()
+        ));
+        let mut file = match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp)
+        {
+            Ok(file) => file,
+            // Taken (or planted): try another name, never reuse it.
+            Err(_) => continue,
+        };
+        let written = file
+            .write_all(bytes)
+            .and_then(|_| match &permissions {
+                Some(permissions) => file.set_permissions(permissions.clone()),
+                None => Ok(()),
+            })
+            .and_then(|_| file.sync_all())
+            .and_then(|_| {
+                drop(file);
+                fs::rename(&tmp, path)
+            });
+        if let Err(error) = written {
+            let _ = fs::remove_file(&tmp);
+            return Err(CheckpointError::Io(error.to_string()));
+        }
+        return Ok(());
     }
-    let tmp = path.with_extension("cd-ai-restore.tmp");
-    fs::write(&tmp, bytes).map_err(|error| {
-        let _ = fs::remove_file(&tmp);
-        CheckpointError::Io(error.to_string())
-    })?;
-    fs::rename(&tmp, path).map_err(|error| {
-        let _ = fs::remove_file(&tmp);
-        CheckpointError::Io(error.to_string())
-    })
+    Err(CheckpointError::Io(
+        "não foi possível criar um arquivo temporário para a restauração".to_string(),
+    ))
 }
 
 fn read_optional(path: &Path) -> Result<Option<Vec<u8>>, CheckpointError> {
@@ -543,6 +593,132 @@ mod tests {
         assert!(!workspace.root().join(".git").exists());
         assert!(repo.git_dir().join("HEAD").exists());
         assert!(repo.git_dir().starts_with(data.path().join(SHADOW_DIR)));
+    }
+
+    #[test]
+    fn snapshot_leaves_secret_files_out_of_the_shadow_repo() {
+        if !git_works() {
+            return;
+        }
+        let data = tempdir().unwrap();
+        let secrets = [
+            (".env", "API_TOKEN=abcdefghij\n"),
+            (".env.local", "X=1\n"),
+            ("deploy/prod.env", "X=1\n"),
+            ("keys/server.pem", "-----BEGIN-----\n"),
+            ("id_ed25519", "chave\n"),
+            (".npmrc", "//registry:_authToken=x\n"),
+            ("config/client_secret.json", "{}\n"),
+            ("DB.CREDENTIALS", "x\n"),
+        ];
+        let mut files: Vec<(&str, &str)> = secrets.to_vec();
+        files.extend([
+            ("src/main.rs", "fn main() {}\n"),
+            ("id_ed25519.pub", "pub\n"),
+        ]);
+        let (_ws_dir, workspace) = workspace_with(&files);
+        let repo = ShadowRepo::open(data.path(), &workspace).unwrap();
+        let baseline = repo.snapshot("baseline").unwrap();
+
+        for (path, _) in secrets {
+            assert!(
+                repo.show(&baseline, path).unwrap().is_none(),
+                "{path} foi copiado para o shadow repo"
+            );
+        }
+        assert!(repo.show(&baseline, "src/main.rs").unwrap().is_some());
+        // The public half of a key is not a secret.
+        assert!(repo.show(&baseline, "id_ed25519.pub").unwrap().is_some());
+    }
+
+    #[test]
+    fn snapshot_paths_does_not_force_add_a_secret_file() {
+        if !git_works() {
+            return;
+        }
+        let data = tempdir().unwrap();
+        let (_ws_dir, workspace) = workspace_with(&[("a.txt", "um\n")]);
+        let repo = ShadowRepo::open(data.path(), &workspace).unwrap();
+        repo.snapshot("baseline").unwrap();
+        fs::write(workspace.root().join(".env"), "TOKEN=abcdefghij\n").unwrap();
+        fs::write(workspace.root().join("b.txt"), "dois\n").unwrap();
+        let commit = repo
+            .snapshot_paths(&[".env".to_string(), "b.txt".to_string()], "depois")
+            .unwrap();
+        assert!(repo.show(&commit, ".env").unwrap().is_none());
+        assert!(repo.show(&commit, "b.txt").unwrap().is_some());
+    }
+
+    #[test]
+    fn atomic_write_replaces_the_file_and_leaves_no_temp_behind() {
+        let dir = tempdir().unwrap();
+        let target = dir.path().join("sub").join("x.txt");
+        atomic_write(&target, b"um").unwrap();
+        atomic_write(&target, b"dois").unwrap();
+        assert_eq!(fs::read_to_string(&target).unwrap(), "dois");
+        let leftovers: Vec<_> = fs::read_dir(target.parent().unwrap())
+            .unwrap()
+            .flatten()
+            .map(|entry| entry.file_name())
+            .collect();
+        assert_eq!(leftovers.len(), 1, "{leftovers:?}");
+    }
+
+    #[test]
+    fn atomic_write_does_not_use_the_old_predictable_temp_name() {
+        let dir = tempdir().unwrap();
+        let target = dir.path().join("x.txt");
+        fs::write(&target, "velho").unwrap();
+        // What `path.with_extension("cd-ai-restore.tmp")` used to be: a name anyone can guess.
+        let guessed = dir.path().join("x.cd-ai-restore.tmp");
+        fs::write(&guessed, "plantado").unwrap();
+
+        atomic_write(&target, b"novo").unwrap();
+
+        assert_eq!(fs::read_to_string(&target).unwrap(), "novo");
+        assert_eq!(fs::read_to_string(&guessed).unwrap(), "plantado");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn atomic_write_never_follows_a_planted_symlink() {
+        use std::os::unix::fs::symlink;
+        let dir = tempdir().unwrap();
+        let outside = tempdir().unwrap();
+        let victim = outside.path().join("victim.txt");
+        fs::write(&victim, "intacto").unwrap();
+        let target = dir.path().join("x.txt");
+        fs::write(&target, "velho").unwrap();
+        // The old predictable name, pointing outside the workspace.
+        symlink(&victim, dir.path().join("x.cd-ai-restore.tmp")).unwrap();
+
+        atomic_write(&target, b"novo").unwrap();
+
+        assert_eq!(fs::read_to_string(&victim).unwrap(), "intacto");
+        assert_eq!(fs::read_to_string(&target).unwrap(), "novo");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn atomic_write_replaces_a_symlinked_target_instead_of_writing_through_it() {
+        use std::os::unix::fs::symlink;
+        let dir = tempdir().unwrap();
+        let outside = tempdir().unwrap();
+        let victim = outside.path().join("victim.txt");
+        fs::write(&victim, "intacto").unwrap();
+        let target = dir.path().join("x.txt");
+        symlink(&victim, &target).unwrap();
+
+        atomic_write(&target, b"restaurado").unwrap();
+
+        assert_eq!(fs::read_to_string(&victim).unwrap(), "intacto");
+        assert_eq!(fs::read_to_string(&target).unwrap(), "restaurado");
+        assert!(
+            !fs::symlink_metadata(&target)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
     }
 
     #[test]
