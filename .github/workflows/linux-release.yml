@@ -6,8 +6,10 @@ on:
   push:
     tags: ["v*"]
 
+# Read-only by default: a step that runs the repository's own code (`bun run verify`, cargo build
+# scripts) must not hold a token that can write to it. Only the `release` job gets `contents: write`.
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: linux-release-${{ github.workflow }}-${{ github.ref }}
@@ -17,17 +19,22 @@ jobs:
   linux-x86_64:
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: oven-sh/setup-bun@v2
+      # Third-party actions are pinned by commit, not by a tag that can be moved.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          bun-version: latest
+          persist-credentials: false
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
+          # Same Bun that wrote bun.lock; bump together with the lockfile.
+          bun-version: 1.3.13
+
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
+        with:
+          toolchain: stable
           components: rustfmt, clippy
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
 
       - name: Install Tauri Linux dependencies
         run: |
@@ -52,7 +59,7 @@ jobs:
       - name: Build .deb and AppImage
         run: bun scripts/build-linux-release.ts
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: cd-ai-linux-x86_64
           path: dist/linux/*
@@ -64,8 +71,21 @@ jobs:
           dpkg-deb -I "$deb"
           dpkg-deb -c "$deb" | grep -E 'cd-ai|evals' | head -40
 
-      - uses: softprops/action-gh-release@v2
-        if: startsWith(github.ref, 'refs/tags/')
+  # Only on a tag, and the only job that can write to the repository. It does not check out or run
+  # any repository code: it publishes what the build job produced.
+  release:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: linux-x86_64
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: cd-ai-linux-x86_64
+          path: dist/linux
+
+      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           files: dist/linux/*
           generate_release_notes: true

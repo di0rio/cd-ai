@@ -123,21 +123,6 @@ pub fn write_file(
 
     parse_check(&canonical, &args.content)?;
 
-    let decision = engine.authorize(
-        events,
-        responder,
-        PermissionKind::WriteFile,
-        ApprovalAction::WriteFile {
-            path: display_path(&engine.workspace, &canonical),
-            size: args.content.len() as u64,
-        },
-    );
-    if decision == PermissionDecision::Denied {
-        return Err(ToolError::PermissionDenied {
-            reason: "gravação negada".to_string(),
-        });
-    }
-
     // The "before" of the diff has to be read while the old content is still on disk. A file
     // that does not exist yet has an empty "before", so `hash_before` is the hash of the empty
     // content: the field stays a real sha256 for every consumer instead of a special case.
@@ -146,6 +131,23 @@ pub fn write_file(
     } else {
         String::new()
     };
+
+    let decision = engine.authorize(
+        events,
+        responder,
+        PermissionKind::WriteFile,
+        ApprovalAction::WriteFile {
+            path: display_path(&engine.workspace, &canonical),
+            size: args.content.len() as u64,
+            diff: approval_diff(&original, &args.content),
+        },
+    );
+    if decision == PermissionDecision::Denied {
+        return Err(ToolError::PermissionDenied {
+            reason: "gravação negada".to_string(),
+        });
+    }
+
     let hash_before = sha256_hex(original.as_bytes());
     let hash_after = sha256_hex(args.content.as_bytes());
     // Only after approval: a denied write leaves no trace, not even empty folders.
@@ -188,19 +190,23 @@ fn refuse_git_dir(
     workspace: &crate::workspace::Workspace,
     canonical: &Path,
 ) -> Result<(), ToolError> {
-    let inside_git = canonical
-        .strip_prefix(workspace.root())
-        .map(|rest| {
-            rest.components()
-                .any(|part| part.as_os_str().eq_ignore_ascii_case(".git"))
-        })
-        .unwrap_or(false);
-    if inside_git {
+    if inside_git_dir(workspace, canonical) {
         return Err(ToolError::PermissionDenied {
             reason: "o agente não altera arquivos dentro de .git".to_string(),
         });
     }
     Ok(())
+}
+
+/// Whether the canonical path has a `.git` component (any case) under the workspace root.
+pub(crate) fn inside_git_dir(workspace: &crate::workspace::Workspace, canonical: &Path) -> bool {
+    canonical
+        .strip_prefix(workspace.root())
+        .map(|rest| {
+            rest.components()
+                .any(|part| part.as_os_str().eq_ignore_ascii_case(".git"))
+        })
+        .unwrap_or(false)
 }
 
 /// Returns `(start, end, old_block, new_block, fuzzy)` for the single replacement.
@@ -379,6 +385,28 @@ fn unified_diff(before: &str, after: &str) -> String {
             out.push('\n');
         }
     }
+    out
+}
+
+/// Lines of a `write_file` diff the approval carries. A whole new file can be huge; the prompt
+/// shows the start and says how much was left out, the size line above it stays exact.
+const MAX_APPROVAL_DIFF_LINES: usize = 200;
+
+/// The diff the user approves for a `write_file`, cut on a line boundary.
+fn approval_diff(before: &str, after: &str) -> String {
+    let diff = unified_diff(before, after);
+    let total = diff.split_inclusive('\n').count();
+    if total <= MAX_APPROVAL_DIFF_LINES {
+        return diff;
+    }
+    let mut out: String = diff
+        .split_inclusive('\n')
+        .take(MAX_APPROVAL_DIFF_LINES)
+        .collect();
+    out.push_str(&format!(
+        "... ({} more lines)\n",
+        total - MAX_APPROVAL_DIFF_LINES
+    ));
     out
 }
 
@@ -1032,6 +1060,86 @@ mod tests {
         )
         .unwrap_err();
         assert!(!dir.path().join("novo").exists());
+    }
+
+    fn approval_of_a_write(
+        dir: &Path,
+        path: &str,
+        content: &str,
+        if_exists: IfExists,
+    ) -> ApprovalAction {
+        let mut engine = boot(dir);
+        let mut sink = |_: crate::events::ToolEventMessage| {};
+        let mut shown = None;
+        let mut capture = |request: crate::permissions::ApprovalRequest| {
+            shown = Some(request.action);
+            crate::permissions::ApprovalResponse::Denied { reason: None }
+        };
+        let _ = write_file(
+            &mut engine,
+            WriteFileArgs {
+                path: path.into(),
+                content: content.into(),
+                if_exists,
+            },
+            &mut sink,
+            &mut capture,
+        );
+        shown.expect("a write always asks in the default mode")
+    }
+
+    #[test]
+    fn write_approval_shows_the_content_of_a_new_file() {
+        let dir = tempdir().unwrap();
+        match approval_of_a_write(dir.path(), "novo.txt", "um\ndois\n", IfExists::Error) {
+            ApprovalAction::WriteFile { path, size, diff } => {
+                assert_eq!(path, "novo.txt");
+                assert_eq!(size, 8);
+                assert!(diff.contains("+um\n"), "{diff}");
+                assert!(diff.contains("+dois\n"), "{diff}");
+                assert!(!diff.contains("more lines"), "{diff}");
+            }
+            other => panic!("esperava WriteFile, veio {other:?}"),
+        }
+    }
+
+    #[test]
+    fn write_approval_shows_a_diff_against_the_file_on_disk() {
+        let dir = tempdir().unwrap();
+        std::fs::write(dir.path().join("x.txt"), "igual\nvelho\n").unwrap();
+        match approval_of_a_write(dir.path(), "x.txt", "igual\nnovo\n", IfExists::Overwrite) {
+            ApprovalAction::WriteFile { diff, .. } => {
+                assert!(diff.contains("-velho\n"), "{diff}");
+                assert!(diff.contains("+novo\n"), "{diff}");
+                assert!(!diff.contains("igual"), "{diff}");
+            }
+            other => panic!("esperava WriteFile, veio {other:?}"),
+        }
+        // Asking never changes the file.
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("x.txt")).unwrap(),
+            "igual\nvelho\n"
+        );
+    }
+
+    #[test]
+    fn write_approval_cuts_a_long_file_and_counts_what_it_left_out() {
+        let dir = tempdir().unwrap();
+        let content: String = (0..MAX_APPROVAL_DIFF_LINES + 25)
+            .map(|n| format!("linha {n}\n"))
+            .collect();
+        match approval_of_a_write(dir.path(), "grande.txt", &content, IfExists::Error) {
+            ApprovalAction::WriteFile { diff, size, .. } => {
+                // The size line stays exact; only the displayed content is cut.
+                assert_eq!(size, content.len() as u64);
+                // The two header lines count as lines of the diff.
+                assert!(diff.ends_with("... (27 more lines)\n"), "{diff}");
+                assert!(diff.contains("+linha 0\n"));
+                assert!(!diff.contains("linha 198"));
+                assert_eq!(diff.lines().count(), MAX_APPROVAL_DIFF_LINES + 1);
+            }
+            other => panic!("esperava WriteFile, veio {other:?}"),
+        }
     }
 
     #[test]

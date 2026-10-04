@@ -9,6 +9,7 @@ use crate::permissions::{
 use crate::redactor;
 use crate::sandbox::{self, SandboxExec};
 use crate::tools::cancel::CancelToken;
+use crate::tools::edit::inside_git_dir;
 use crate::tools::{
     CommandResult, DEFAULT_COMMAND_TIMEOUT_MS, EventSink, MAX_OUTPUT_BYTES, Responder,
     RunCommandArgs, ToolEngine, ToolError,
@@ -55,7 +56,7 @@ pub fn run_command(
     // filesystem sandbox (it runs repo code). Write commands become auto only in AUTO/FULL ACCESS
     // when a filesystem sandbox is actually on (D6). Network, destructive and unknown always ask.
     // The decision never comes from a model claim (§20.5).
-    let class = escalate_for_paths(classify(argv), argv, &engine.workspace);
+    let class = escalate_for_paths(classify(argv), argv, &engine.workspace, &cwd);
     let decision = engine.authorize(
         events,
         responder,
@@ -109,7 +110,7 @@ pub fn run_command(
     )
     .map_err(|error| ToolError::Io(format!("sandbox: {error}")))?;
     command
-        .args(&argv[1..])
+        .args(harden_git(argv))
         .current_dir(&cwd)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -159,19 +160,52 @@ pub fn run_command(
     ))
 }
 
+/// Arguments for the program after `argv[0]`. For `git` they gain what the git tools always pass
+/// (`tools/git.rs`): a repository's own config (`core.fsmonitor`, `diff.<driver>.textconv`, an
+/// external diff) can name a program for `status`/`diff`/`log`/`show` to run, and those four are
+/// classified `read`, which runs without asking.
+fn harden_git(argv: &[String]) -> Vec<String> {
+    let is_git = argv[0].rsplit(['/', '\\']).next().is_some_and(|name| {
+        name.eq_ignore_ascii_case("git") || name.eq_ignore_ascii_case("git.exe")
+    });
+    if !is_git {
+        return argv[1..].to_vec();
+    }
+    let mut hardened = vec!["-c".to_string(), "core.fsmonitor=false".to_string()];
+    hardened.extend(argv[1..].iter().cloned());
+    if matches!(
+        argv.get(1).map(String::as_str),
+        Some("diff" | "log" | "show")
+    ) {
+        // Right after the subcommand: anything later could sit after a `--`.
+        hardened.splice(3..3, ["--no-ext-diff", "--no-textconv"].map(String::from));
+    }
+    hardened
+}
+
 /// The sandbox leaves reads open everywhere, so an automatic command reads whatever its arguments
 /// name. An argument that points outside the workspace or at a secret file drops the command to
-/// `unknown`: the user sees the exact argv instead of the command running on its own.
+/// `unknown`: the user sees the exact argv instead of the command running on its own. The same
+/// goes for an argument inside `.git` (hooks and config name programs git runs on its own, and
+/// `touch`/`cp`/`mv`/`tee` are automatic writes), and `git checkout <existing path>` is a
+/// discard of worktree changes, `destructive`.
 fn escalate_for_paths(
     class: CommandClass,
     argv: &[String],
     workspace: &crate::workspace::Workspace,
+    cwd: &std::path::Path,
 ) -> CommandClass {
     if !matches!(
         class,
         CommandClass::Read | CommandClass::Validate | CommandClass::Write
     ) {
         return class;
+    }
+    if names_git_dir(argv, workspace, cwd) {
+        return CommandClass::Unknown;
+    }
+    if class == CommandClass::Write && checks_out_a_path(argv, workspace, cwd) {
+        return CommandClass::Destructive;
     }
     let reaches_out = argv.iter().skip(1).any(|token| {
         let value = if token.starts_with('-') {
@@ -196,6 +230,78 @@ fn escalate_for_paths(
     } else {
         class
     }
+}
+
+/// The values an argv hands to its program as paths: positional arguments, the value of
+/// `--flag=value`, and the part after the colon of `rev:path`.
+fn path_candidates(argv: &[String]) -> Vec<&str> {
+    let mut out = Vec::new();
+    for token in argv.iter().skip(1) {
+        let value = if token.starts_with('-') {
+            match token.split_once('=') {
+                Some((_, value)) => value,
+                None => continue,
+            }
+        } else {
+            token.as_str()
+        };
+        out.push(value);
+        if let Some((_, path)) = value.rsplit_once(':') {
+            out.push(path);
+        }
+    }
+    out
+}
+
+/// Both readings of a relative path, from the workspace root and from the command's cwd, as the
+/// canonical paths `Workspace::resolve` accepts.
+fn resolved_both_ways(
+    workspace: &crate::workspace::Workspace,
+    cwd: &std::path::Path,
+    path: &str,
+) -> Vec<std::path::PathBuf> {
+    [workspace.resolve(path), workspace.resolve(cwd.join(path))]
+        .into_iter()
+        .flatten()
+        .collect()
+}
+
+/// Whether the command runs inside `.git` or has an argument that points into it.
+fn names_git_dir(
+    argv: &[String],
+    workspace: &crate::workspace::Workspace,
+    cwd: &std::path::Path,
+) -> bool {
+    inside_git_dir(workspace, cwd)
+        || path_candidates(argv).into_iter().any(|path| {
+            resolved_both_ways(workspace, cwd, path)
+                .iter()
+                .any(|canonical| inside_git_dir(workspace, canonical))
+        })
+}
+
+/// `git checkout <x>` where `x` is a file or folder that exists: a pathspec, not a branch, so it
+/// overwrites the worktree. Only the disk can tell it from a branch name, and a name that is both
+/// is treated as the destructive reading.
+fn checks_out_a_path(
+    argv: &[String],
+    workspace: &crate::workspace::Workspace,
+    cwd: &std::path::Path,
+) -> bool {
+    let is_git = argv[0].rsplit(['/', '\\']).next().is_some_and(|name| {
+        name.eq_ignore_ascii_case("git") || name.eq_ignore_ascii_case("git.exe")
+    });
+    if !is_git || argv.get(1).map(String::as_str) != Some("checkout") {
+        return false;
+    }
+    argv.iter()
+        .skip(2)
+        .filter(|token| !token.starts_with('-'))
+        .any(|path| {
+            resolved_both_ways(workspace, cwd, path)
+                .iter()
+                .any(|canonical| canonical != workspace.root() && canonical.exists())
+        })
 }
 
 struct RunStatus {
@@ -707,6 +813,169 @@ mod tests {
         .unwrap();
         assert_eq!(decision, PermissionDecision::Auto);
         assert!(result.output.contains("oi"));
+    }
+
+    fn repo_with_git_dir() -> (tempfile::TempDir, crate::workspace::Workspace) {
+        let dir = tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join(".git").join("hooks")).unwrap();
+        std::fs::write(dir.path().join(".git").join("config"), "[core]\n").unwrap();
+        std::fs::create_dir_all(dir.path().join("src")).unwrap();
+        std::fs::write(dir.path().join("src").join("a.rs"), "fn a() {}\n").unwrap();
+        let workspace = crate::workspace::Workspace::open(dir.path()).unwrap();
+        (dir, workspace)
+    }
+
+    #[test]
+    fn write_commands_aimed_at_dot_git_need_approval() {
+        let (_dir, workspace) = repo_with_git_dir();
+        let root = workspace.root().to_path_buf();
+        let shown = |path: &str| root.join(path).to_string_lossy().into_owned();
+        for argv in [
+            cv(&["touch", ".git/hooks/pre-commit"]),
+            cv(&["cp", "x", ".git/hooks/pre-commit"]),
+            cv(&["mv", "x", ".git/config"]),
+            cv(&["tee", ".git/config"]),
+            cv(&["mkdir", ".git/hooks/sub"]),
+            // Any case, any depth, with `..` in between, an absolute path or a `--flag=` value.
+            cv(&["touch", ".GIT/hooks/post-merge"]),
+            cv(&["touch", "src/../.git/hooks/pre-push"]),
+            cv(&["touch", &shown(".git/hooks/pre-commit")]),
+            cv(&["cp", "--target-directory=.git/hooks", "x"]),
+            cv(&["cat", ".git/config"]),
+        ] {
+            assert_eq!(
+                escalate_for_paths(classify(&argv), &argv, &workspace, &root),
+                CommandClass::Unknown,
+                "{argv:?}"
+            );
+        }
+        // Relative to the cwd, not only to the workspace root.
+        let hooks = root.join(".git").join("hooks");
+        let argv = cv(&["touch", "pre-commit"]);
+        assert_eq!(
+            escalate_for_paths(classify(&argv), &argv, &workspace, &hooks),
+            CommandClass::Unknown
+        );
+        let argv = cv(&["touch", "../config"]);
+        assert_eq!(
+            escalate_for_paths(classify(&argv), &argv, &workspace, &hooks),
+            CommandClass::Unknown
+        );
+        // Ordinary writes, and names that merely start like `.git`, stay as they were.
+        for argv in [
+            cv(&["touch", "novo.txt"]),
+            cv(&["mkdir", "-p", "src/x"]),
+            cv(&["touch", ".gitignore"]),
+            cv(&["touch", ".github/workflows/ci.yml"]),
+            cv(&["cat", "src/a.rs"]),
+        ] {
+            assert_eq!(
+                escalate_for_paths(classify(&argv), &argv, &workspace, &root),
+                classify(&argv),
+                "{argv:?}"
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_symlink_into_dot_git_is_dot_git() {
+        let (dir, workspace) = repo_with_git_dir();
+        std::os::unix::fs::symlink(dir.path().join(".git"), dir.path().join("atalho")).unwrap();
+        let root = workspace.root().to_path_buf();
+        let argv = cv(&["touch", "atalho/hooks/pre-commit"]);
+        assert_eq!(
+            escalate_for_paths(classify(&argv), &argv, &workspace, &root),
+            CommandClass::Unknown
+        );
+    }
+
+    #[test]
+    fn write_command_aimed_at_dot_git_asks_before_running() {
+        let (dir, _workspace) = repo_with_git_dir();
+        let mut engine = boot(dir.path());
+        engine.set_sandbox_caps(crate::sandbox::SandboxCapabilities {
+            filesystem: true,
+            network_block: true,
+        });
+        let mut sink = |_: crate::events::ToolEventMessage| {};
+        let mut asked = 0usize;
+        let mut refuse = |_: crate::permissions::ApprovalRequest| {
+            asked += 1;
+            crate::permissions::ApprovalResponse::Denied { reason: None }
+        };
+        let err = run_command(
+            &mut engine,
+            RunCommandArgs {
+                argv: cv(&["touch", ".git/hooks/pre-commit"]),
+                cwd: None,
+                timeout_ms: None,
+            },
+            &mut sink,
+            &mut refuse,
+        )
+        .unwrap_err();
+        assert_eq!(asked, 1, "touch .git/hooks ran without approval");
+        assert!(matches!(err, ToolError::PermissionDenied { .. }));
+        assert!(!dir.path().join(".git/hooks/pre-commit").exists());
+    }
+
+    #[test]
+    fn git_checkout_of_an_existing_path_is_destructive() {
+        let (_dir, workspace) = repo_with_git_dir();
+        let root = workspace.root().to_path_buf();
+        for argv in [
+            cv(&["git", "checkout", "src/a.rs"]),
+            cv(&["git", "checkout", "src"]),
+            cv(&["git", "checkout", "HEAD", "src/a.rs"]),
+        ] {
+            assert_eq!(
+                escalate_for_paths(classify(&argv), &argv, &workspace, &root),
+                CommandClass::Destructive,
+                "{argv:?}"
+            );
+        }
+        // A branch name (nothing by that name on disk) is a plain checkout.
+        for argv in [
+            cv(&["git", "checkout", "main"]),
+            cv(&["git", "checkout", "feature/x"]),
+            cv(&["git", "checkout", "-b", "novo"]),
+        ] {
+            assert_eq!(
+                escalate_for_paths(classify(&argv), &argv, &workspace, &root),
+                CommandClass::Write,
+                "{argv:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn git_read_commands_run_with_the_hardening_the_git_tools_use() {
+        let hardened = |args: &[&str]| harden_git(&cv(args));
+        // No program in the repository's config can be named for `status`.
+        assert_eq!(
+            hardened(&["git", "status", "--short"]),
+            cv(&["-c", "core.fsmonitor=false", "status", "--short"])
+        );
+        for subcommand in ["diff", "log", "show"] {
+            assert_eq!(
+                hardened(&["git", subcommand, "HEAD~1"]),
+                cv(&[
+                    "-c",
+                    "core.fsmonitor=false",
+                    subcommand,
+                    "--no-ext-diff",
+                    "--no-textconv",
+                    "HEAD~1"
+                ])
+            );
+        }
+        // Other programs and other subcommands are left alone.
+        assert_eq!(hardened(&["ls", "-la"]), cv(&["-la"]));
+        assert_eq!(
+            hardened(&["git", "add", "-A"]),
+            cv(&["-c", "core.fsmonitor=false", "add", "-A"])
+        );
     }
 
     #[test]

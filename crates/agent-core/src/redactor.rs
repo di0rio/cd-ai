@@ -85,6 +85,78 @@ pub fn detect_path_secret(path: &Path) -> Option<SecretKind> {
     None
 }
 
+/// File-name globs for everything [`detect_path_secret`] flags (`*` is any run of characters),
+/// compared without regard to case. The one list both [`secret_path_ignore_patterns`] and
+/// [`secret_path_pathspecs`] are made from; a test keeps it in step with the name check.
+const SECRET_NAME_GLOBS: &[&str] = &[
+    ".env",
+    "*.env",
+    "*.env.*",
+    ".envrc",
+    "id_rsa*",
+    "id_dsa*",
+    "id_ecdsa*",
+    "id_ed25519*",
+    "*credential*",
+    "*secret*",
+    ".npmrc",
+    ".netrc",
+    "_netrc",
+    ".pgpass",
+    ".pypirc",
+    ".htpasswd",
+    "*.pem",
+    "*.key",
+    "*.p12",
+    "*.pfx",
+    "*.cer",
+    "*.crt",
+    "*.ppk",
+    "*.jks",
+    "*.keystore",
+    "*.p8",
+    "*.kdbx",
+    "*.tfstate",
+    "*.tfvars",
+];
+
+/// gitignore patterns for every file name [`detect_path_secret`] flags, for a snapshot that must
+/// not copy the user's secrets into a second place (the shadow repo's `info/exclude`). Letters are
+/// matched in both cases (`[eE][nN][vV]`), as the name check lowercases. A pattern also hides a
+/// folder with such a name, which only makes the snapshot smaller.
+pub fn secret_path_ignore_patterns() -> Vec<String> {
+    let any_case = |glob: &str| -> String {
+        glob.chars()
+            .map(|c| {
+                if c.is_ascii_alphabetic() {
+                    format!("[{}{}]", c.to_ascii_lowercase(), c.to_ascii_uppercase())
+                } else {
+                    c.to_string()
+                }
+            })
+            .collect()
+    };
+    let mut patterns = Vec::new();
+    for glob in SECRET_NAME_GLOBS {
+        patterns.push(any_case(glob));
+        // The public half of a key is not a secret.
+        if glob.starts_with("id_") {
+            patterns.push(format!("!{}", any_case(&format!("{glob}.pub"))));
+        }
+    }
+    patterns
+}
+
+/// git pathspecs that leave every file [`detect_path_secret`] flags out of a diff, at any depth
+/// (`:(exclude,glob,icase)**/.env`). Appended after `--` they keep the secret's lines out of
+/// `git diff` without the caller having to name it.
+pub fn secret_path_pathspecs() -> Vec<String> {
+    SECRET_NAME_GLOBS
+        .iter()
+        .map(|glob| format!(":(exclude,glob,icase)**/{glob}"))
+        .collect()
+}
+
 /// Recognizes secret spans inside arbitrary text (design §6.2). Returns spans sorted, non-overlapping.
 pub fn recognize(text: &str) -> Vec<SecretSpan> {
     let mut spans: Vec<SecretSpan> = Vec::new();
@@ -93,6 +165,7 @@ pub fn recognize(text: &str) -> Vec<SecretSpan> {
     spans.extend(jwt_spans(text));
     spans.extend(userinfo_spans(text));
     spans.extend(assignment_spans(text));
+    spans.extend(env_assignment_spans(text));
     spans.extend(entropy_spans(text));
     // The entropy scan works on bytes; widen every span to whole characters before slicing.
     for span in &mut spans {
@@ -461,6 +534,104 @@ fn assignment_spans(text: &str) -> Vec<SecretSpan> {
             }
             index = cursor.max(index);
         }
+    }
+    spans
+}
+
+/// Rule 4c: `.env`-style lines, `NAME=value` with the name and the `=` stuck together. When the
+/// name says what it holds (`PASS`, `SECRET`, `TOKEN`, `KEY`, `CREDENTIAL`, `PRIVATE`, any case)
+/// the value is a secret whether or not it has a digit: `PASSWORD=correcthorsebattery` has none,
+/// which is what rule 4b lets through. The shape keeps prose and code out: an all-caps name is
+/// taken anywhere (`docker run -e DB_PASS=...`), any other name only at the start of a line
+/// (`password=...` in an ini file or after `export`), and `token = tokens.next()` or
+/// `password: string` are neither.
+fn env_assignment_spans(text: &str) -> Vec<SecretSpan> {
+    const WORDS: &[&str] = &["PASS", "SECRET", "TOKEN", "KEY", "CREDENTIAL", "PRIVATE"];
+    const MIN_VALUE: usize = 6;
+    let bytes = text.as_bytes();
+    let ident_byte = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
+    let mut spans = Vec::new();
+    let mut line_start = 0;
+    while line_start < bytes.len() {
+        let line_end = bytes[line_start..]
+            .iter()
+            .position(|b| *b == b'\n')
+            .map_or(bytes.len(), |at| line_start + at);
+        let line = &bytes[line_start..line_end];
+        // Where a name may begin without being the end of something longer (`a.DB_PASS=`).
+        let boundary = |at: usize| {
+            at == 0
+                || matches!(
+                    line[at - 1],
+                    b' ' | b'\t' | b'\r' | b';' | b',' | b'"' | b'\'' | b'(' | b'{'
+                )
+        };
+        let mut at = 0;
+        while at < line.len() {
+            if !(line[at].is_ascii_alphabetic() || line[at] == b'_') || !boundary(at) {
+                at += 1;
+                continue;
+            }
+            let name_end = at + line[at..].iter().take_while(|b| ident_byte(**b)).count();
+            let name = &line[at..name_end];
+            let next = name_end;
+            if line.get(next) != Some(&b'=') || line.get(next + 1) == Some(&b'=') {
+                at = name_end;
+                continue;
+            }
+            let upper = name.to_ascii_uppercase();
+            let names_a_secret = WORDS.iter().any(|word| {
+                upper
+                    .windows(word.len())
+                    .any(|window| window == word.as_bytes())
+            });
+            let all_caps = !name.iter().any(u8::is_ascii_lowercase);
+            let before = &line[..at];
+            let before = before.strip_suffix(b"export ").unwrap_or(before);
+            let at_line_start = before.iter().all(|b| matches!(b, b' ' | b'\t'));
+            if !names_a_secret || !(all_caps || at_line_start) {
+                at = name_end + 1;
+                continue;
+            }
+            let mut cursor = next + 1;
+            let quote = line
+                .get(cursor)
+                .copied()
+                .filter(|b| matches!(b, b'"' | b'\''));
+            if quote.is_some() {
+                cursor += 1;
+            }
+            let start = cursor;
+            match quote {
+                Some(quote) => {
+                    while cursor < line.len() && line[cursor] != quote {
+                        cursor += 1;
+                    }
+                }
+                None => {
+                    while cursor < line.len()
+                        && (line[cursor].is_ascii_alphanumeric()
+                            || b"+/=_.~-@:".contains(&line[cursor]))
+                    {
+                        cursor += 1;
+                    }
+                    // `token=read_token(...)` is code, not a value.
+                    if line.get(cursor) == Some(&b'(') {
+                        at = cursor;
+                        continue;
+                    }
+                }
+            }
+            if cursor - start >= MIN_VALUE {
+                spans.push(SecretSpan {
+                    start: line_start + start,
+                    end: line_start + cursor,
+                    kind: SecretKind::Credentials,
+                });
+            }
+            at = cursor.max(name_end + 1);
+        }
+        line_start = line_end + 1;
     }
     spans
 }
@@ -1058,6 +1229,149 @@ mod tests {
             "token: \"\"",
         ] {
             assert_eq!(redact(text).text, text);
+        }
+    }
+
+    #[test]
+    fn env_style_secrets_are_redacted_without_a_digit() {
+        for (text, secret) in [
+            ("PASSWORD=correcthorsebattery", "correcthorsebattery"),
+            ("DB_PASS=abcdefgh", "abcdefgh"),
+            ("SESSION_KEY=abcdefghijkl", "abcdefghijkl"),
+            ("export API_TOKEN='abcdefghijkl'", "abcdefghijkl"),
+            ("password=correcthorsebattery", "correcthorsebattery"),
+            ("PRIVATE_THING=abcdefgh", "abcdefgh"),
+            ("AWS_CREDENTIAL_FILE=secretvalue", "secretvalue"),
+            ("SECRET=\"two words here\"", "two words here"),
+            // Mid-line, as in a command or a log: an all-caps name is enough.
+            ("docker run -e DB_PASS=abcdefgh image", "abcdefgh"),
+            ("linha 1\nclient_secret=abcdefghij\nlinha 3", "abcdefghij"),
+        ] {
+            let redacted = redact(text);
+            assert!(
+                !redacted.text.contains(secret),
+                "{text:?} -> {}",
+                redacted.text
+            );
+            assert!(redacted.text.contains("[REDIGIDO:"), "{}", redacted.text);
+        }
+        // The name and what is around the value stay readable.
+        assert_eq!(
+            redact("PASSWORD=correcthorsebattery\nUSER=cauan").text,
+            "PASSWORD=[REDIGIDO:segredo]\nUSER=cauan"
+        );
+    }
+
+    #[test]
+    fn env_style_rule_leaves_prose_and_code_readable() {
+        for text in [
+            "Please enter your password and press enter.",
+            "the key=value form is documented below",
+            "set the token=abc in the header",
+            "PASSWORD=short",
+            "TOKEN=",
+            "TOKEN=$TOKEN",
+            "API_KEY=${API_KEY}",
+            "EDITOR=vim",
+            "let token=read_token(path);",
+            "if password==expected {",
+            "MY_NAME=cauaoliveira",
+            "keyboard layout is us",
+            "password: string",
+            "const secret = loadSecret(path);",
+        ] {
+            assert_eq!(redact(text).text, text, "{text:?}");
+        }
+    }
+
+    #[test]
+    fn secret_path_patterns_cover_every_name_the_path_check_flags() {
+        let patterns = secret_path_ignore_patterns();
+        // Each flagged name has a plain-text counterpart in the list: the glob for its extension,
+        // its exact name or the word it contains.
+        for name in [
+            ".env",
+            ".env.local",
+            "prod.env",
+            ".envrc",
+            "id_rsa",
+            "id_ed25519",
+            "cert.pem",
+            "server.KEY",
+            "my-credentials.json",
+            "client_secret.json",
+            ".npmrc",
+            ".netrc",
+            "terraform.tfstate",
+            "vault.kdbx",
+        ] {
+            assert!(detect_path_secret(Path::new(name)).is_some(), "{name}");
+        }
+        let glob = |pattern: &str, name: &str| {
+            // Enough of gitignore for these patterns: `*` and `[aA]` classes.
+            fn matches(pattern: &[u8], name: &[u8]) -> bool {
+                match pattern.split_first() {
+                    None => name.is_empty(),
+                    Some((b'*', rest)) => (0..=name.len()).any(|skip| matches(rest, &name[skip..])),
+                    Some((b'[', rest)) => {
+                        let close = rest.iter().position(|b| *b == b']').unwrap();
+                        match name.split_first() {
+                            Some((first, tail)) if rest[..close].contains(first) => {
+                                matches(&rest[close + 1..], tail)
+                            }
+                            _ => false,
+                        }
+                    }
+                    Some((byte, rest)) => match name.split_first() {
+                        Some((first, tail)) if first == byte => matches(rest, tail),
+                        _ => false,
+                    },
+                }
+            }
+            matches(pattern.as_bytes(), name.as_bytes())
+        };
+        for name in [
+            ".env",
+            ".env.local",
+            "prod.env",
+            ".envrc",
+            "id_rsa",
+            "id_ed25519",
+            "cert.pem",
+            "server.KEY",
+            "my-credentials.json",
+            "client_secret.json",
+            ".npmrc",
+            ".netrc",
+            "terraform.tfstate",
+            "vault.kdbx",
+            "Secrets.txt",
+        ] {
+            assert!(
+                patterns
+                    .iter()
+                    .filter(|pattern| !pattern.starts_with('!'))
+                    .any(|pattern| glob(pattern, name)),
+                "nenhum padrão cobre {name}"
+            );
+        }
+        // Not secrets, not excluded.
+        for name in [
+            "main.rs",
+            "README.md",
+            "id_rsa.pub",
+            "environment.ts",
+            "package.json",
+        ] {
+            let excluded = patterns
+                .iter()
+                .filter(|pattern| !pattern.starts_with('!'))
+                .any(|pattern| glob(pattern, name));
+            let reincluded = patterns
+                .iter()
+                .filter_map(|pattern| pattern.strip_prefix('!'))
+                .any(|pattern| glob(pattern, name));
+            assert!(!excluded || reincluded, "{name}");
         }
     }
 
