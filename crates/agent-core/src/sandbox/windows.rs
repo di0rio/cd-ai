@@ -710,6 +710,9 @@ unsafe fn has_entry(dacl: *const ACL, sid: PSID, access: u32, needs_inheritance:
         if GetAce(dacl, index, &mut ace) == 0 {
             return false;
         }
+        if ace.is_null() {
+            return false;
+        }
         let header = &*(ace as *const ACE_HEADER);
         if header.AceType != ACCESS_ALLOWED_ACE_TYPE {
             return false;
