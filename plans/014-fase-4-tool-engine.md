@@ -1,6 +1,6 @@
 # Plano 014: Implementar a Fase 4 — Tool Engine, permissões, Secret Redactor, eventos e checkpoint
 
-> **Instruções ao executor:** rode os passos nesta ordem e confirme cada verificação antes de avançar. O design (fonte da verdade) é `docs/design/fase-4-tool-engine.md` — as decisões D1–D9 e as seções 2–7 são obrigação. Rode `bun run verify` antes de atualizar a linha em `plans/README.md`.
+> **Instruções ao executor:** rode os passos nesta ordem e confirme cada verificação antes de avançar. O design (fonte da verdade) é `docs/design/fase-4-tool-engine.md` — as decisões D1-D9 e as seções 2-7 são obrigação. Rode `bun run verify` antes de atualizar a linha em `plans/README.md`.
 >
 > **Drift check:** todas as dependências do plano estão DONE (002 workspace, 005 streaming/Channel, 006 ACL, 009 parser, 010 eventos na UI, 012 design). Escrevendo em `main` (pedido do usuário; planos anteriores foram mergeados via PR #1).
 

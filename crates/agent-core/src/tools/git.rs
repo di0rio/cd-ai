@@ -53,11 +53,17 @@ pub fn git_diff(
         "--no-textconv".to_string(),
         "--no-color".to_string(),
     ];
+    // The diff of a `.env` would carry its values: redaction is a net, not the first line.
+    argv.push("--".to_string());
     if let Some(path) = args.path {
         let canonical = engine.workspace.resolve(&path)?;
-        argv.push("--".to_string());
+        if redactor::detect_path_secret(&canonical).is_some() {
+            return Err(ToolError::SecretDenied);
+        }
         argv.push(display_path(&engine.workspace, &canonical));
     }
+    // Whatever the path names (a folder, or nothing: the whole tree), secret files drop out.
+    argv.extend(redactor::secret_path_pathspecs());
     let cwd = engine.workspace.root().to_path_buf();
     let argv_refs: Vec<&str> = argv.iter().map(String::as_str).collect();
     let output = run_user_git(engine, &argv_refs, &cwd)?;
@@ -408,6 +414,105 @@ mod tests {
             &mut grant,
         );
         assert!(outcome.ok);
+    }
+
+    /// A repo with `a.txt`, `.env`, `config/prod.env` and `id_rsa` committed, then all four
+    /// changed, so a plain `git diff` has something to say about each.
+    fn repo_with_changed_secrets() -> tempfile::TempDir {
+        let repo = tempdir().unwrap();
+        fs::create_dir_all(repo.path().join("config")).unwrap();
+        let files = [
+            ("a.txt", "um\n"),
+            (".env", "DB_PASSWORD=originalsegredo1\n"),
+            ("config/prod.env", "TOKEN=prodoriginal999\n"),
+            ("id_rsa", "chaveoriginal\n"),
+        ];
+        for (name, content) in files {
+            fs::write(repo.path().join(name), content).unwrap();
+        }
+        run_ok(repo.path(), &["init"]);
+        run_ok(repo.path(), &["add", "."]);
+        run_ok(
+            repo.path(),
+            &[
+                "-c",
+                "user.name=dev",
+                "-c",
+                "user.email=dev@local",
+                "-c",
+                "commit.gpgsign=false",
+                "commit",
+                "-m",
+                "init",
+            ],
+        );
+        for (name, _) in files {
+            fs::write(
+                repo.path().join(name),
+                "mudou\nDB_PASSWORD=novosegredo2222\n",
+            )
+            .unwrap();
+        }
+        repo
+    }
+
+    fn run_diff(repo: &std::path::Path, path: Option<&str>) -> Result<String, String> {
+        let ws = Workspace::open(repo).unwrap();
+        let mut engine =
+            ToolEngine::with_mode(ws, "task_git", crate::permissions::PermissionMode::Auto);
+        let mut sink = |_: ToolEventMessage| {};
+        let mut grant = |_: ApprovalRequest| ApprovalResponse::Granted;
+        let outcome = engine.run_tool(
+            ToolRequest::GitDiff(GitDiffArgs {
+                path: path.map(String::from),
+            }),
+            &mut sink,
+            &mut grant,
+        );
+        if !outcome.ok {
+            return Err(outcome.error.map(|e| e.to_string()).unwrap_or_default());
+        }
+        let Some(crate::tools::ToolOutput::GitDiff(result)) = outcome.data else {
+            panic!("git_diff");
+        };
+        Ok(result.diff)
+    }
+
+    #[test]
+    fn diff_of_the_whole_tree_leaves_secret_files_out() {
+        if !git_works() {
+            return;
+        }
+        let repo = repo_with_changed_secrets();
+        let diff = run_diff(repo.path(), None).unwrap();
+        assert!(diff.contains("a.txt"), "{diff}");
+        for secret in [
+            ".env",
+            "prod.env",
+            "id_rsa",
+            "originalsegredo1",
+            "novosegredo2222",
+        ] {
+            assert!(!diff.contains(secret), "{secret} no diff:\n{diff}");
+        }
+    }
+
+    #[test]
+    fn diff_of_a_secret_path_is_refused_and_a_folder_still_drops_its_secrets() {
+        if !git_works() {
+            return;
+        }
+        let repo = repo_with_changed_secrets();
+        for path in [".env", "config/prod.env", "id_rsa"] {
+            let error = run_diff(repo.path(), Some(path)).unwrap_err();
+            assert!(!error.contains("novosegredo"), "{error}");
+            assert!(error.contains("arquivo de secret"), "{path}: {error}");
+        }
+        let folder = run_diff(repo.path(), Some("config")).unwrap();
+        assert!(!folder.contains("prod.env"), "{folder}");
+        assert!(!folder.contains("prodoriginal999"), "{folder}");
+        let ordinary = run_diff(repo.path(), Some("a.txt")).unwrap();
+        assert!(ordinary.contains("a.txt"), "{ordinary}");
     }
 
     #[test]

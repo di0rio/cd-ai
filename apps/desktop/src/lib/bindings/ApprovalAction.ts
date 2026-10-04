@@ -4,4 +4,10 @@ import type { CommandClass } from "./CommandClass";
 /**
  * The exact thing the user is asked to approve (design §5.3). Never a model summary.
  */
-export type ApprovalAction = { "type": "runCommand", argv: Array<string>, class: CommandClass, cwd: string, } | { "type": "editFile", path: string, diff: string, } | { "type": "writeFile", path: string, size: number, } | { "type": "readFile", path: string, };
+export type ApprovalAction = { "type": "runCommand", argv: Array<string>, class: CommandClass, cwd: string, } | { "type": "editFile", path: string, diff: string, } | { "type": "writeFile", path: string, size: number, 
+/**
+ * What the write changes: a unified diff against the file now on disk (every line is an
+ * addition for a new file), cut with `... (N more lines)` when long. Shown with the path
+ * and size, so the user approves the content and not just where it goes.
+ */
+diff: string, } | { "type": "readFile", path: string, };

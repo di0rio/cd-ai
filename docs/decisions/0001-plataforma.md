@@ -8,7 +8,7 @@ A máquina de desenvolvimento roda Windows 11 sem WSL. O alvo do primeiro releas
 
 ## Decisão
 
-- **Fases 1–6:** desenvolvimento no Windows 11 nativo. Tauri, Rust e Ollama (com GPU) funcionam nativamente.
+- **Fases 1-6:** desenvolvimento no Windows 11 nativo. Tauri, Rust e Ollama (com GPU) funcionam nativamente.
 - **Alvo do primeiro release:** Linux x86_64 (`.deb` e AppImage).
 - **Linux entra obrigatoriamente** (WSL2 ou VM) na Fase 7 (sandbox de shell) e na Fase 14 (empacotamento e instalação limpa).
 
@@ -26,10 +26,20 @@ A máquina de desenvolvimento roda Windows 11 sem WSL. O alvo do primeiro releas
 
 ## Esclarecimento (2026-09-11)
 
-- **Linux é o alvo de release; Windows é o ambiente de desenvolvimento completo** (não "fases 1–6 e depois abandona").
+- **Linux é o alvo de release; Windows é o ambiente de desenvolvimento completo** (não "fases 1-6 e depois abandona").
 - **Segurança básica de execução existe desde o Tool Engine** (Fase 4): classificação de comando e aprovação. A Fase 7 adiciona o **sandbox de OS** (isolamento de processos), que é uma camada a mais sobre essa base, não o começo da segurança.
 
 ## Consequências
 
 - Testes de sandbox: Linux em `crates/agent-core/src/sandbox/linux.rs`, macOS em `sandbox/macos.rs` (pulam quando `sandbox-exec` falta), Windows ponta a ponta em `crates/agent-core/tests/windows_sandbox.rs` (binário próprio, porque é também o launcher). Sem sandbox pronto, o probe reporta indisponível e a policy rebaixa FULL ACCESS para ASK.
 - CI local precisa rodar os testes de path em ambas as plataformas quando o Linux estiver disponível.
+
+## Limites do sandbox (auditoria de segurança, 2026-10-03)
+
+O sandbox é uma camada a mais; o que ele **não** promete:
+
+- **Sem sandbox pronto** (Windows sem `cd-ai sandbox-setup`, macOS sem `sandbox-exec`, outros sistemas): `run_command` roda como o usuário, sem isolamento algum. FULL ACCESS fica indisponível e comandos `write` perguntam, mas comandos `read` continuam automáticos, mas `validate` (`npm test`, `cargo test`, `make test`) agora **pergunta em todos os modos**: ele executa código do próprio repositório (`build.rs`, scripts de pacote), e sem sandbox isso roda como o usuário. `cd-ai sandbox-setup` (Windows) restaura a execução automática. No CLI sem terminal interativo a aprovação é negada e a tarefa termina como não validada, com a razão dita; `cd-ai eval` continua aprovando sozinho. Confira `sandbox_status` (UI) ou `cd-ai sandbox-setup` antes de abrir um repositório que você não escreveu.
+- **Leitura:** Linux (Landlock) e macOS (Seatbelt) deixam o sistema inteiro legível (`~/.ssh`, `~/.aws`); só a escrita e a rede são limitadas. O AppContainer do Windows é mais restrito: lê só o que recebeu por ACL, além do que o Windows abre a qualquer AppContainer (pastas do sistema).
+- **Escrita no workspace inclui o que roda depois, fora do sandbox:** `.git/hooks`, `.git/config`, `package.json`, `Makefile`, `.vscode/tasks.json`. As ferramentas `edit_file`/`write_file` recusam `.git`, mas um comando sandboxed pode escrevê-lo. Revise o diff antes de rodar esses arquivos por conta própria.
+- **Comando `network` aprovado** perde o isolamento de rede e, no Windows, também o do sistema de arquivos (roda fora do container). Aprove só o que você leu.
+- **Corrida entre a checagem do path e a abertura do arquivo** (TOCTOU): `Workspace::resolve` valida e as ferramentas abrem em seguida. Um processo que sobreviva a um comando (daemonizado) poderia trocar um diretório por um symlink nesse intervalo.

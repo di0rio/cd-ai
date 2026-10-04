@@ -110,7 +110,11 @@ impl TaskStore {
     pub fn open(data_dir: impl AsRef<Path>) -> Result<Self, StorageError> {
         let data_dir = data_dir.as_ref().to_path_buf();
         let root = data_dir.join(TASKS_DIR);
-        fs::create_dir_all(&root).map_err(io_error)?;
+        create_private_dir_all(&root).map_err(io_error)?;
+        // A data dir that already existed (an older version, another tool) keeps its old mode
+        // through `create_dir_all`; the tasks inside hold transcripts and diffs.
+        restrict_to_owner(&data_dir, 0o700);
+        restrict_to_owner(&root, 0o700);
         Ok(Self { data_dir, root })
     }
 
@@ -144,7 +148,7 @@ impl TaskStore {
 
     pub fn save_state(&self, state: &TaskState) -> Result<(), StorageError> {
         let dir = self.task_dir(&state.id)?;
-        fs::create_dir_all(&dir).map_err(io_error)?;
+        create_private_dir_all(&dir).map_err(io_error)?;
         let json = redacted_json(state)?;
         let text = serde_json::to_string_pretty(&json).map_err(format_error)?;
         write_atomic(&dir.join(STATE_FILE), &text)
@@ -287,11 +291,11 @@ impl TaskStore {
         value: &T,
     ) -> Result<(), StorageError> {
         let dir = self.task_dir(id)?;
-        fs::create_dir_all(&dir).map_err(io_error)?;
+        create_private_dir_all(&dir).map_err(io_error)?;
         let json = redacted_json(value)?;
         let mut line = serde_json::to_string(&json).map_err(format_error)?;
         line.push('\n');
-        let mut handle = OpenOptions::new()
+        let mut handle = private_file_options()
             .create(true)
             .append(true)
             .open(dir.join(file))
@@ -354,11 +358,58 @@ fn redact_in_place(value: &mut Value) {
 /// Temp file in the same directory, then rename: a reader never sees a half-written state.
 pub(super) fn write_atomic(path: &Path, contents: &str) -> Result<(), StorageError> {
     let temp = path.with_extension("tmp");
-    fs::write(&temp, contents).map_err(io_error)?;
+    let mut file = private_file_options()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(&temp)
+        .map_err(io_error)?;
+    // A `.tmp` left by an older run keeps the mode it was born with.
+    restrict_to_owner(&temp, 0o600);
+    file.write_all(contents.as_bytes()).map_err(io_error)?;
+    drop(file);
     fs::rename(&temp, path).map_err(|error| {
         let _ = fs::remove_file(&temp);
         io_error(error)
     })
+}
+
+/// `create_dir_all` with mode 0700 on unix: what is in the data directory (transcripts, diffs,
+/// the shadow repo) is the user's and nobody else's. Windows: the profile's ACL already says so.
+pub(crate) fn create_private_dir_all(path: &Path) -> io::Result<()> {
+    let mut builder = fs::DirBuilder::new();
+    builder.recursive(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        builder.mode(0o700);
+    }
+    builder.create(path)
+}
+
+/// `OpenOptions` whose new files are 0600 on unix (the caller adds read/write/create).
+pub(crate) fn private_file_options() -> OpenOptions {
+    #[cfg_attr(not(unix), allow(unused_mut))]
+    let mut options = OpenOptions::new();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    options
+}
+
+/// Sets the unix mode of an existing path; best effort and a no-op elsewhere.
+pub(crate) fn restrict_to_owner(path: &Path, mode: u32) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = fs::set_permissions(path, fs::Permissions::from_mode(mode));
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (path, mode);
+    }
 }
 
 pub(super) fn format_error(error: serde_json::Error) -> StorageError {
@@ -428,6 +479,46 @@ mod tests {
         store.save_state(&original).unwrap();
         let loaded = store.load_state("task_1").unwrap();
         assert_eq!(loaded, original);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_data_dir_is_private_to_the_user_on_unix() {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = |path: &Path| fs::metadata(path).unwrap().permissions().mode() & 0o777;
+        let dir = tempfile::tempdir().unwrap();
+        // An older run (or another tool) left the directory world-readable.
+        let data = dir.path().join("dados");
+        fs::create_dir(&data).unwrap();
+        fs::set_permissions(&data, fs::Permissions::from_mode(0o755)).unwrap();
+        let store = TaskStore::open(&data).unwrap();
+        assert_eq!(mode(&data), 0o700);
+        assert_eq!(mode(store.root()), 0o700);
+
+        let mut current = state("task_1", "C:/projeto");
+        store.save_state(&current).unwrap();
+        current.iterations = 1;
+        store.save_state(&current).unwrap();
+        store
+            .append_transcript(
+                "task_1",
+                &ChatMessage {
+                    role: "user".into(),
+                    content: "oi".into(),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let task = store.root().join("task_1");
+        assert_eq!(mode(&task), 0o700);
+        for entry in fs::read_dir(&task).unwrap().flatten() {
+            assert_eq!(mode(&entry.path()), 0o600, "{:?}", entry.path());
+        }
+        // Fresh directories made on the way down are private too, not only the leaf.
+        let deep = dir.path().join("a").join("b").join("c");
+        create_private_dir_all(&deep).unwrap();
+        assert_eq!(mode(&deep), 0o700);
+        assert_eq!(mode(&dir.path().join("a")), 0o700);
     }
 
     #[test]

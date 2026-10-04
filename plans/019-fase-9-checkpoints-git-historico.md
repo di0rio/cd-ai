@@ -2,7 +2,7 @@
 
 > **Instruções ao executor:** rode os passos nesta ordem e confirme cada verificação antes de avançar. Se alguma STOP condition acontecer, pare e reporte; não improvise. Uma parte só está pronta com `bun run verify` saindo com exit 0 (AGENTS.md).
 >
-> **Drift check (rode primeiro):** `git log -1 --oneline` deve estar em `main` com as Fases 0–8 (PR #5). Confira `crates/agent-core/src/tools/edit.rs` (hash SHA-256 + `CheckpointCreated` por arquivo), `crates/agent-core/src/agent/storage.rs` (`TaskStore` em `data_dir/tasks`), `crates/agent-core/src/permissions.rs` (`classify_git`) e SPEC §19 / §21 / §24.1 / §34 Fase 9. Se o store ou o hash de edição tiverem sumido, trate como STOP.
+> **Drift check (rode primeiro):** `git log -1 --oneline` deve estar em `main` com as Fases 0-8 (PR #5). Confira `crates/agent-core/src/tools/edit.rs` (hash SHA-256 + `CheckpointCreated` por arquivo), `crates/agent-core/src/agent/storage.rs` (`TaskStore` em `data_dir/tasks`), `crates/agent-core/src/permissions.rs` (`classify_git`) e SPEC §19 / §21 / §24.1 / §34 Fase 9. Se o store ou o hash de edição tiverem sumido, trate como STOP.
 
 ## Status
 

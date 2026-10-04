@@ -154,7 +154,7 @@ impl MemoryStore {
 
     fn save(&self, entries: &[MemoryEntry]) -> Result<(), StorageError> {
         if let Some(parent) = self.path.parent() {
-            fs::create_dir_all(parent).map_err(io_error)?;
+            crate::agent::storage::create_private_dir_all(parent).map_err(io_error)?;
         }
         let file = MemoryFile {
             entries: entries.to_vec(),

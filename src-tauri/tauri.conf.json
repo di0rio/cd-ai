@@ -6,7 +6,7 @@
   "identifier": "dev.cdai.desktop",
   "build": {
     "frontendDist": "../apps/desktop/out",
-    "devUrl": "http://localhost:1420",
+    "devUrl": "http://127.0.0.1:1420",
     "beforeDevCommand": "bun run --cwd apps/desktop dev",
     "beforeBuildCommand": "bun run --cwd apps/desktop build && cargo build --release -p cd-ai-cli"
   },
@@ -21,7 +21,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; connect-src ipc: http://ipc.localhost; style-src 'self' 'unsafe-inline'; img-src 'self' data:"
+      "csp": "default-src 'self'; connect-src ipc: http://ipc.localhost; style-src 'self' 'unsafe-inline'; img-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'none'"
     }
   },
   "bundle": {

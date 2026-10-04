@@ -21,6 +21,7 @@ mod windows {
         sandbox::init();
         let status = sandbox::status();
         writes_only_inside_the_workspace();
+        git_hooks_and_config_are_read_only();
         network_is_blocked_even_on_loopback();
         approved_network_runs_outside_the_container();
         if status.available {
@@ -75,6 +76,56 @@ mod windows {
             "a write outside the workspace went through"
         );
         println!("ok: escrita só no workspace");
+    }
+
+    fn git_hooks_and_config_are_read_only() {
+        let (_dir, root) = workspace();
+        std::fs::create_dir_all(root.join(".git").join("hooks")).unwrap();
+        std::fs::write(root.join(".git").join("config"), "[core]\n").unwrap();
+        std::fs::write(root.join(".git").join("HEAD"), "ref: refs/heads/main\n").unwrap();
+
+        let hook = run_in(
+            &root,
+            &["cmd", "/c", r"echo x> .git\hooks\pre-commit"],
+            false,
+        );
+        assert!(!hook.status.success(), "{hook:?}");
+        assert!(
+            !root.join(".git").join("hooks").join("pre-commit").exists(),
+            "a hook was planted from inside the container"
+        );
+        let config = run_in(&root, &["cmd", "/c", r"echo evil>> .git\config"], false);
+        assert!(!config.status.success(), "{config:?}");
+        assert_eq!(
+            std::fs::read_to_string(root.join(".git").join("config")).unwrap(),
+            "[core]\n"
+        );
+        // Moving the folder away to plant another one would get around the entry on it.
+        let moved = run_in(&root, &["cmd", "/c", r"ren .git\hooks hooks-old"], false);
+        assert!(!moved.status.success(), "{moved:?}");
+        assert!(root.join(".git").join("hooks").is_dir());
+        assert!(!root.join(".git").join("hooks-old").exists());
+
+        // The rest of the repository keeps working: other files in `.git` and reading the config.
+        let head = run_in(
+            &root,
+            &["cmd", "/c", r"echo ref: refs/heads/dev> .git\HEAD"],
+            false,
+        );
+        assert!(head.status.success(), "{head:?}");
+        let read = run_in(&root, &["cmd", "/c", r"type .git\config"], false);
+        assert!(read.status.success(), "{read:?}");
+        assert!(String::from_utf8_lossy(&read.stdout).contains("[core]"));
+        let plain = run_in(&root, &["cmd", "/c", "echo ok> a.txt"], false);
+        assert!(plain.status.success(), "{plain:?}");
+        assert!(root.join("a.txt").exists());
+        // The user is not locked out of their own folder.
+        std::fs::write(
+            root.join(".git").join("hooks").join("pre-commit"),
+            "#!/bin/sh\n",
+        )
+        .unwrap();
+        println!("ok: .git/hooks e .git/config somente leitura");
     }
 
     fn listener() -> (u16, thread::JoinHandle<bool>) {
