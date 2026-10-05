@@ -847,6 +847,9 @@ fn fingerprint(content: &str) -> String {
 mod tests {
     use super::*;
 
+    // Fake secret fixtures below are split with concat! so the source never holds a
+    // contiguous secret-looking token (secret scanners flag them); runtime values are unchanged.
+
     #[test]
     fn redact_never_splits_a_multibyte_character() {
         // Dense non-ASCII text has many distinct bytes, so an entropy window can start or end
@@ -892,7 +895,11 @@ mod tests {
 
     #[test]
     fn jwt_at_the_very_end_is_redacted() {
-        let jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U";
+        let jwt = concat!(
+            "eyJhbGciOiJ",
+            "IUzI1NiJ9.eyJzdWIiOiIxMjM0",
+            "NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U"
+        );
         let redacted = redact(&format!("token={jwt}"));
         assert!(!redacted.text.contains("dozjgNryP4J3"), "{}", redacted.text);
     }
@@ -966,7 +973,11 @@ mod tests {
 
     #[test]
     fn redacts_known_prefix_tokens() {
-        let redacted = redact("use o sk-live-foo123 no deploy; o ghp_abcDEF123 não");
+        let redacted = redact(concat!(
+            "use o sk-",
+            "live-foo123 no deploy; o ghp",
+            "_abcDEF123 não"
+        ));
         assert_eq!(
             redacted.text,
             "use o [REDIGIDO:segredo] no deploy; o [REDIGIDO:segredo] não"
@@ -976,14 +987,18 @@ mod tests {
 
     #[test]
     fn redacts_aws_style_caps_prefix() {
-        let text = "creds=AKIAIOSFODNN7EXAMPLE";
+        let text = concat!("creds=AKIA", "IOSFODNN7EXAMPLE");
         let redacted = redact(text);
         assert!(redacted.text.contains("[REDIGIDO:segredo]"));
     }
 
     #[test]
     fn redacts_pem_block() {
-        let pem = "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEF\n-----END PRIVATE KEY-----\n";
+        let pem = concat!(
+            "-----BEGIN ",
+            "PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEF\n-----END ",
+            "PRIVATE KEY-----\n"
+        );
         let redacted = redact(pem);
         assert!(redacted.text.contains("[REDIGIDO:chave]"));
         assert!(!redacted.text.contains("MIIEvQIB"));
@@ -1102,7 +1117,7 @@ mod tests {
     #[test]
     fn merged_spans_do_not_emit_twice() {
         // "sk_live_" + "AKIA" in the same line must not produce overlapping duplicate spans.
-        let text = "pk=sk_live_abcdefg hip=AKIAIOSFODNN7EXAMPLE";
+        let text = concat!("pk=sk_", "live_abcdefg hip=AKIA", "IOSFODNN7EXAMPLE");
         let spans = recognize(text);
         for window in spans.windows(2) {
             assert!(window[0].end <= window[1].start);
@@ -1140,8 +1155,11 @@ mod tests {
 
     #[test]
     fn private_key_view_exposes_only_metadata() {
-        let pem =
-            "-----BEGIN RSA PRIVATE KEY-----\nMIIEvQIBADANBgkqhki\n-----END RSA PRIVATE KEY-----\n";
+        let pem = concat!(
+            "-----BEGIN RSA ",
+            "PRIVATE KEY-----\nMIIEvQIBADANBgkqhki\n-----END RSA ",
+            "PRIVATE KEY-----\n"
+        );
         let view = secret_file_view(&SecretKind::PrivateKey, pem);
         match view {
             SecretFileView::PrivateKey {
@@ -1182,12 +1200,12 @@ mod tests {
     #[test]
     fn more_token_formats_are_redacted() {
         for token in [
-            "ghs_16C7e42F292c6912E7710c838347Ae178B4a",
-            "github_pat_11ABCDEFG0abcdefghijkl_mnopqrstuvwxyz",
+            concat!("ghs", "_16C7e42F292c6912E7710c838347Ae178B4a"),
+            concat!("github", "_pat_11ABCDEFG0abcdefghijkl_mnopqrstuvwxyz"),
             "glpat-xxxxxxxxxxxxxxxxxxxx",
-            "xoxs-123456789012-abcdef",
-            "ASIAIOSFODNN7EXAMPLE",
-            "AIzaSyA-1234567890abcdefghijklmnopqrstu",
+            concat!("xox", "s-123456789012-abcdef"),
+            concat!("ASIA", "IOSFODNN7EXAMPLE"),
+            concat!("AIza", "SyA-1234567890abcdefghijklmnopqrstu"),
             "npm_abcdefghijklmnopqrstuvwxyz0123456789",
             // concat!: o literal inteiro dispararia o push protection do GitHub (é falso, só pra teste).
             concat!("hf_", "abcdefghijklmnopqrstuvwxyzABCDEFGH"),
@@ -1209,7 +1227,7 @@ mod tests {
             (r#"{"token": "correcthorse"}"#, "correcthorse"),
             ("secret = 'hunter2hunter2'", "hunter2hunter2"),
             (
-                "Authorization: Bearer abcDEFghiJKLmnopQRSTuv",
+                concat!("Authorization: Bearer ", "abcDEFghi", "JKLmnopQRSTuv"),
                 "abcDEFghiJKLmnopQRSTuv",
             ),
         ] {
@@ -1377,7 +1395,10 @@ mod tests {
 
     #[test]
     fn a_private_key_cut_short_is_still_redacted() {
-        let text = "saída:\n-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAABG5vbmU";
+        let text = concat!(
+            "saída:\n-----BEGIN ",
+            "OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAABG5vbmU"
+        );
         let redacted = redact(text);
         assert!(!redacted.text.contains("b3BlbnNz"), "{}", redacted.text);
         assert!(redacted.text.starts_with("saída:"));
